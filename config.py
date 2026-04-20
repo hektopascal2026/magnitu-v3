@@ -20,7 +20,7 @@ MODELS_DIR.mkdir(exist_ok=True)
 
 # Defaults
 DEFAULTS = {
-    "seismo_url": "http://localhost/seismo_0.3/index.php",
+    "seismo_url": "http://localhost/seismo_0.5/index.php",
     "api_key": "",
     "min_labels_to_train": 20,
     "recipe_top_keywords": 200,

@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "name": "magnitu v3",
+      "path": "."
+    },
+    {
+      "name": "seismo_0.5",
+      "path": "../seismo_0.5"
+    }
+  ],
+  "settings": {}
+}

@@ -636,7 +636,7 @@ body {
         div.className = 'setup-screen';
         div.innerHTML =
             '<h2>Connect to Seismo</h2>' +
-            '<input type="url" id="setupUrl" placeholder="https://your-domain.ch/seismo/index.php" value="' + (cfg.url || '') + '">' +
+            '<input type="url" id="setupUrl" placeholder="https://your-domain.ch/seismo_0.5/index.php" value="' + (cfg.url || '') + '">' +
             '<input type="text" id="setupKey" placeholder="API key" value="' + (cfg.apiKey || '') + '" style="font-family:monospace;">' +
             '<div class="help">Enter your Seismo URL and API key. Same credentials as in Magnitu&rsquo;s settings.<br>URL must start with the same domain as this page (' + window.location.origin + ').</div>' +
             '<button class="btn btn-primary" id="setupSave">Connect</button>';
