@@ -124,6 +124,7 @@ def _sync_pull_impl(full: bool, progress_cb=None) -> dict:
             ("feed_item", "feed_items"),
             ("email", "emails"),
             ("lex_item", "lex_items"),
+            ("calendar_event", "calendar_events"),
         ]
         for idx, (entry_type, status_key) in enumerate(type_specs):
             expected = int(remote_entries.get(status_key, 0) or 0)
