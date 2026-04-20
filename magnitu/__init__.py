@@ -1,1 +1,1 @@
-"""Magnitu core modules (Gemini client, prompts)."""
+"""Magnitu core modules (Gemini client, prompts, synthetic scorer)."""

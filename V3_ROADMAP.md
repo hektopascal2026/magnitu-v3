@@ -28,27 +28,30 @@ Working document to implement v3 **in order**, without destabilizing Magnitu 2 b
 
 ### Tasks
 
-- [ ] **1.1** Locate reference code (interview project): `mac/v3/gemini.py`, `mac/v3/extraction/prompts.py` — extract REST patterns, not project-specific cruft.
-- [ ] **1.2** Add `GeminiClient` using **Google AI v1beta** REST with `responseMimeType: "application/json"` and **response schema** enforcement where supported.
-- [ ] **1.3** Implement **parse_json_lenient** (or equivalent) for truncated / slightly invalid JSON from the model.
-- [ ] **1.4** Create **`magnitu/prompts.py`** (or `prompts/` package) with:
-  - [ ] **1.4a** A **prompt factory** mapping the four Magnitu categories ↔ structured Gemini request (single source of truth for enum ↔ display names).
-  - [ ] **1.4b** **System prompt**: Swiss economic / trade analyst persona — surface **exclusion language** (e.g. EU/EEA-only, Binnenmarkt, Drittstaaten) that affects Switzerland even when “Switzerland” is not in the text.
-- [ ] **1.5** Define the **Gemini output contract**: `{ "label": "<enum>", "reasoning": "<string>" }` — validate after parse; reject or retry on bad labels.
-- [ ] **1.6** Configuration: API key / env var (document in `magnitu_config.example.json` or existing config pattern); no secrets in git.
-- [ ] **1.7** **Tests**: unit tests for JSON repair + label validation (mock HTTP if needed).
+- [x] **1.1** Locate reference code (interview project): `mac/v3/gemini.py`, `mac/v3/extraction/prompts.py` — extract REST patterns, not project-specific cruft.
+- [x] **1.2** Add `GeminiClient` using **Google AI v1beta** REST with `responseMimeType: "application/json"` and **response schema** enforcement where supported.
+- [x] **1.3** Implement **parse_json_lenient** (or equivalent) for truncated / slightly invalid JSON from the model.
+- [x] **1.4** Create **`magnitu/prompts.py`** (or `prompts/` package) with:
+  - [x] **1.4a** A **prompt factory** mapping the four Magnitu categories ↔ structured Gemini request (single source of truth for enum ↔ display names).
+  - [x] **1.4b** **System prompt**: Swiss economic / trade analyst persona — surface **exclusion language** (e.g. EU/EEA-only, Binnenmarkt, Drittstaaten) that affects Switzerland even when “Switzerland” is not in the text.
+- [x] **1.5** Define the **Gemini output contract**: `{ "label": "<enum>", "reasoning": "<string>" }` — validate after parse; reject or retry on bad labels.
+- [x] **1.6** Configuration: API key / env var (document in `magnitu_config.example.json` or existing config pattern); no secrets in git.
+- [x] **1.7** **Tests**: unit tests for JSON repair + label validation (mock HTTP if needed).
 
 ### Acceptance
 
-- [ ] Can call Gemini from Python with **strict JSON** path + **fallback repair**, returning validated `label` + `reasoning`.
-- [ ] No new Seismo endpoints required for this phase.
+- [x] Can call Gemini from Python with **strict JSON** path + **fallback repair**, returning validated `label` + `reasoning`.
+- [x] No new Seismo endpoints required for this phase.
 
 ### Notes / files (fill as you implement)
 
 | Item | Location |
 |------|----------|
-| Client module | _TBD_ |
-| Prompts | `magnitu/prompts.py` (or agreed path) |
+| Client module | `magnitu/gemini.py`, `magnitu/gemini_config.py` |
+| Prompts | `magnitu/prompts.py` |
+| Entrypoint (validate + one retry for empty `investigation_lead` reasoning) | `magnitu/synthetic_scorer.py` |
+| Tests | `test_gemini.py` |
+| Env | `.env.example` (`GEMINI_*`) |
 
 ---
 
@@ -152,4 +155,4 @@ Map display names ↔ enums in one module (Phase 1 prompt factory).
 
 | Date | Phase | What shipped |
 |------|-------|----------------|
-| | | |
+| 2026-04-20 | 1 | `validate_synthetic_label_output`, `synthetic_scorer.call_gemini_for_synthetic_label`, `test_gemini.py`, `.env.example` Gemini knobs documented |

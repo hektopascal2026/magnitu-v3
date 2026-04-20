@@ -6,7 +6,7 @@ this module is Magnitu-specific (four label classes + Swiss trade persona).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Seismo / Magnitu label enums (exact strings)
 LABEL_INVESTIGATION_LEAD = "investigation_lead"
@@ -51,6 +51,16 @@ SCHEMA_SYNTHETIC_LABEL: Dict[str, Any] = {
     },
     "required": ["label", "reasoning"],
 }
+
+# Appended to the user prompt on the single retry when label is investigation_lead
+# but reasoning was empty (workspace rule: never persist that combination).
+INVESTIGATION_LEAD_REASONING_RETRY_SUFFIX = (
+    "CRITICAL: Your last reply used label investigation_lead but reasoning was "
+    "missing or empty. Respond again with the SAME JSON shape only: "
+    '{"label": "investigation_lead", "reasoning": "<non-empty string>"}. '
+    "The reasoning must explain the lead, including any EU/EEA-only, third-country, "
+    "or exclusion angle if the text supports it. No markdown fences."
+)
 
 
 def build_synthetic_label_user_prompt(
@@ -112,3 +122,37 @@ def normalize_synthetic_label(raw: Dict[str, Any]) -> Optional[str]:
     if label in MAGNITU_LABELS:
         return label
     return None
+
+
+def _reasoning_stripped(raw: Dict[str, Any]) -> str:
+    reasoning = raw.get("reasoning")
+    if reasoning is None:
+        return ""
+    if isinstance(reasoning, str):
+        return reasoning.strip()
+    return str(reasoning).strip()
+
+
+def should_retry_investigation_lead_empty_reasoning(raw: Dict[str, Any]) -> bool:
+    """True when parsed JSON is investigation_lead with missing/blank reasoning (one retry allowed)."""
+    if not isinstance(raw, dict):
+        return False
+    if normalize_synthetic_label(raw) != LABEL_INVESTIGATION_LEAD:
+        return False
+    return len(_reasoning_stripped(raw)) == 0
+
+
+def validate_synthetic_label_output(raw: Dict[str, Any]) -> Tuple[str, str]:
+    """Validate Gemini synthetic JSON. Returns (label_enum, reasoning).
+
+    Raises ValueError on unknown label or empty/missing reasoning.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("Gemini response must be a JSON object")
+    label = normalize_synthetic_label(raw)
+    if label is None:
+        raise ValueError("Invalid label: %r" % (raw.get("label"),))
+    reasoning = _reasoning_stripped(raw)
+    if not reasoning:
+        raise ValueError("Missing or empty reasoning")
+    return label, reasoning
