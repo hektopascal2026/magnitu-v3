@@ -1,3 +1,4 @@
+.env
 magnitu.db
 magnitu.db-shm
 magnitu.db-wal

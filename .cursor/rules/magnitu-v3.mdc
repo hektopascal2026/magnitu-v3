@@ -21,6 +21,7 @@ Python 3.9 only (`Optional`, `typing`; no `X | Y`). Seismo HTTP stays in `sync.p
 
 ## 3. Synthetic labeling (Gemini)
 
+- **Env (aligned with transcribe-v3):** `GEMINI_API_KEY`, `GEMINI_MODEL` (default `models/gemini-2.5-flash`), optional `GEMINI_CHUNK_MODEL`. Copy `.env.example` → `.env`; never commit `.env`.
 - Use **`GeminiClient`** (REST / v1beta) as the **only** path for Gemini calls in this app.
 - **Swiss beat persona**: System instructions must ask for **exclusion / third-country patterns** (e.g. *Drittstaaten*, *EU or EEA*, *Member States only*, *Binnenmarkt*) even when Switzerland is not named.
 - **Provenance**: Synthetic rows in **local** `labels.json` must include **`"source": "Gemini"`** (or equivalent agreed key) so Review & Correct can filter. **Backward compatibility**: Missing `source` = treat as legacy/human unless UI says otherwise.
