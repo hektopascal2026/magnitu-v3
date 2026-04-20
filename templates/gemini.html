@@ -1,0 +1,171 @@
+{% extends "layout.html" %}
+{% block title %}Gemini — Magnitu{% endblock %}
+
+{% block content %}
+<div class="gemini-page">
+    <h1 class="page-title">Gemini synthetic labeling</h1>
+    <p class="page-subtitle">
+        Target profile: <strong>{{ target_model_title }}</strong>
+        {% if active_model %}
+            · Active model v{{ active_model.version }}
+        {% else %}
+            · <em>No trained model yet</em> (batch still runs; Smart Queue falls back to newest unlabeled)
+        {% endif %}
+    </p>
+    <p class="help-text">{{ gemini_queue_help }}</p>
+
+    <div class="gemini-form">
+        <label class="field-label">Batch size (max 100)</label>
+        <input type="number" id="geminiLimit" min="1" max="100" value="50" class="field-input" />
+
+        <label class="field-label">Source filter</label>
+        <select id="geminiSource" class="field-input">
+            <option value="all">All types</option>
+            <option value="lex">Legislation only</option>
+            <option value="news">News only</option>
+        </select>
+
+        <label class="checkbox-row">
+            <input type="checkbox" id="geminiReplace" />
+            Re-label entries previously labeled by Gemini (retry failed rows)
+        </label>
+
+        <p class="help-text subtle">
+            Labels are saved locally with reasoning and <code>source: Gemini</code> in exports.
+            Seismo is not updated per row; use <strong>Push to Seismo</strong> from the Label page when ready.
+        </p>
+
+        <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
+    </div>
+
+    <div class="task-progress" id="taskProgress" style="display:none;">
+        <div class="task-progress-label" id="taskProgressLabel">Working...</div>
+        <div class="task-progress-track">
+            <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+        </div>
+        <div class="task-progress-meta" id="taskProgressMeta">0%</div>
+    </div>
+
+    <div id="geminiResult" class="gemini-result" style="display:none;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var P = {{ ('/p/' ~ profile.slug) | tojson }};
+    var taskProgress = document.getElementById('taskProgress');
+    var taskProgressLabel = document.getElementById('taskProgressLabel');
+    var taskProgressFill = document.getElementById('taskProgressFill');
+    var taskProgressMeta = document.getElementById('taskProgressMeta');
+    var resultEl = document.getElementById('geminiResult');
+
+    function setProgress(visible, label, pct, meta) {
+        taskProgress.style.display = visible ? 'block' : 'none';
+        if (!visible) return;
+        taskProgressLabel.textContent = label || 'Working...';
+        taskProgressFill.style.width = (pct || 0) + '%';
+        taskProgressMeta.textContent = meta || ((pct || 0) + '%');
+    }
+
+    function pollJob(jobId, onDone, onFail) {
+        var timer = setInterval(function() {
+            fetch('/api/jobs/' + jobId)
+                .then(function(r) { return r.json(); })
+                .then(function(job) {
+                    setProgress(true, job.message || 'Working...', job.progress || 0, (job.progress || 0) + '%');
+                    if (job.status === 'success') {
+                        clearInterval(timer);
+                        onDone(job.result || {});
+                    } else if (job.status === 'error') {
+                        clearInterval(timer);
+                        onFail(job.error || 'Unknown error');
+                    }
+                })
+                .catch(function(err) {
+                    clearInterval(timer);
+                    onFail(err.message);
+                });
+        }, 1000);
+    }
+
+    function escHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+    }
+
+    function showResult(res) {
+        resultEl.style.display = 'block';
+        var html = '<h3>Results</h3><ul>';
+        html += '<li>Labeled: <strong>' + (res.labeled || 0) + '</strong></li>';
+        html += '<li>Skipped: <strong>' + (res.skipped || 0) + '</strong></li>';
+        html += '<li>Failed: <strong>' + ((res.failed || []).length) + '</strong></li>';
+        html += '</ul>';
+        if (res.note) {
+            html += '<p class="help-text">' + escHtml(res.note) + '</p>';
+        }
+        if (res.failed && res.failed.length) {
+            html += '<h4>Failures (re-run with re-label Gemini to retry those IDs)</h4><ul class="fail-list">';
+            res.failed.forEach(function(f) {
+                html += '<li><code>' + escHtml(f.entry_type) + '</code> #' + escHtml(f.entry_id) +
+                    ' — ' + escHtml(f.error || '') + '</li>';
+            });
+            html += '</ul>';
+        }
+        if ((res.labeled || 0) > 0 && (res.failed || []).length === 0) {
+            html += '<p>When you have enough labels, open <a href="' + escHtml(P) + '/">Label</a> to <strong>Train</strong>.</p>';
+        }
+        resultEl.innerHTML = html;
+    }
+
+    document.getElementById('geminiStartBtn').addEventListener('click', function() {
+        var btn = this;
+        var limit = parseInt(document.getElementById('geminiLimit').value, 10) || 50;
+        limit = Math.max(1, Math.min(100, limit));
+        var source = document.getElementById('geminiSource').value;
+        var replaceGemini = document.getElementById('geminiReplace').checked;
+
+        btn.disabled = true;
+        resultEl.style.display = 'none';
+        setProgress(true, 'Starting Gemini job...', 1, '1%');
+
+        fetch(P + '/api/gemini/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                limit: limit,
+                source: source,
+                replace_gemini: replaceGemini
+            })
+        })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success || !data.job_id) {
+                    throw new Error(data.detail || data.error || 'Failed to start job');
+                }
+                pollJob(
+                    data.job_id,
+                    function(result) {
+                        setProgress(true, 'Done', 100, '100%');
+                        showResult(result);
+                        flash('Gemini batch finished: ' + (result.labeled || 0) + ' labeled.', 'success');
+                        btn.disabled = false;
+                        setTimeout(function() { setProgress(false); }, 2000);
+                    },
+                    function(errMsg) {
+                        flash('Gemini batch failed: ' + errMsg, 'error');
+                        btn.disabled = false;
+                        setProgress(false);
+                    }
+                );
+            })
+            .catch(function(err) {
+                flash('Error: ' + err.message, 'error');
+                btn.disabled = false;
+                setProgress(false);
+            });
+    });
+})();
+</script>
+{% endblock %}

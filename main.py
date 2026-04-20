@@ -35,6 +35,7 @@ import explainer
 import distiller
 import sampler
 import model_manager
+from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
 from config import get_config, save_config, BASE_DIR, VERSION
 import logging
 
@@ -481,6 +482,67 @@ async def labeling_page(request: Request, slug: str, source: str = "all"):
     ctx["sampling_stats"] = reasons
     ctx["has_model"] = ctx["active_model"] is not None
     return templates.TemplateResponse("labeling.html", ctx)
+
+
+@app.get("/p/{slug}/gemini", response_class=HTMLResponse)
+async def gemini_page(request: Request, slug: str):
+    """Synthetic labeling (Gemini) — batch job with same Smart Queue prioritisation as Label."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    ctx = _base_context(request, profile)
+    pinfo = model_manager.get_profile(profile_id)
+    if pinfo:
+        ctx["target_model_title"] = pinfo.get("model_name") or profile.get("display_name", "")
+    else:
+        ctx["target_model_title"] = profile.get("display_name", slug)
+    ctx["gemini_queue_help"] = (
+        "Batches use the same Smart Queue as Label, prioritising **uncertain** and **new** "
+        "rows, then conflict/diverse picks to reach your limit. Unlabeled entries only, unless "
+        "you check re-label for rows previously labeled by Gemini (retry failures)."
+    )
+    return templates.TemplateResponse("gemini.html", ctx)
+
+
+@app.post("/p/{slug}/api/gemini/batch")
+async def gemini_batch_start(slug: str, request: Request):
+    """Start a background Gemini synthetic-label job. Poll ``GET /api/jobs/{job_id}``."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw_limit = body.get("limit", 50)
+    try:
+        batch_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        batch_limit = 50
+    batch_limit = max(1, min(batch_limit, 100))
+    replace_gemini = bool(body.get("replace_gemini", False))
+    source = str(body.get("source", "all")).strip().lower()
+    entry_type = None
+    if source == "lex":
+        entry_type = "lex_item"
+    elif source == "news":
+        entry_type = "feed_item"
+
+    job_id = _create_job("gemini_synthetic_batch")
+    t = threading.Thread(
+        target=lambda: _run_job(
+            job_id,
+            lambda cb: run_gemini_synthetic_batch_job(
+                profile_id,
+                batch_limit=batch_limit,
+                entry_type=entry_type,
+                replace_gemini=replace_gemini,
+                progress_cb=cb,
+            ),
+        ),
+        daemon=True,
+    )
+    t.start()
+    return {"success": True, "job_id": job_id}
 
 
 @app.get("/p/{slug}/api/entries")

@@ -42,6 +42,10 @@ def _migrate_db(conn: sqlite3.Connection):
     if "reasoning" not in label_cols:
         conn.execute("ALTER TABLE labels ADD COLUMN reasoning TEXT DEFAULT ''")
 
+    label_cols = {row[1] for row in conn.execute("PRAGMA table_info(labels)").fetchall()}
+    if "label_source" not in label_cols:
+        conn.execute("ALTER TABLE labels ADD COLUMN label_source TEXT DEFAULT ''")
+
     cursor = conn.execute("PRAGMA table_info(models)")
     model_cols = {row[1] for row in cursor.fetchall()}
     if "architecture" not in model_cols:
@@ -170,6 +174,7 @@ def init_db():
             entry_id    INTEGER NOT NULL,
             label       TEXT    NOT NULL,
             reasoning   TEXT    DEFAULT '',
+            label_source TEXT   DEFAULT '',
             created_at  TEXT    DEFAULT (datetime('now')),
             updated_at  TEXT    DEFAULT (datetime('now')),
             UNIQUE(profile_id, entry_type, entry_id)
@@ -471,15 +476,20 @@ def get_entry_count() -> int:
 # ─── Label operations ────────────────────────────────────────────────────────
 
 def set_label(entry_type: str, entry_id: int, label: str,
-              reasoning: str = "", profile_id: int = 1):
-    """Set or update a label for an entry within a profile."""
+              reasoning: str = "", profile_id: int = 1,
+              label_source: str = ""):
+    """Set or update a label for an entry within a profile.
+
+    label_source: empty for manual labels; \"Gemini\" for synthetic (kept local; not sent to Seismo).
+    """
     conn = get_db()
     conn.execute("""
-        INSERT INTO labels (profile_id, entry_type, entry_id, label, reasoning)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO labels (profile_id, entry_type, entry_id, label, reasoning, label_source)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(profile_id, entry_type, entry_id) DO UPDATE SET
-            label=excluded.label, reasoning=excluded.reasoning, updated_at=datetime('now')
-    """, (profile_id, entry_type, entry_id, label, reasoning))
+            label=excluded.label, reasoning=excluded.reasoning,
+            label_source=excluded.label_source, updated_at=datetime('now')
+    """, (profile_id, entry_type, entry_id, label, reasoning, label_source or ""))
     conn.commit()
     conn.close()
 
@@ -508,13 +518,18 @@ def get_label_with_reasoning(entry_type: str, entry_id: int,
                               profile_id: int = 1) -> Optional[dict]:
     conn = get_db()
     row = conn.execute(
-        "SELECT label, reasoning FROM labels WHERE profile_id=? AND entry_type=? AND entry_id=?",
+        """SELECT label, reasoning, COALESCE(label_source, '') AS label_source
+           FROM labels WHERE profile_id=? AND entry_type=? AND entry_id=?""",
         (profile_id, entry_type, entry_id)
     ).fetchone()
     conn.close()
     if not row:
         return None
-    return {"label": row["label"], "reasoning": row["reasoning"] or ""}
+    return {
+        "label": row["label"],
+        "reasoning": row["reasoning"] or "",
+        "label_source": row["label_source"] or "",
+    }
 
 
 def get_all_labels(profile_id: int = 1) -> List[dict]:
@@ -522,6 +537,7 @@ def get_all_labels(profile_id: int = 1) -> List[dict]:
     conn = get_db()
     rows = conn.execute("""
         SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at, l.updated_at,
+               COALESCE(l.label_source, '') AS label_source,
                e.title, e.description, e.content, e.source_type, e.source_name, e.source_category
         FROM labels l
         JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
@@ -536,7 +552,8 @@ def get_all_labels_raw(profile_id: int = 1) -> List[dict]:
     """Get all labels without joining entries (for syncing)."""
     conn = get_db()
     rows = conn.execute("""
-        SELECT entry_type, entry_id, label, reasoning, created_at, updated_at
+        SELECT entry_type, entry_id, label, reasoning,
+               COALESCE(label_source, '') AS label_source, created_at, updated_at
         FROM labels
         WHERE profile_id = ?
         ORDER BY updated_at DESC
@@ -716,6 +733,7 @@ def export_labels(profile_id: int = 1) -> List[dict]:
     conn = get_db()
     rows = conn.execute("""
         SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at, l.updated_at,
+               COALESCE(l.label_source, '') AS label_source,
                e.title, e.description, e.content, e.link, e.author,
                e.published_date, e.source_name, e.source_category, e.source_type
         FROM labels l
@@ -724,7 +742,14 @@ def export_labels(profile_id: int = 1) -> List[dict]:
         ORDER BY l.updated_at DESC
     """, (profile_id,)).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        src = (d.pop("label_source", "") or "").strip()
+        if src:
+            d["source"] = src
+        out.append(d)
+    return out
 
 
 def import_labels(labels_list: List[dict], profile_id: int = 1) -> dict:
@@ -755,14 +780,15 @@ def import_labels(labels_list: List[dict], profile_id: int = 1) -> dict:
                 skipped += 1
                 continue
             reasoning = lbl.get("reasoning", "")
+            label_src = (lbl.get("source") or lbl.get("label_source") or "").strip()
             key = (entry_type, entry_id)
             existing = existing_map.get(key)
             if existing:
                 if lbl_updated > existing["updated_at"]:
                     conn.execute("""
-                        UPDATE labels SET label=?, reasoning=?, updated_at=?
+                        UPDATE labels SET label=?, reasoning=?, label_source=?, updated_at=?
                         WHERE profile_id=? AND entry_type=? AND entry_id=?
-                    """, (label, reasoning, lbl_updated,
+                    """, (label, reasoning, label_src, lbl_updated,
                           profile_id, entry_type, entry_id))
                     updated += 1
                 else:
@@ -770,9 +796,10 @@ def import_labels(labels_list: List[dict], profile_id: int = 1) -> dict:
             else:
                 conn.execute("""
                     INSERT INTO labels
-                        (profile_id, entry_type, entry_id, label, reasoning, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (profile_id, entry_type, entry_id, label, reasoning,
+                        (profile_id, entry_type, entry_id, label, reasoning, label_source,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (profile_id, entry_type, entry_id, label, reasoning, label_src,
                       lbl.get("created_at", ""), lbl_updated))
                 imported += 1
 

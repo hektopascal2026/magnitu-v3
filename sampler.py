@@ -250,3 +250,26 @@ def get_smart_entries(limit: int = 30, entry_type: str = None,
                 result.append(entry)
 
     return result[:limit]
+
+
+def get_gemini_synthetic_batch_entries(
+    limit: int = 80,
+    entry_type: Optional[str] = None,
+    profile_id: int = 1,
+) -> List[dict]:
+    """Entries for Gemini synthetic batch: same smart pool as the Label page, prioritising
+    **uncertain** then **new**, then other smart-queue reasons so the batch can fill up.
+
+    Callers should still filter to unlabeled (or replace_gemini) before labeling.
+    """
+    lim = max(1, min(int(limit), 200))
+    pool = get_smart_entries(
+        limit=max(120, lim * 2), entry_type=entry_type, profile_id=profile_id
+    )
+
+    def rank(reason: str) -> int:
+        order = {"uncertain": 0, "new": 1, "conflict": 2, "diverse": 3}
+        return order.get(reason or "new", 9)
+
+    ranked = sorted(pool, key=lambda e: rank(str(e.get("_sampling_reason", "new"))))
+    return ranked[:lim]

@@ -1229,6 +1229,70 @@ kbd {
     font-size: 14px; /* medium */
 }
 
+/* ═══ Gemini synthetic labeling page ═══ */
+.gemini-page .page-title {
+    font-size: 18px;
+    margin-bottom: 8px;
+}
+.gemini-page .page-subtitle {
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+.gemini-page .help-text {
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+    color: #222;
+}
+.gemini-page .help-text.subtle {
+    color: #444;
+}
+.gemini-page .help-text code {
+    font-size: 11px;
+}
+.gemini-form {
+    background: #ffffff;
+    border: 1px solid #e8e8e8;
+    padding: 16px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 520px;
+}
+.gemini-form .field-label {
+    font-size: 12px;
+    font-weight: 600;
+}
+.gemini-form .field-input {
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+.gemini-form .checkbox-row {
+    font-size: 13px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.4;
+}
+.gemini-result {
+    margin-top: 16px;
+    padding: 14px;
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+}
+.gemini-result .fail-list {
+    font-size: 12px;
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
 /* ═══ Responsive ═══ */
 @media (max-width: 768px) {
     .container { padding: 12px; }

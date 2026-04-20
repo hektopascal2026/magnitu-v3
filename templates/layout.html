@@ -40,6 +40,7 @@
             <nav class="top-bar-nav">
                 {% if profile %}
                 <a href="/p/{{ profile.slug }}/" class="nav-link {% if request.url.path == '/p/' + profile.slug + '/' %}active{% endif %}">Label</a>
+                <a href="/p/{{ profile.slug }}/gemini" class="nav-link {% if '/gemini' in request.url.path %}active{% endif %}">Gemini</a>
                 <a href="/p/{{ profile.slug }}/top" class="nav-link {% if '/top' in request.url.path %}active{% endif %}">Top 30</a>
                 <a href="/p/{{ profile.slug }}/model" class="nav-link {% if '/model' in request.url.path %}active{% endif %}">Model</a>
                 <a href="/p/{{ profile.slug }}/dashboard" class="nav-link {% if '/dashboard' in request.url.path %}active{% endif %}">Dashboard</a>
