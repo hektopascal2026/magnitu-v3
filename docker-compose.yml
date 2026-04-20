@@ -1,0 +1,19 @@
+services:
+  magnitu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: magnitu:cpu
+    container_name: magnitu
+    ports:
+      - "8000:8000"
+    environment:
+      MAGNITU_DATA_DIR: /app/data
+      HF_HOME: /app/data/hf
+      TRANSFORMERS_CACHE: /app/data/hf
+    volumes:
+      - magnitu_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  magnitu_data:

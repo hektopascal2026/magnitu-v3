@@ -1,0 +1,122 @@
+{% extends "layout.html" %}
+{% block title %}Setup — Magnitu{% endblock %}
+
+{% block content %}
+<div class="dashboard-section">
+    <h2>Welcome to Magnitu</h2>
+    <p class="section-desc">Before you start, set up a model profile. You can create a new model from scratch or load an existing <code>.magnitu</code> file shared by a colleague.</p>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+
+        <!-- Option A: New Model -->
+        <div style="padding: 16px; border: 2px solid #000000; background: #fafafa;">
+            <h3 style="margin-bottom: 12px;">Create New Model</h3>
+            <form id="newModelForm">
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <label style="font-size: 12px; font-weight: 600;">Model Name</label>
+                    <input type="text" id="modelName" required placeholder="e.g. pascal1"
+                           style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label style="font-size: 12px; font-weight: 600;">Short Description</label>
+                    <input type="text" id="modelDesc" placeholder="e.g. Swiss investigative journalism leads"
+                           style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box;">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Create Model</button>
+            </form>
+        </div>
+
+        <!-- Option B: Load Model -->
+        <div style="padding: 16px; border: 2px solid #000000; background: #fafafa;">
+            <h3 style="margin-bottom: 12px;">Load Existing Model</h3>
+            <p style="font-size: 12px; margin-bottom: 12px; line-height: 1.5;">
+                Upload a <code>.magnitu</code> file to load a model with its labels and training data. You can keep adding to it.
+            </p>
+            <form id="loadModelForm" enctype="multipart/form-data">
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label style="font-size: 12px; font-weight: 600;">Model File (.magnitu)</label>
+                    <input type="file" id="modelFile" accept=".magnitu"
+                           style="width: 100%; padding: 6px 0; font-size: 12px;">
+                </div>
+                <button type="submit" class="btn" style="width: 100%;">Load Model</button>
+            </form>
+        </div>
+
+    </div>
+
+    <div id="setupStatus" style="margin-top: 16px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    /* Create new model */
+    document.getElementById('newModelForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var name = document.getElementById('modelName').value.trim();
+        var desc = document.getElementById('modelDesc').value.trim();
+        if (!name) { flash('Model name is required.', 'error'); return; }
+
+        fetch('/api/model/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, description: desc }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success) {
+                var slug = d.profile && d.profile.slug ? d.profile.slug : '';
+                window.location.href = slug ? '/p/' + slug + '/' : '/';
+            } else {
+                flash(d.error || 'Failed to create model.', 'error');
+            }
+        })
+        .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+    });
+
+    /* Load existing model */
+    document.getElementById('loadModelForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var fileInput = document.getElementById('modelFile');
+        if (!fileInput.files.length) { flash('Select a .magnitu file.', 'error'); return; }
+
+        var formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        var status = document.getElementById('setupStatus');
+        var btn = e.target.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.textContent = 'Importing...';
+        status.innerHTML = '<div class="message message-info">Importing model — this may take a moment...</div>';
+
+        fetch('/api/model/import', { method: 'POST', body: formData })
+        .then(function(r) {
+            if (!r.ok) {
+                return r.text().then(function(t) {
+                    try { var d = JSON.parse(t); throw new Error(d.detail || d.error || 'Server error ' + r.status); }
+                    catch(e) { if (e.message.indexOf('Server error') === 0) throw e; throw new Error('Server error ' + r.status); }
+                });
+            }
+            return r.json();
+        })
+        .then(function(d) {
+            if (d.success) {
+                status.innerHTML = '<div class="message message-success">' + (d.message || 'Model loaded.') + ' Redirecting...</div>';
+                var dest = d.slug ? '/p/' + d.slug + '/' : '/';
+                setTimeout(function() { window.location.href = dest; }, 1500);
+            } else {
+                status.innerHTML = '<div class="message message-error">' + (d.error || 'Import failed.') + '</div>';
+                btn.disabled = false;
+                btn.textContent = 'Load Model';
+            }
+        })
+        .catch(function(err) {
+            status.innerHTML = '<div class="message message-error">Error: ' + err.message + '</div>';
+            btn.disabled = false;
+            btn.textContent = 'Load Model';
+        });
+    });
+})();
+</script>
+{% endblock %}

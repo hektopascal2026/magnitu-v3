@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Magnitu Label</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    background: #FFF7F7;
+    color: #000;
+    line-height: 1.5;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Top bar ── */
+.top-bar {
+    padding: 12px 16px;
+    border-bottom: 2px solid #FF6B6B;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.top-bar-title {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.top-bar-stats {
+    font-size: 12px;
+    color: #000;
+}
+
+.top-bar-stats strong { font-weight: 800; }
+
+/* ── Setup screen ── */
+.setup-screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    gap: 16px;
+}
+
+.setup-screen h2 {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.setup-screen input {
+    width: 100%;
+    max-width: 400px;
+    padding: 12px 14px;
+    border: 2px solid #000;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.setup-screen input:focus {
+    outline: none;
+    box-shadow: 2px 2px 0 #000;
+}
+
+.setup-screen .help {
+    font-size: 12px;
+    color: #666;
+    max-width: 400px;
+    text-align: center;
+}
+
+/* ── Card area ── */
+.card-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px;
+    gap: 12px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ── Entry card ── */
+.entry-card {
+    background: #fff;
+    border: 2px solid #000;
+    padding: 14px 16px;
+}
+
+.entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+.source-tag {
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 2px solid #000;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.source-rss { background: #add8e6; }
+.source-substack { background: #C5B4D1; }
+.source-email { background: #f5f5f5; }
+.source-lex_eu { background: #FFF3BF; }
+.source-lex_ch { background: #FFD8D8; }
+.source-lex_de { background: #FFF3BF; }
+.source-lex_fr { background: #FFF3BF; }
+.source-lex_it { background: #FFF3BF; }
+
+.entry-date { font-style: italic; color: #555; }
+.entry-category { color: #555; }
+
+.entry-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+    margin-bottom: 4px;
+}
+
+.entry-title a {
+    color: #000;
+    text-decoration: none;
+}
+
+.entry-title a:hover { text-decoration: underline; }
+
+.entry-desc {
+    font-size: 13px;
+    color: #333;
+    line-height: 1.5;
+    margin-bottom: 4px;
+}
+
+.entry-source {
+    font-size: 11px;
+    color: #666;
+}
+
+/* ── Reasoning ── */
+.reasoning-row {
+    margin-top: 8px;
+}
+
+.reasoning-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1.5px solid #e0e0e0;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fafafa;
+}
+
+.reasoning-input:focus {
+    outline: none;
+    border-color: #000;
+    background: #fff;
+    box-shadow: 1px 1px 0 #000;
+}
+
+.reasoning-input::placeholder {
+    color: #aaa;
+    font-style: italic;
+}
+
+/* ── Label buttons ── */
+.label-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.label-btn {
+    padding: 14px 10px;
+    border: 2px solid #000;
+    background: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.1s;
+    text-align: center;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.label-btn:active {
+    transform: scale(0.97);
+}
+
+.label-btn-investigation { border-color: #FF6B6B; }
+.label-btn-investigation:active, .label-btn-investigation.active { background: #FF6B6B; }
+
+.label-btn-important { border-color: #FFA94D; }
+.label-btn-important:active, .label-btn-important.active { background: #FFA94D; }
+
+.label-btn-background { border-color: #74C0FC; }
+.label-btn-background:active, .label-btn-background.active { background: #74C0FC; }
+
+.label-btn-noise { border-color: #e0e0e0; }
+.label-btn-noise:active, .label-btn-noise.active { background: #e0e0e0; }
+
+/* ── Labeled card fade ── */
+.entry-card.labeled {
+    opacity: 0.3;
+    transition: opacity 0.4s;
+    pointer-events: none;
+}
+
+/* ── Empty / loading states ── */
+.state-msg {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 24px;
+    text-align: center;
+    gap: 12px;
+    font-size: 14px;
+    color: #555;
+}
+
+.state-msg strong { color: #000; }
+
+/* ── General button ── */
+.btn {
+    padding: 12px 24px;
+    border: 2px solid #000;
+    background: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn:active { box-shadow: 2px 2px 0 #000; }
+
+.btn-primary {
+    background: #FF6B6B;
+    border-color: #FF6B6B;
+}
+
+/* ── Flash messages ── */
+.flash {
+    position: fixed;
+    top: 60px;
+    left: 16px;
+    right: 16px;
+    padding: 10px 14px;
+    border: 2px solid #000;
+    background: #fff;
+    font-size: 12px;
+    z-index: 9999;
+    animation: flashIn 0.2s ease;
+}
+
+.flash-success { background: #f0fff0; }
+.flash-error { background: #fff0f0; border-color: #FF2C2C; max-height: 40vh; overflow-y: auto; word-break: break-word; }
+
+@keyframes flashIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Source filter bar ── */
+.filter-bar {
+    display: flex;
+    gap: 0;
+    padding: 8px 16px;
+    background: #fff;
+    border-bottom: 1px solid #eee;
+}
+
+.filter-btn {
+    flex: 1;
+    padding: 8px 6px;
+    border: 2px solid #000;
+    border-right-width: 0;
+    background: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    text-align: center;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.1s;
+}
+
+.filter-btn:last-child { border-right-width: 2px; }
+.filter-btn.active { background: #FF6B6B; color: #fff; }
+.filter-btn:not(.active):active { background: #f0f0f0; }
+
+.filter-btn .filter-count {
+    font-weight: 400;
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+/* ── Settings gear ── */
+.settings-btn {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px;
+    -webkit-tap-highlight-color: transparent;
+}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+    <span class="top-bar-title">Magnitu Label</span>
+    <span class="top-bar-stats" id="stats"></span>
+    <button class="settings-btn" id="settingsBtn" title="Settings">&#9881;</button>
+</div>
+
+<div class="filter-bar" id="filterBar">
+    <button class="filter-btn active" data-type="all">All</button>
+    <button class="filter-btn" data-type="lex_item">Legislation</button>
+    <button class="filter-btn" data-type="feed_item">News</button>
+</div>
+<div id="flashContainer"></div>
+<div id="app"></div>
+
+<script>
+(function() {
+    // ── Magnitu profile mode (recommended): labels go to Magnitu DB for this profile ──
+    // Set MAGNITU_BASE to your Magnitu server origin (no trailing slash). Example:
+    //   var MAGNITU_BASE = 'https://lab.example.com';
+    var MAGNITU_BASE = '';
+    var MAGNITU_PROFILE_SLUG = 'export-kmu';
+
+    // ── Seismo-only mode (legacy): set URL + API key, skip Magnitu_BASE ─────────
+    var HARDCODED_URL    = '';
+    var HARDCODED_APIKEY = '';
+    // ─────────────────────────────────────────────────────────────────────────
+
+    var USE_MAGNITU = MAGNITU_BASE !== '';
+    var LOCKED = USE_MAGNITU || (HARDCODED_URL !== '' && HARDCODED_APIKEY !== '');
+
+    function magnituProfileBase() {
+        return MAGNITU_BASE.replace(/\/$/, '') + '/p/' + MAGNITU_PROFILE_SLUG;
+    }
+
+    function mapFilterToSource() {
+        if (currentFilter === 'lex_item') return 'lex';
+        if (currentFilter === 'feed_item') return 'news';
+        return 'all';
+    }
+
+    // Hide settings gear when credentials are hardcoded
+    if (LOCKED) {
+        document.getElementById('settingsBtn').style.display = 'none';
+    }
+
+    // ── Storage helpers ──
+    var STORAGE_KEY_URL = 'magnitu_label_seismo_url';
+    var STORAGE_KEY_APIKEY = 'magnitu_label_api_key';
+    var STORAGE_KEY_LABELED = 'magnitu_label_done_ids';
+    var STORAGE_KEY_COUNT = 'magnitu_label_session_count';
+    var STORAGE_KEY_QUEUE = 'magnitu_label_retry_queue';
+    var STORAGE_KEY_FILTER = 'magnitu_label_filter';
+
+    var currentFilter = localStorage.getItem(STORAGE_KEY_FILTER) || 'all';
+
+    function getConfig() {
+        if (USE_MAGNITU) return { url: '', apiKey: '' };
+        if (LOCKED && !USE_MAGNITU) return { url: HARDCODED_URL, apiKey: HARDCODED_APIKEY };
+        return {
+            url: localStorage.getItem(STORAGE_KEY_URL) || '',
+            apiKey: localStorage.getItem(STORAGE_KEY_APIKEY) || ''
+        };
+    }
+
+    function saveConfig(url, apiKey) {
+        if (LOCKED) return;
+        localStorage.setItem(STORAGE_KEY_URL, url.trim());
+        localStorage.setItem(STORAGE_KEY_APIKEY, apiKey.trim());
+    }
+
+    function getLabeledIds() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY_LABELED) || '[]'); }
+        catch(e) { return []; }
+    }
+
+    function markLabeled(entryType, entryId) {
+        var ids = getLabeledIds();
+        var key = entryType + ':' + entryId;
+        if (ids.indexOf(key) === -1) ids.push(key);
+        localStorage.setItem(STORAGE_KEY_LABELED, JSON.stringify(ids));
+    }
+
+    function isLabeled(entryType, entryId) {
+        return getLabeledIds().indexOf(entryType + ':' + entryId) !== -1;
+    }
+
+    function getSessionCount() {
+        return parseInt(localStorage.getItem(STORAGE_KEY_COUNT) || '0', 10);
+    }
+
+    function incSessionCount() {
+        var c = getSessionCount() + 1;
+        localStorage.setItem(STORAGE_KEY_COUNT, '' + c);
+        return c;
+    }
+
+    // ── Retry queue: stores full label data for failed pushes ──
+    function getRetryQueue() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY_QUEUE) || '[]'); }
+        catch(e) { return []; }
+    }
+
+    function addToRetryQueue(entryType, entryId, label, reasoning, labeledAt) {
+        var queue = getRetryQueue();
+        // Replace any existing entry for the same item
+        queue = queue.filter(function(q) {
+            return !(q.entry_type === entryType && q.entry_id === entryId);
+        });
+        queue.push({
+            entry_type: entryType,
+            entry_id: entryId,
+            label: label,
+            reasoning: reasoning || '',
+            labeled_at: labeledAt
+        });
+        localStorage.setItem(STORAGE_KEY_QUEUE, JSON.stringify(queue));
+        updateStats();
+    }
+
+    function removeFromRetryQueue(entryType, entryId) {
+        var queue = getRetryQueue();
+        queue = queue.filter(function(q) {
+            return !(q.entry_type === entryType && q.entry_id === entryId);
+        });
+        localStorage.setItem(STORAGE_KEY_QUEUE, JSON.stringify(queue));
+        updateStats();
+    }
+
+    function flushRetryQueue() {
+        var queue = getRetryQueue();
+        if (queue.length === 0) return Promise.resolve(0);
+
+        if (USE_MAGNITU) {
+            var base = magnituProfileBase();
+            var chain = Promise.resolve();
+            queue.forEach(function(q) {
+                chain = chain.then(function() {
+                    var fd = new FormData();
+                    fd.append('entry_type', q.entry_type);
+                    fd.append('entry_id', String(q.entry_id));
+                    fd.append('label', q.label);
+                    fd.append('reasoning', q.reasoning || '');
+                    return fetch(base + '/api/label', { method: 'POST', body: fd, credentials: 'omit' })
+                        .then(function(r) {
+                            if (!r.ok) {
+                                return r.text().then(function(t) {
+                                    throw new Error('HTTP ' + r.status + ': ' + t.substring(0, 120));
+                                });
+                            }
+                            return r.json();
+                        });
+                });
+            });
+            return chain.then(function() {
+                var flushed = queue.length;
+                localStorage.setItem(STORAGE_KEY_QUEUE, '[]');
+                updateStats();
+                return flushed;
+            });
+        }
+
+        return seismoRequest('POST', 'magnitu_labels', { labels: queue })
+            .then(function(result) {
+                var flushed = queue.length;
+                localStorage.setItem(STORAGE_KEY_QUEUE, '[]');
+                updateStats();
+                return flushed;
+            });
+    }
+
+    // ── Flash messages ──
+    function flash(msg, type) {
+        var container = document.getElementById('flashContainer');
+        var div = document.createElement('div');
+        div.className = 'flash flash-' + (type || 'success');
+        div.textContent = msg;
+        if (type === 'error') {
+            console.error('[magnitu-mini]', msg);
+            div.style.cursor = 'pointer';
+            div.title = 'Tap to dismiss';
+            div.onclick = function() { div.remove(); };
+        }
+        container.appendChild(div);
+        setTimeout(function() { div.remove(); }, type === 'error' ? 15000 : 4000);
+    }
+
+    // ── Seismo API ──
+    function seismoRequest(method, action, body) {
+        var cfg = getConfig();
+        if (!cfg.url || !cfg.apiKey) return Promise.reject(new Error('Not configured'));
+        var sep = cfg.url.indexOf('?') > -1 ? '&' : '?';
+        var url = cfg.url + sep + 'action=' + action + '&api_key=' + encodeURIComponent(cfg.apiKey);
+        var opts = { method: method, headers: {} };
+        if (body) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        return fetch(url, opts)
+            .catch(function(err) {
+                var pageOrigin = window.location.origin;
+                try { var apiOrigin = new URL(cfg.url).origin; } catch(e) { var apiOrigin = '?'; }
+                if (pageOrigin !== apiOrigin) {
+                    throw new Error(
+                        'CORS blocked: this page is on ' + pageOrigin +
+                        ' but Seismo is on ' + apiOrigin +
+                        '. They must match exactly (including www).'
+                    );
+                }
+                throw new Error('Network error: ' + err.message);
+            })
+            .then(function(r) {
+                if (!r.ok) {
+                    if (r.status === 401) throw new Error('Bad API key (HTTP 401)');
+                    if (r.status === 403) throw new Error('Access denied (HTTP 403)');
+                    return r.text().then(function(body) {
+                        var detail = body.substring(0, 200);
+                        throw new Error('HTTP ' + r.status + ': ' + detail);
+                    });
+                }
+                return r.json();
+            });
+    }
+
+    function fetchEntries() {
+        if (USE_MAGNITU) {
+            var src = mapFilterToSource();
+            return fetch(
+                magnituProfileBase() + '/api/entries?source=' + encodeURIComponent(src) + '&limit=500',
+                { credentials: 'omit' }
+            ).then(function(r) {
+                if (!r.ok) {
+                    return r.text().then(function(t) {
+                        throw new Error('HTTP ' + r.status + ': ' + t.substring(0, 200));
+                    });
+                }
+                return r.json();
+            });
+        }
+        return seismoRequest('GET', 'magnitu_entries&type=' + currentFilter + '&limit=500');
+    }
+
+    function verifyLabelEndpoint() {
+        if (USE_MAGNITU) {
+            return fetch(magnituProfileBase() + '/api/stats', { credentials: 'omit' }).then(function(r) {
+                if (!r.ok) throw new Error('Magnitu unreachable (HTTP ' + r.status + ')');
+                return {};
+            });
+        }
+        return seismoRequest('POST', 'magnitu_labels', { labels: [] });
+    }
+
+    function pushLabel(entryType, entryId, label, reasoning) {
+        if (USE_MAGNITU) {
+            var fd = new FormData();
+            fd.append('entry_type', entryType);
+            fd.append('entry_id', String(entryId));
+            fd.append('label', label);
+            fd.append('reasoning', reasoning || '');
+            return fetch(magnituProfileBase() + '/api/label', { method: 'POST', body: fd, credentials: 'omit' })
+                .then(function(r) {
+                    if (!r.ok) {
+                        return r.text().then(function(t) {
+                            throw new Error('HTTP ' + r.status + ': ' + t.substring(0, 200));
+                        });
+                    }
+                    return r.json();
+                });
+        }
+        var now = new Date();
+        var ts = now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0') + ' ' +
+            String(now.getHours()).padStart(2, '0') + ':' +
+            String(now.getMinutes()).padStart(2, '0') + ':' +
+            String(now.getSeconds()).padStart(2, '0');
+        return seismoRequest('POST', 'magnitu_labels', {
+            labels: [{
+                entry_type: entryType,
+                entry_id: entryId,
+                label: label,
+                reasoning: reasoning || '',
+                labeled_at: ts
+            }]
+        });
+    }
+
+    // ── Update stats display ──
+    function updateStats() {
+        var count = getSessionCount();
+        var total = getLabeledIds().length;
+        var pending = getRetryQueue().length;
+        var html = 'Session: <strong>' + count + '</strong> &middot; Total: <strong>' + total + '</strong>';
+        if (pending > 0) {
+            html += ' &middot; <span style="color:#FF2C2C;font-weight:700;" title="' + pending + ' labels waiting to sync">' + pending + ' pending</span>';
+        }
+        document.getElementById('stats').innerHTML = html;
+    }
+
+    // ── Render: Setup screen ──
+    function showSetup() {
+        var cfg = getConfig();
+        var app = document.getElementById('app');
+        app.innerHTML = '';
+        var div = document.createElement('div');
+        div.className = 'setup-screen';
+        div.innerHTML =
+            '<h2>Connect to Seismo</h2>' +
+            '<input type="url" id="setupUrl" placeholder="https://your-domain.ch/seismo/index.php" value="' + (cfg.url || '') + '">' +
+            '<input type="text" id="setupKey" placeholder="API key" value="' + (cfg.apiKey || '') + '" style="font-family:monospace;">' +
+            '<div class="help">Enter your Seismo URL and API key. Same credentials as in Magnitu&rsquo;s settings.<br>URL must start with the same domain as this page (' + window.location.origin + ').</div>' +
+            '<button class="btn btn-primary" id="setupSave">Connect</button>';
+        app.appendChild(div);
+
+        document.getElementById('setupSave').addEventListener('click', function() {
+            var url = document.getElementById('setupUrl').value.trim();
+            var key = document.getElementById('setupKey').value.trim();
+            if (!url || !key) { flash('Enter both URL and API key.', 'error'); return; }
+            saveConfig(url, key);
+            loadEntries();
+        });
+    }
+
+    // ── Render: Entry cards ──
+    function showEntries(entries) {
+        var app = document.getElementById('app');
+        app.innerHTML = '';
+        var area = document.createElement('div');
+        area.className = 'card-area';
+
+        // Filter out already-labeled entries
+        var unlabeled = entries.filter(function(e) {
+            return !isLabeled(e.entry_type, e.entry_id);
+        });
+
+        if (unlabeled.length === 0) {
+            area.innerHTML =
+                '<div class="state-msg">' +
+                '<strong>All caught up</strong>' +
+                '<p>You\'ve labeled all available entries. Check back after the next Seismo update.</p>' +
+                '<button class="btn" id="reloadBtn">Refresh</button>' +
+                '</div>';
+            app.appendChild(area);
+            document.getElementById('reloadBtn').addEventListener('click', loadEntries);
+            return;
+        }
+
+        // Show up to 20 entries at a time
+        var batch = unlabeled.slice(0, 20);
+
+        batch.forEach(function(entry) {
+            var card = document.createElement('div');
+            card.className = 'entry-card';
+            card.dataset.entryType = entry.entry_type;
+            card.dataset.entryId = entry.entry_id;
+
+            var desc = entry.description || '';
+            if (desc.length > 200) desc = desc.substring(0, 200) + '...';
+
+            card.innerHTML =
+                '<div class="entry-meta">' +
+                    '<span class="source-tag source-' + (entry.source_type || '') + '">' + (entry.source_type || 'unknown') + '</span>' +
+                    (entry.source_category ? '<span class="entry-category">' + entry.source_category + '</span>' : '') +
+                    (entry.published_date ? '<span class="entry-date">' + entry.published_date.substring(0, 10) + '</span>' : '') +
+                '</div>' +
+                '<div class="entry-title">' +
+                    (entry.link ? '<a href="' + entry.link + '" target="_blank" rel="noopener">' + entry.title + '</a>' : entry.title) +
+                '</div>' +
+                (desc ? '<div class="entry-desc">' + desc + '</div>' : '') +
+                (entry.source_name ? '<div class="entry-source">' + entry.source_name + '</div>' : '') +
+                '<div class="reasoning-row">' +
+                    '<input type="text" class="reasoning-input" placeholder="Why this label? (optional)">' +
+                '</div>' +
+                '<div class="label-buttons">' +
+                    '<button class="label-btn label-btn-investigation" data-label="investigation_lead">Investigation</button>' +
+                    '<button class="label-btn label-btn-important" data-label="important">Important</button>' +
+                    '<button class="label-btn label-btn-background" data-label="background">Background</button>' +
+                    '<button class="label-btn label-btn-noise" data-label="noise">Noise</button>' +
+                '</div>';
+
+            area.appendChild(card);
+        });
+
+        app.appendChild(area);
+
+        // Label button handlers
+        area.addEventListener('click', function(e) {
+            var btn = e.target.closest('.label-btn');
+            if (!btn) return;
+            var card = btn.closest('.entry-card');
+            if (card.classList.contains('labeled')) return;
+
+            var entryType = card.dataset.entryType;
+            var entryId = parseInt(card.dataset.entryId, 10);
+            var label = btn.dataset.label;
+            var reasoning = card.querySelector('.reasoning-input').value.trim();
+            var now = new Date();
+            var ts = now.getFullYear() + '-' +
+                String(now.getMonth() + 1).padStart(2, '0') + '-' +
+                String(now.getDate()).padStart(2, '0') + ' ' +
+                String(now.getHours()).padStart(2, '0') + ':' +
+                String(now.getMinutes()).padStart(2, '0') + ':' +
+                String(now.getSeconds()).padStart(2, '0');
+
+            card.classList.add('labeled');
+            btn.classList.add('active');
+            markLabeled(entryType, entryId);
+            var count = incSessionCount();
+            updateStats();
+
+            var next = card.nextElementSibling;
+            if (next && !next.classList.contains('labeled')) {
+                next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            pushLabel(entryType, entryId, label, reasoning)
+                .then(function() {
+                    removeFromRetryQueue(entryType, entryId);
+                })
+                .catch(function(err) {
+                    addToRetryQueue(entryType, entryId, label, reasoning, ts);
+                    flash('Push failed (' + err.message + '). Label queued — will retry automatically.', 'error');
+                });
+
+            // If all cards in this batch are labeled, load more
+            var remaining = area.querySelectorAll('.entry-card:not(.labeled)');
+            if (remaining.length === 0) {
+                setTimeout(function() { showEntries(entries); }, 500);
+            }
+        });
+    }
+
+    // ── Load entries from Seismo ──
+    function loadEntries() {
+        var app = document.getElementById('app');
+        app.innerHTML = '<div class="state-msg"><strong>Loading entries...</strong></div>';
+
+        fetchEntries()
+            .then(function(data) {
+                var entries = data.entries || [];
+                if (entries.length === 0) {
+                    app.innerHTML = '<div class="state-msg"><strong>No entries</strong><p>' +
+                        (USE_MAGNITU ? 'Nothing in the queue for this profile. Run a sync on the main Magnitu app if needed.' : 'Seismo has no entries yet.') +
+                        '</p></div>';
+                    return;
+                }
+
+                // Smoke-test endpoint, then flush any pending labels from a previous session
+                verifyLabelEndpoint()
+                    .then(function() {
+                        return flushRetryQueue();
+                    })
+                    .then(function(flushed) {
+                        if (flushed > 0) {
+                            flash(flushed + ' pending label(s) synced to ' + (USE_MAGNITU ? 'Magnitu.' : 'Seismo.'), 'success');
+                        }
+                    })
+                    .catch(function(err) {
+                        var pending = getRetryQueue().length;
+                        var msg = 'Label endpoint unreachable (' + err.message + ').';
+                        if (pending > 0) msg += ' ' + pending + ' label(s) still pending.';
+                        flash(msg, 'error');
+                    });
+
+                // Shuffle so different users get different order
+                for (var i = entries.length - 1; i > 0; i--) {
+                    var j = Math.floor(Math.random() * (i + 1));
+                    var tmp = entries[i]; entries[i] = entries[j]; entries[j] = tmp;
+                }
+                showEntries(entries);
+            })
+            .catch(function(err) {
+                var extraBtn = USE_MAGNITU ? '' :
+                    '<button class="btn" id="reconfigBtn" style="margin-top:8px;">Change Settings</button>';
+                app.innerHTML =
+                    '<div class="state-msg">' +
+                    '<strong>Connection failed</strong>' +
+                    '<p>' + err.message + '</p>' +
+                    '<button class="btn" id="retryBtn">Retry</button>' +
+                    extraBtn +
+                    '</div>';
+                document.getElementById('retryBtn').addEventListener('click', loadEntries);
+                if (!USE_MAGNITU) {
+                    document.getElementById('reconfigBtn').addEventListener('click', showSetup);
+                }
+            });
+    }
+
+    // ── Settings button (gear icon) ──
+    document.getElementById('settingsBtn').addEventListener('click', function() {
+        if (LOCKED || USE_MAGNITU) return;
+        showSetup();
+    });
+
+    // ── Source filter ──
+    var filterBar = document.getElementById('filterBar');
+    filterBar.addEventListener('click', function(e) {
+        var btn = e.target.closest('.filter-btn');
+        if (!btn || btn.classList.contains('active')) return;
+        filterBar.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentFilter = btn.dataset.type;
+        localStorage.setItem(STORAGE_KEY_FILTER, currentFilter);
+        loadEntries();
+    });
+
+    // Restore saved filter state
+    (function() {
+        var btns = filterBar.querySelectorAll('.filter-btn');
+        btns.forEach(function(b) {
+            b.classList.toggle('active', b.dataset.type === currentFilter);
+        });
+    })();
+
+    // ── Init ──
+    updateStats();
+    if (USE_MAGNITU) {
+        loadEntries();
+    } else if (LOCKED) {
+        loadEntries();
+    } else {
+        var cfg = getConfig();
+        if (!cfg.url || !cfg.apiKey) {
+            showSetup();
+        } else {
+            loadEntries();
+        }
+    }
+})();
+</script>
+</body>
+</html>

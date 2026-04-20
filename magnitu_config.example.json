@@ -1,0 +1,17 @@
+{
+  "seismo_url": "https://www.hektopascal.org/seismo-staging/index.php",
+  "api_key": "YOUR_API_KEY_HERE",
+  "min_labels_to_train": 20,
+  "recipe_top_keywords": 200,
+  "auto_train_after_n_labels": 10,
+  "alert_threshold": 0.75,
+  "model_architecture": "transformer",
+  "transformer_model_name": "xlm-roberta-base",
+  "embedding_dim": 768,
+  "use_gpu": false,
+  "discovery_lead_blend": 0.0,
+  "label_time_decay_days": 0,
+  "label_time_decay_floor": 0.2,
+  "reasoning_weight_boost": 1.0,
+  "legal_signal_patterns": []
+}

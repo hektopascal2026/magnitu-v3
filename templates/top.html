@@ -1,0 +1,294 @@
+{% extends "layout.html" %}
+{% block title %}Top 30 — Magnitu{% endblock %}
+
+{% block content %}
+<div class="dashboard-section">
+    <h2>Top 30</h2>
+
+    <!-- View Tabs -->
+    <div class="top-view-tabs">
+        <a href="/top?view=recent" class="top-view-tab {% if view == 'recent' %}active{% endif %}">Recent Unlabeled</a>
+        <a href="/top?view=mismatches" class="top-view-tab {% if view == 'mismatches' %}active{% endif %}">Mismatches</a>
+        <a href="/top?view=all" class="top-view-tab {% if view == 'all' %}active{% endif %}">All-time</a>
+    </div>
+
+    <!-- View Description -->
+    <p class="section-desc">
+        {% if view == 'recent' %}
+            Highest-scored entries from the last 7 days that you haven't labeled yet. Label these to validate the model on fresh data.
+            {% if total_recent is defined %}
+                <span class="top-view-meta">{{ total_recent }} recent entries, {{ total_recent_unlabeled }} unlabeled.</span>
+            {% endif %}
+        {% elif view == 'mismatches' %}
+            Entries where your label disagrees with the model's prediction. Correcting these has the highest impact on model improvement.
+            {% if total_mismatches is defined %}
+                <span class="top-view-meta">{{ total_mismatches }} mismatch{{ 'es' if total_mismatches != 1 else '' }} found.</span>
+            {% endif %}
+        {% else %}
+            The 30 highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
+        {% endif %}
+    </p>
+
+    {% if not active_model %}
+        <div class="empty-state"><p>No model trained yet. Train a model first to see scores.</p></div>
+    {% elif not top_entries %}
+        <div class="empty-state">
+            <p>
+                {% if view == 'recent' %}
+                    No unlabeled entries from the last 7 days. Pull new entries from Seismo, or check the <a href="/top?view=all">all-time</a> view.
+                {% elif view == 'mismatches' %}
+                    No mismatches found — the model agrees with all your labels. Nice!
+                {% else %}
+                    No entries scored. Pull entries from Seismo first.
+                {% endif %}
+            </p>
+        </div>
+    {% else %}
+        <!-- Accuracy Summary (all-time view only) -->
+        {% if view == 'all' %}
+        <div class="top-accuracy-summary">
+            {% if accuracy is not none %}
+                <div class="stat-card">
+                    <div class="stat-value">{{ accuracy }}%</div>
+                    <div class="stat-label">Accuracy ({{ correct_count }}/{{ labeled_count }})</div>
+                </div>
+            {% endif %}
+            <div class="stat-card">
+                <div class="stat-value">{{ top_entries | length }}</div>
+                <div class="stat-label">Entries shown</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ labeled_count }}</div>
+                <div class="stat-label">Have your label</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Entries -->
+        <div class="entries-section">
+            {% for item in top_entries %}
+                {% set e = item.entry %}
+                {% set s = item.score %}
+                <div class="entry-card {% if item.user_label %}labeled labeled-{{ item.user_label }}{% endif %} {% if item.match == false %}mismatch{% endif %}"
+                     data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}" data-predicted="{{ s.predicted_label }}">
+
+                    <!-- Header: source tag (lex only) left, rank|score box right -->
+                    <div class="top-card-header">
+                        <div class="top-card-header-left">
+                            {% if e.source_type and e.source_type.startswith('lex') %}
+                                <span class="entry-source-tag source-{{ e.source_type }}">{{ e.source_type }}</span>
+                                {% if e.source_category %}
+                                    <span class="entry-category">{{ e.source_category }}</span>
+                                {% endif %}
+                            {% endif %}
+                            {% if view == 'mismatches' %}
+                                <span class="mismatch-badge">
+                                    <span class="mismatch-yours">{{ item.user_label | replace('_', ' ') }}</span>
+                                    <span class="mismatch-arrow">&rarr;</span>
+                                    <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
+                                </span>
+                            {% endif %}
+                        </div>
+                        <div class="top-rank-score">
+                            <span class="top-rank-half">#{{ loop.index }}</span>
+                            <span class="top-score-half" data-score="{{ (s.relevance_score * 100) | round(0) }}">{{ (s.relevance_score * 100) | round(0) }}</span>
+                        </div>
+                    </div>
+
+                    <!-- Title -->
+                    <h3 class="entry-title">
+                        {% if e.link %}
+                            <a href="{{ e.link }}" target="_blank" rel="noopener">{{ e.title }}</a>
+                        {% else %}
+                            {{ e.title }}
+                        {% endif %}
+                    </h3>
+
+                    <!-- Description -->
+                    {% if e.description %}
+                        <div class="entry-content">{{ e.description[:200] }}{% if e.description|length > 200 %}...{% endif %}</div>
+                    {% endif %}
+
+                    <!-- Footer: reclassify+why left, source+date right -->
+                    <div class="top-card-footer">
+                        <div class="top-card-footer-left">
+                            <button class="btn-reclassify" title="Assign or change your label">{% if view == 'mismatches' %}Correct{% else %}Reclassify{% endif %}</button>
+                            <button class="btn-why" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}" title="Why did the model score this entry?">Why?</button>
+                        </div>
+                        <div class="top-card-footer-right">
+                            <span class="entry-source">{{ e.source_name or e.source_type }}</span>
+                            {% if e.published_date %}
+                                <span class="entry-date">{{ e.published_date[:10] }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Why explanation (hidden until Why? clicked) -->
+                    <div class="top-why-panel" style="display:none;"></div>
+
+                    <!-- Reclassify label buttons (hidden until clicked) -->
+                    <div class="top-label-buttons" data-for="{{ e.entry_type }}-{{ e.entry_id }}" style="display:none;">
+                        <button class="label-btn label-btn-investigation {% if item.user_label == 'investigation_lead' %}active{% endif %}" data-label="investigation_lead" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}">
+                            <span class="label-key">1</span> Investigation
+                        </button>
+                        <button class="label-btn label-btn-important {% if item.user_label == 'important' %}active{% endif %}" data-label="important" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}">
+                            <span class="label-key">2</span> Important
+                        </button>
+                        <button class="label-btn label-btn-background {% if item.user_label == 'background' %}active{% endif %}" data-label="background" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}">
+                            <span class="label-key">3</span> Background
+                        </button>
+                        <button class="label-btn label-btn-noise {% if item.user_label == 'noise' %}active{% endif %}" data-label="noise" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}">
+                            <span class="label-key">4</span> Noise
+                        </button>
+                    </div>
+
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var SLUG = '{{ profile.slug if profile else "" }}';
+    var P = SLUG ? '/p/' + SLUG : '';
+    var currentView = '{{ view }}';
+
+    // Color score badges by fixed score buckets (0-100)
+    function scoreColor(v) {
+        if (v <= 25) return '#E0E0E0'; // 0-25 gray
+        if (v <= 50) return '#74C0FC'; // 26-50 blue
+        if (v <= 75) return '#FFA94D'; // 51-75 orange
+        return '#FF6B6B'; // 76-100 red
+    }
+    document.querySelectorAll('.top-score-half[data-score]').forEach(function(el) {
+        el.style.background = scoreColor(parseFloat(el.dataset.score));
+    });
+
+    document.addEventListener('click', function(e) {
+        /* ── Reclassify toggle ── */
+        var reclBtn = e.target.closest('.btn-reclassify');
+        if (reclBtn) {
+            var card = reclBtn.closest('.entry-card');
+            var panel = card.querySelector('.top-label-buttons');
+            if (panel) {
+                var visible = panel.style.display !== 'none';
+                document.querySelectorAll('.top-label-buttons').forEach(function(p) { p.style.display = 'none'; });
+                panel.style.display = visible ? 'none' : 'flex';
+            }
+            return;
+        }
+
+        /* ── Why? button ── */
+        var whyBtn = e.target.closest('.btn-why');
+        if (whyBtn) {
+            var card = whyBtn.closest('.entry-card');
+            var whyPanel = card.querySelector('.top-why-panel');
+            if (whyPanel.style.display !== 'none') {
+                whyPanel.style.display = 'none';
+                whyBtn.textContent = 'Why?';
+                return;
+            }
+            whyBtn.textContent = '…';
+            var entryType = whyBtn.dataset.entryType;
+            var entryId = whyBtn.dataset.entryId;
+            fetch(P + '/api/explain/' + encodeURIComponent(entryType) + '/' + encodeURIComponent(entryId))
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) {
+                        whyPanel.innerHTML = '<span class="why-error">' + data.error + '</span>';
+                    } else {
+                        var features = (data.top_features || []).slice(0, 8);
+                        var html = '<span class="why-label">Magnitu: ' + (data.predicted_label || '').replace(/_/g, ' ') +
+                            ' (' + Math.round((data.confidence || 0) * 100) + '% confidence)</span>';
+                        html += '<span class="why-features">';
+                        features.forEach(function(f, i) {
+                            var sign = f.weight >= 0 ? '+' : '';
+                            html += (i > 0 ? '  ' : '') +
+                                '<span class="why-feat">' + f.feature + ' ' + sign + parseFloat(f.weight).toFixed(2) + '</span>';
+                        });
+                        html += '</span>';
+                        whyPanel.innerHTML = html;
+                    }
+                    whyPanel.style.display = 'block';
+                    whyBtn.textContent = 'Why?';
+                })
+                .catch(function() {
+                    whyPanel.innerHTML = '<span class="why-error">Could not load explanation.</span>';
+                    whyPanel.style.display = 'block';
+                    whyBtn.textContent = 'Why?';
+                });
+            return;
+        }
+
+        /* ── Label button clicks ── */
+        var labelBtn = e.target.closest('.top-label-buttons .label-btn');
+        if (!labelBtn) return;
+
+        var entryType = labelBtn.dataset.entryType;
+        var entryId = labelBtn.dataset.entryId;
+        var label = labelBtn.dataset.label;
+        var card = labelBtn.closest('.entry-card');
+        var panel = labelBtn.closest('.top-label-buttons');
+        var predicted = card.dataset.predicted;
+
+        var formData = new FormData();
+        formData.append('entry_type', entryType);
+        formData.append('entry_id', entryId);
+        formData.append('label', label);
+
+        fetch(P + '/api/label', { method: 'POST', body: formData })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success) return;
+                panel.querySelectorAll('.label-btn').forEach(function(b) {
+                    b.classList.toggle('active', b.dataset.label === label);
+                });
+                card.className = card.className.replace(/labeled-\S+/g, '');
+                if (!card.classList.contains('labeled')) card.classList.add('labeled');
+                card.classList.add('labeled-' + label);
+
+                // In recent view, fade out labeled cards since they're "done"
+                if (currentView === 'recent') {
+                    card.style.opacity = '0.4';
+                    card.style.transition = 'opacity 0.3s';
+                }
+
+                // In mismatches view, check if the mismatch is resolved
+                if (currentView === 'mismatches' && label === predicted) {
+                    card.classList.remove('mismatch');
+                    card.style.opacity = '0.4';
+                    card.style.transition = 'opacity 0.3s';
+                    var badge = card.querySelector('.mismatch-badge');
+                    if (badge) badge.innerHTML = '<span style="color:#00aa00;font-weight:700;">Resolved</span>';
+                }
+
+                setTimeout(function() { panel.style.display = 'none'; }, 300);
+                updateAccuracy();
+            });
+    });
+
+    function updateAccuracy() {
+        if (currentView !== 'all') return;
+        var cards = document.querySelectorAll('.entries-section .entry-card');
+        var labeled = 0, correct = 0;
+        cards.forEach(function(c) {
+            if (c.classList.contains('labeled')) {
+                labeled++;
+                var userLabel = (c.className.match(/labeled-(\S+)/) || [])[1];
+                if (userLabel === c.dataset.predicted) correct++;
+            }
+        });
+        var statCards = document.querySelectorAll('.top-accuracy-summary .stat-card');
+        if (statCards.length >= 3 && labeled > 0) {
+            var acc = Math.round(correct / labeled * 1000) / 10;
+            statCards[0].querySelector('.stat-value').textContent = acc + '%';
+            statCards[0].querySelector('.stat-label').textContent = 'Accuracy (' + correct + '/' + labeled + ')';
+            statCards[2].querySelector('.stat-value').textContent = labeled;
+        }
+    }
+})();
+</script>
+{% endblock %}

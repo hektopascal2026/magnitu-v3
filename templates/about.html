@@ -1,0 +1,825 @@
+{% extends "layout.html" %}
+{% block title %}About — Magnitu{% endblock %}
+
+{% block content %}
+
+<!-- 1. What is Magnitu -->
+<div class="dashboard-section">
+    <h2>What is Magnitu?</h2>
+    <p class="section-desc">Magnitu is your personal relevance engine. It learns what you care about and scores every incoming article, email, and legal notice on a scale from 0 to 100 — so the important stories float to the top and the noise sinks to the bottom.</p>
+    <p>It works by watching your judgments. You read entries and tell Magnitu what matters. Over time, it learns to predict your judgment on entries you haven't seen yet. The more you teach it, the better it gets.</p>
+    <p>Magnitu supports <strong>multiple profiles</strong> — each profile trains its own model on its own labeled entries and can push scores to a different Seismo instance. All profiles share the same entry pool pulled from your main (mothership) Seismo, so you only sync once.</p>
+</div>
+
+<!-- 2. The Four Labels -->
+<div class="dashboard-section">
+    <h2>The Four Labels</h2>
+    <p class="section-desc">Every entry gets one of four labels. These are the categories Magnitu learns to predict.</p>
+
+    <div class="about-detail-grid">
+        <div class="about-detail">
+            <span class="about-detail-label">Investigation Lead</span>
+            <span class="about-detail-value">This entry points toward a story worth pursuing — evidence of wrongdoing, unusual patterns, connections between actors. The highest-value category.</span>
+        </div>
+        <div class="about-detail">
+            <span class="about-detail-label">Important</span>
+            <span class="about-detail-value">Relevant to your beat and worth reading, but not an actionable lead on its own.</span>
+        </div>
+        <div class="about-detail">
+            <span class="about-detail-label">Background</span>
+            <span class="about-detail-value">Tangentially related or good to know, but not something you'd act on today.</span>
+        </div>
+        <div class="about-detail">
+            <span class="about-detail-label">Noise</span>
+            <span class="about-detail-value">Irrelevant to your work — press releases, off-topic content, duplicates.</span>
+        </div>
+    </div>
+
+    <p>These four labels are all Magnitu needs from you. Everything else — the scoring, the predictions, the ranking in Seismo — flows from these judgments.</p>
+</div>
+
+<!-- 3. The Learning Loop -->
+<div class="dashboard-section">
+    <h2>How It Works: The Learning Loop</h2>
+    <p class="section-desc">Magnitu improves through a repeating cycle. Each time you go through this loop, the model gets better at predicting what matters to you.</p>
+
+    <div class="about-steps">
+        <div class="about-step">
+            <div class="about-step-number">1</div>
+            <div class="about-step-body">
+                <h3>Sync</h3>
+                <p>Pull new entries from Seismo (the feed aggregator that collects articles, emails, and legal notices). You can run <strong>Sync</strong> for quick incremental updates or <strong>Full Sync</strong> for source-by-source backfill and embedding completion when coverage drifted. {% if architecture == 'transformer' %}During sync, each entry is also processed through a language model that converts its text into a numerical "fingerprint" — a compact representation of what the article is about.{% else %}New entries land in your local queue, ready for you to review.{% endif %}</p>
+                <p>Sync and Push run as background jobs with a live progress bar (phase + percent), so long runs are visible instead of looking stuck.</p>
+            </div>
+        </div>
+        <div class="about-step">
+            <div class="about-step-number">2</div>
+            <div class="about-step-body">
+                <h3>Label</h3>
+                <p>You read entries and assign one of the four labels. Each label is a training example — a concrete instance of "this is what I consider important" or "this is noise to me". You can also add a short reasoning note explaining <em>why</em> (more on that below).</p>
+                <div class="about-labels-grid">
+                    <span class="label-dist-item label-investigation_lead">Investigation Lead</span>
+                    <span class="label-dist-item label-important">Important</span>
+                    <span class="label-dist-item label-background">Background</span>
+                    <span class="label-dist-item label-noise">Noise</span>
+                </div>
+            </div>
+        </div>
+        <div class="about-step">
+            <div class="about-step-number">3</div>
+            <div class="about-step-body">
+                <h3>Train</h3>
+                <p>Hit <strong>Train</strong> and Magnitu builds a new model from <em>all</em> your labels — not just the new ones, but everything you've ever labeled. {% if architecture == 'transformer' %}The model learns which patterns in the text predict each category.{% else %}It learns which words, phrases, and sources predict each category.{% endif %} You need at least {{ config.min_labels_to_train or 20 }} labels to start, but the more you have, the better the accuracy.</p>
+            </div>
+        </div>
+        <div class="about-step">
+            <div class="about-step-number">4</div>
+            <div class="about-step-body">
+                <h3>Score &amp; Push</h3>
+                <p>After training, the model scores every entry with a relevance number from 0 to 100 and a predicted label. These scores, along with a lightweight summary of the model's knowledge (called a "recipe"), are pushed to Seismo so the main feed can sort entries by relevance.</p>
+            </div>
+        </div>
+        <div class="about-step">
+            <div class="about-step-number">5</div>
+            <div class="about-step-body">
+                <h3>Review &amp; Correct</h3>
+                <p>Check the <strong>Top 30</strong> page to see what the model thinks is most important. If it got something wrong — say it ranked a press release as an investigation lead — reclassify it. These corrections are the highest-value training data you can give, because they target exactly where the model is confused.</p>
+            </div>
+        </div>
+    </div>
+
+    <p>Then the loop repeats: sync new entries, label a few, retrain, push. Each cycle sharpens the model. Early on, you might retrain after every 10–20 labels. Once the model is mature, less frequent retraining is fine.</p>
+</div>
+
+<!-- 4. The Relevance Score -->
+<div class="dashboard-section">
+    <h2>The Relevance Score</h2>
+    <p class="section-desc">Every entry gets a score from 0 to 1 (shown as a percentage in places). Here's what that number means today.</p>
+
+    <div class="about-section">
+        <p>When the model looks at an entry, it doesn't just pick one label — it estimates the <em>probability</em> of each label. For example, it might say: "I'm 70% sure this is an Investigation Lead, 20% Important, 8% Background, 2% Noise." Those probabilities are first <strong>calibrated</strong> using a simple temperature fit on a slice of your training data (held out before oversampling). That makes extreme confidence less common and tends to align the numbers better with how often the model is actually right.</p>
+        <p>The pushed <strong>relevance score</strong> is then a <strong>weighted average</strong> of those calibrated probabilities:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Investigation Lead</span>
+                <span class="about-detail-value">Contributes weight 1.0 (full value)</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Important</span>
+                <span class="about-detail-value">Contributes weight 0.66</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Background</span>
+                <span class="about-detail-value">Contributes weight 0.33</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Noise</span>
+                <span class="about-detail-value">Contributes weight 0.0 (nothing)</span>
+            </div>
+        </div>
+        <p>So if the model is strongly convinced something is an Investigation Lead, the score is high. If it thinks something is pure Noise, the score is near 0. Uncertain entries land in the middle.</p>
+        <p>In <strong>Settings → Training</strong>, you can optionally set <em>Lead discovery blend</em> (0–0.25). A small value (for example 0.1) mixes a bit more of the Investigation Lead probability into the same relevance score, which can help surfacing leads when the composite alone feels too conservative. The default is 0 (pure weighted composite from calibrated probabilities).</p>
+    </div>
+
+    <div class="about-section">
+        <h3>Training Settings — What Each Knob Does</h3>
+        <p>The <strong>Settings → Training Settings</strong> panel has four knobs that control how the model learns and what it exports to Seismo. None of them needs to be touched for Magnitu to work; the defaults are picked so a fresh install behaves sensibly.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Minimum Labels to Train <em>(default 20)</em></span>
+                <span class="about-detail-value">The safety gate before a model can be trained at all. Below 20 labels the classifier can't generalise; around 50 classes start to stabilise; 200+ is where the rare classes (investigation leads) get decent recall. Only change this for debugging.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Recipe Top Keywords <em>(default 200)</em></span>
+                <span class="about-detail-value">How many words and phrases the recipe pushed to Seismo contains. <strong>More = broader coverage</strong>, but the recipe grows and low-weight terms start adding noise to Seismo's live score. <strong>Fewer = crisper, more focused recipe</strong>, but niche terminology may fall below the cutoff. Sweet spot is 150–300 for ~500 labels, 200–400 once you're past 1000 labels. Below 80 feels thin; above 600 is mostly noise. Use the <em>Learned Legal Patterns</em> panel on the Dashboard as a sanity check: if the weakest phrases still look meaningful, you can raise the cap; if they look like filler, lower it.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Alert Threshold <em>(default 0.75)</em></span>
+                <span class="about-detail-value">Score above which Seismo highlights an entry as an alert. <strong>Higher = fewer, more confident alerts</strong>; lower = broader alerting but more noise. The fastest way to tune it: open Top-30, find the lowest-scoring entry you'd still want an alert on, set the threshold just below that.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Lead discovery blend <em>(default 0, max 0.25)</em></span>
+                <span class="about-detail-value">Mixes extra <em>investigation_lead</em> probability into the relevance score pushed to Seismo. <code>0</code> is pure composite scoring (safest and most interpretable). <code>0.1</code> is a gentle nudge if the composite feels conservative and genuine leads are landing mid-range in Top-30. <code>0.25</code> is aggressive — only use after verifying the push actually surfaces more good leads, not just louder false positives.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Advanced Training Knobs</h3>
+        <p>Under <strong>Settings → Advanced training</strong> there are three additional levers that change how your labels get weighted during the next training run. All default to <em>off</em> (no behavioural change). They only affect the <strong>next</strong> train — nothing already trained is re-weighted.</p>
+
+        <h4 style="margin-top: 18px;">Label time-decay <em>(default: off)</em></h4>
+        <p>Older labels count less during training. You set a <strong>half-life in days</strong>: at <code>120</code>, a label from 4 months ago weighs half as much as a label from today. A <strong>decay floor</strong> (default <code>0.2</code>) sets the minimum weight so ancient labels never fully vanish.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">When to enable</span>
+                <span class="about-detail-value">Your editorial focus has shifted and old labels about now-irrelevant subjects are dragging the model toward stale priorities. Also useful after significant news-cycle turns.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Typical half-life values</span>
+                <span class="about-detail-value"><strong>90–180 days</strong>: editorial focus tracks the news cycle. <strong>365+ days</strong>: gentle recency preference. Values below 30 days are rarely useful unless you're pivoting topics aggressively. Only worth enabling once labels span months rather than weeks.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Floor choice</span>
+                <span class="about-detail-value"><code>0.2</code> (default) keeps old labels at a fifth of full weight — safe. <code>0.5</code> is a soft recency signal that barely moves training. <code>0.0</code> lets old labels decay to nothing — not recommended; you lose training data you paid for with clicks.</span>
+            </div>
+        </div>
+
+        <h4 style="margin-top: 18px;">Reasoning-weight boost <em>(default: 1.0, off)</em></h4>
+        <p>Labels that come with a written reasoning note count more during training. The model still only reads the <em>article</em> text — what changes is how heavily the row is weighted when fitting. The assumption is that an annotator who stopped to explain a label has higher-signal judgement on that entry.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Starting points</span>
+                <span class="about-detail-value"><code>1.3–1.5</code>: gentle boost, recommended first try. <code>2.0</code>: strong; treat reasoned labels as 2x training data. Above <code>3.0</code>: experimental — the boost starts dominating the signal.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Rule of thumb</span>
+                <span class="about-detail-value">If a minority of your labels have reasoning (say 10–30%), a stronger boost is affordable. If most labels have reasoning, stay near <code>1.0</code> — the boost stops being informative because it applies to almost everything.</span>
+            </div>
+        </div>
+
+        <h4 style="margin-top: 18px;">Legal-signal patterns <em>(default: empty)</em></h4>
+        <p>User-configured phrases (or regex) that flag legislative signal in an entry. When a match is found, Magnitu does <strong>two</strong> things:</p>
+        <ol>
+            <li>Prepends the matched phrase(s) to the embedded text as <code>signals=…</code>, so the transformer treats them as emphasized context.</li>
+            <li>Boosts the same phrases in the distilled recipe pushed to Seismo (positive weight toward <code>investigation_lead</code> and <code>important</code>).</li>
+        </ol>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">How many is reasonable?</span>
+                <span class="about-detail-value"><strong>5–20 phrases</strong> is the sweet spot. Fewer than 3 barely moves the needle; more than 30 dilutes each pattern's contribution. Start small, observe, expand only when you have evidence.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Cost of changing the list</span>
+                <span class="about-detail-value">Every change <strong>invalidates all cached embeddings</strong>. The next sync does a full re-embed — a few minutes of CPU/GPU work depending on your entry count. Plan updates into a sync cycle; don't tweak casually.</span>
+            </div>
+        </div>
+
+        <h4 style="margin-top: 18px;">How to find good legal-signal patterns</h4>
+        <p>Good patterns are phrases that consistently appear in investigation-worthy legal content and <em>don't</em> appear in procedural boilerplate. A structured way to find them:</p>
+        <ol>
+            <li><strong>Start with Top-30 filtered to Legislation.</strong> Look at the highest-scoring lex items you agree with. Note recurring phrases — exclusion language ("Drittstaaten", "third country"), sector triggers ("Marktüberwachung", "Konformitätsbewertung"), scope markers ("EU/EWR", "Binnenmarkt").</li>
+            <li><strong>Cross-check the Dashboard's <em>Learned Legal Patterns</em>.</strong> These are phrases the model has already figured out on its own. High-ranked positive signals are strong candidates to lock in explicitly via the legal-signal list, so they survive across retrains even if the label mix shifts.</li>
+            <li><strong>Scan low-scoring legislation you think <em>should</em> score higher.</strong> What phrases are present there that the model is currently missing? Those are the gaps the signal list can fill.</li>
+            <li><strong>Add 5 obvious ones first.</strong> Train, push, observe the Top-30 for a sync cycle. If the next round still looks right, add a handful more. If scoring starts skewing oddly, remove the last addition — each new pattern diverts attention from the others.</li>
+            <li><strong>Avoid generic words.</strong> "Gesetz" or "Regulation" will match everything and teach the model nothing. Stick to phrases that distinguish signal from noise.</li>
+        </ol>
+        <p><strong>Example starter set (Swiss KMU/Export beat):</strong></p>
+        <div class="about-detail">
+            <span class="about-detail-value"><code>Drittland</code>, <code>Drittstaaten</code>, <code>Binnenmarkt</code>, <code>EWR</code>, <code>CE-Kennzeichnung</code>, <code>Ursprungserzeugnis</code>, <code>Ursprungsregel</code>, <code>Konformitätsbewertung</code>, <code>Marktüberwachung</code>, <code>Gleichwertigkeit</code>, <code>Zollkodex</code>, <code>bilaterales Abkommen</code></span>
+        </div>
+        <p>These map directly to the "exclusion language + third-country provisions + compliance triggers" pattern described in the <em>Legislation Monitoring</em> section below.</p>
+    </div>
+</div>
+
+<!-- 5. Reasoning Notes -->
+<div class="dashboard-section">
+    <h2>Reasoning Notes</h2>
+    <p class="section-desc">When labeling, you can optionally add a short note explaining <em>why</em>. Something like "links politician X to company Y through public contracts".</p>
+
+    <div class="about-section">
+        <h3>What Reasoning Affects</h3>
+        <p>The model never reads the text of your reasoning notes — it only sees the article and your label. What reasoning <em>does</em> influence is the <strong>recipe</strong> (the lightweight summary pushed to Seismo), and, if you enable the optional <em>reasoning-weight boost</em> under Settings → Advanced training, how heavily those labeled rows are weighted at training time (presence-only, not content).</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">How it works</span>
+                <span class="about-detail-value">After training, weighted terms are extracted from the model (single words, bigrams, trigrams). Magnitu then scans your reasoning notes for matching words and phrases. Matches are boosted for the class you labeled; new terms from reasoning can be added with a base weight.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Practical effect</span>
+                <span class="about-detail-value">Terms like "public contracts", "third country", or "conformity assessment" get boosted for the relevant class in the recipe. This makes Seismo's live scoring more sensitive to the specific patterns you care about — even between full retrains.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What it doesn't change</span>
+                <span class="about-detail-value">The model's accuracy and F1 score are determined entirely by your labels and the article text. Reasoning only shapes the recipe.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Other Benefits</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Memory aid</span>
+                <span class="about-detail-value">Six months from now, you'll remember why you flagged something as an investigation lead.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Always optional</span>
+                <span class="about-detail-value">You never have to write reasoning. Labeling is just as fast without it — the text field is there when you have something to say.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 6. How Magnitu Reads Text -->
+<div class="dashboard-section">
+    <h2>How Magnitu Reads Text</h2>
+    <p class="section-desc">Before Magnitu can learn from your labels, it needs to "read" each article and convert it into something a computer can work with.</p>
+
+    {% if architecture == 'transformer' %}
+    <div class="about-section">
+        <h3>The Language Model</h3>
+        <p>Magnitu uses a pre-trained language model called <strong>{{ config.transformer_model_name or 'XLM-RoBERTa' }}</strong> — a model with 278 million parameters that has been trained on billions of words across 100 languages. It already understands what words mean before it ever sees your labels.</p>
+        <p>For each article, the language model produces a "meaning vector" — a list of 768 numbers that captures what the article is about. Two articles about the same topic will have similar vectors, even if one is in German and the other in English. This is the key advantage: <em>"Untersuchung"</em> and <em>"investigation"</em> are understood as the same concept.</p>
+        <p>The text passed into the embedder is built from the title (emphasised by repeating it once), description, and a capped excerpt of the body — plus a short line of structured context from Seismo when available: <code>source_type</code>, <code>source_name</code>, and <code>source_category</code>. If any of those fields or the main text change on a later sync, the cached vector is dropped so the next sync recomputes a fresh fingerprint.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">When it runs</span>
+                <span class="about-detail-value">Once per article, during sync. The resulting vector is cached, so scoring and training are instant afterward.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What the model learns from you</span>
+                <span class="about-detail-value">Your labels don't change how articles are read — they teach a small classifier which types of meaning vectors correspond to which labels. Think of it as: the language model provides understanding, your labels provide priorities.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Hardware</span>
+                <span class="about-detail-value">Auto-detected: Apple Silicon (MPS), NVIDIA GPU (CUDA), or CPU. No special setup needed.</span>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="about-section">
+        <h3>Word Counting (TF-IDF)</h3>
+        <p>Magnitu counts how often each word and word pair appears in an article (a technique called TF-IDF). It also notes the source type (RSS, Substack, Email, etc.). A classifier then learns which words and sources correlate with each label.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Text features</span>
+                <span class="about-detail-value">Up to 10,000 words and word pairs, weighted by how distinctive they are across all entries.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Source features</span>
+                <span class="about-detail-value">Source type (RSS, Substack, Email, Lex EU, Lex CH) is included as a feature.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Limitation</span>
+                <span class="about-detail-value">Treats words as independent tokens — "not relevant" and "very relevant" look similar because both contain "relevant". Different languages are treated as entirely separate vocabularies.</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="about-section">
+        <h3>Training: From Understanding to Judgment</h3>
+        <p>Every time you hit Train, Magnitu builds a brand-new classifier from scratch using all your labels. Nothing is carried over from the previous version — the model is rebuilt from the ground up so it always reflects your latest judgments.</p>
+        <p>{% if architecture == 'transformer' %}The classifier head is an MLP (multi-layer perceptron) trained on cached transformer embeddings. For Seismo recipe export, Magnitu also trains a lighter TF-IDF student to distill the transformer's decisions into weighted text features.{% else %}The classifier is Logistic Regression trained on TF-IDF text features and source features.{% endif %}</p>
+    </div>
+</div>
+
+<!-- 7. The Recipe -->
+<div class="dashboard-section">
+    <h2>The Recipe: Bringing Scores to Seismo</h2>
+    <p class="section-desc">Magnitu's model runs on your machine in Python. But Seismo (the feed aggregator where you actually read entries) runs PHP on a web server. It can't run the model directly. This is where the recipe comes in.</p>
+
+    <div class="about-section">
+        <p>After training, Magnitu translates the model's knowledge into a lightweight <strong>recipe</strong> — a list of weighted text features for each class (single words plus phrase patterns). For example, "investigation" might push toward investigation_lead, while procedural phrases can push toward noise.</p>
+        <p>This recipe is pushed to Seismo in JSON format. Seismo's PHP engine then uses it to score new entries in real time — matching words from each article against the recipe's keywords and computing a score. It's a simplified approximation of the full model, but it runs in milliseconds without needing Python.</p>
+        <p>The exported recipe now keeps both strong <strong>positive</strong> and strong <strong>negative</strong> signals per class. This acts as both accelerator and brake in Seismo scoring, reducing common false positives.</p>
+
+        {% if architecture == 'transformer' %}
+        <div class="about-section">
+            <h3>Knowledge Distillation</h3>
+            <p>The transformer model understands meaning, not keywords — so it can't produce a keyword recipe directly. Instead, Magnitu uses a technique called <strong>knowledge distillation</strong>: it trains a simpler word-counting model (a "student") to mimic the transformer's predictions on all entries. The recipe is then extracted from this student. Same format, same PHP — but the keywords reflect the transformer's deeper understanding.</p>
+        </div>
+        {% endif %}
+
+        <div class="about-section">
+            <h3>Two Scoring Systems</h3>
+            <p>This means there are effectively two scoring systems running at the same time:</p>
+            <div class="about-detail-grid">
+                <div class="about-detail">
+                    <span class="about-detail-label">The model (local)</span>
+                    <span class="about-detail-value">{% if architecture == 'transformer' %}Uses meaning vectors. More accurate, understands context and multiple languages. Runs on your machine.{% else %}Uses TF-IDF word features. Runs on your machine during sync and training.{% endif %}</span>
+                </div>
+                <div class="about-detail">
+                    <span class="about-detail-label">The recipe (Seismo)</span>
+                    <span class="about-detail-value">A keyword approximation of the model. Less accurate but always available. Scores new entries the moment they arrive, even if your Magnitu isn't running.</span>
+                </div>
+            </div>
+            <p>Every time you retrain and push, the recipe is updated to match the latest model. Between pushes, Seismo uses the last recipe it received.</p>
+        </div>
+    </div>
+</div>
+
+<!-- 8. Measuring Quality -->
+<div class="dashboard-section">
+    <h2>Measuring Quality</h2>
+    <p class="section-desc">After each training run, Magnitu reports how well the model performs. Here's what the numbers mean.</p>
+
+    <div class="about-section">
+        <h3>Accuracy</h3>
+        <p>When you train, Magnitu sets aside about 20% of your labels as a test set that the model has never seen. It predicts a label for each test entry, then checks how many predictions match your actual label. That percentage is the accuracy. Separately, a slice of the <em>training</em> fold (when there is enough data) is used only to fit temperature scaling on the classifier logits — that slice is not used for the accuracy/F1 numbers, but it is what makes the probabilities you see at push time match the calibration step.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Example</span>
+                <span class="about-detail-value">If the test set has 80 entries and the model gets 52 right, accuracy is 65%.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What's "good"?</span>
+                <span class="about-detail-value">Random guessing across 4 classes would score 25%. With ~100 labels, 50–60% is a reasonable start. With 500+ consistent labels, 70–80% is achievable. Perfect accuracy is unlikely — some entries are genuinely ambiguous.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Why it fluctuates</span>
+                <span class="about-detail-value">The test set is randomly chosen each time you train. With a small label set, a few hard entries landing in the test set can swing accuracy by 5–10 points. This is normal — watch the trend across versions, not any single number.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>F1 Score</h3>
+        <p>Shown alongside accuracy, F1 is a more nuanced measure. Accuracy can be misleading when your labels are unevenly distributed: if 80% of your labels are "noise", a model that calls everything "noise" would score 80% accuracy — impressive-sounding but useless. F1 penalises this by checking whether the model correctly identifies <em>each</em> class, not just the common ones.</p>
+        <p>In practice: if accuracy is high but F1 is low, the model is probably ignoring your rare classes (like investigation leads). Label more entries in those categories to help it learn.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>The Best Test</h3>
+        <p>Numbers aside, the most reliable way to judge the model is the <strong>Top 30</strong> page: are the entries ranked at the top actually the ones you care about? If yes, the model is working, regardless of what the accuracy number says.</p>
+    </div>
+</div>
+
+<!-- 9. Smart Labeling Queue -->
+<div class="dashboard-section">
+    <h2>Smart Labeling Queue</h2>
+    <p class="section-desc">Once a model exists, the labeling page doesn't just show the newest entries. It uses strategies to surface the entries that will improve the model fastest.</p>
+
+    <div class="about-sampling-grid">
+        <div class="about-sampling-item">
+            <span class="sampling-pill sampling-pill-uncertain" style="display:inline-block; margin-bottom:6px;">Uncertain</span>
+            <p>Entries where the model can't decide — its probabilities are spread roughly evenly across classes. Labeling these resolves the model's biggest confusions.</p>
+        </div>
+        <div class="about-sampling-item">
+            <span class="sampling-pill sampling-pill-conflict" style="display:inline-block; margin-bottom:6px;">Conflict</span>
+            <p>Entries where the full model and the lightweight recipe disagree on the predicted label. These reveal where the recipe approximation breaks down — labeling them improves both systems.</p>
+        </div>
+        <div class="about-sampling-item">
+            <span class="sampling-pill sampling-pill-diverse" style="display:inline-block; margin-bottom:6px;">Diverse</span>
+            <p>Entries from source categories that are underrepresented in your labels. If you've labeled 100 tech articles but 0 from local government, it surfaces one to broaden the model's experience.</p>
+        </div>
+        <div class="about-sampling-item">
+            <span class="sampling-pill sampling-pill-new" style="display:inline-block; margin-bottom:6px;">New</span>
+            <p>The newest unlabeled entries — keeps the feed fresh and ensures recent content gets reviewed.</p>
+        </div>
+    </div>
+
+    <p>You don't need to think about which strategy is active — Magnitu mixes them automatically. Just label whatever appears and the model benefits.</p>
+</div>
+
+<!-- 10. Legislation Monitoring -->
+<div class="dashboard-section">
+    <h2>Legislation Monitoring: Finding Hidden Impact</h2>
+    <p class="section-desc">One of Seismo's key goals is to flag national legislation — from the EU, Germany, France, Italy, and eventually more — that would affect Switzerland or Swiss enterprises before other media or trade groups notice. This is where focused labeling becomes critical.</p>
+
+    <div class="about-section">
+        <h3>The Problem: Switzerland Is Never Mentioned</h3>
+        <p>Foreign legislation that impacts Switzerland rarely says so. A new Italian finance law might offer 280% depreciation for industrial equipment — but only for goods manufactured in the EU or EEA. Switzerland is neither. The law never mentions Switzerland, yet it threatens 900 million CHF in Swiss machinery exports overnight.</p>
+        <p>This is exactly what happened in January 2026, when Italy's new Finanzgesetz created massive tax incentives limited to EU/EEA-manufactured goods. Swissmem flagged it, the federal government intervened in Brussels and Rome, and the rule was eventually corrected — but only because someone caught it early.</p>
+        <p>A keyword search for "Schweiz" or "Switzerland" in the law text would have found nothing. The signal wasn't in what the law said, but in what it implied.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>How Magnitu Learns to Spot These</h3>
+        <p>The model cannot learn "this affects Switzerland" from a few keyword matches. It needs to see enough labeled examples of legislation that impacts Switzerland to learn the <em>patterns</em> that signal hidden relevance:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Exclusion language</span>
+                <span class="about-detail-value">Phrases like "EU or EEA", "Binnenmarkt", "member states" that define a scope Switzerland falls outside of.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Sector overlap</span>
+                <span class="about-detail-value">Regulations affecting machinery, pharma, financial services, agriculture, energy, or transport — sectors where Switzerland has bilateral agreements or major exporters.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Third-country provisions</span>
+                <span class="about-detail-value">"Drittstaaten", "third country", "equivalence", "recognition" — the legal vocabulary of being outside the club.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Compliance triggers</span>
+                <span class="about-detail-value">New standards, conformity assessments ("CE-Kennzeichnung", "Konformitätsbewertung"), or market access rules that Swiss companies must follow to sell into the EU.</span>
+            </div>
+        </div>
+        <p>The transformer model understands these patterns across languages — a German "Verordnung" about "Drittstaaten" and a French "règlement" about "pays tiers" produce similar meaning vectors. Your labels in one language help the model recognise the same patterns in others.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>The Reasoning Field Is Especially Valuable Here</h3>
+        <p>When you label a piece of legislation, the <em>why</em> matters more than usual. The article text might be dry legal language, but your reasoning captures the Swiss angle:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Example reasoning</span>
+                <span class="about-detail-value">"EU/EEA-only depreciation excludes CH — threatens machinery exports" or "new conformity rules would require CH pharma companies to re-certify"</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What this does</span>
+                <span class="about-detail-value">The recipe distiller extracts keywords from your reasoning and boosts them. Terms like "Maschinenexporte", "Gleichwertigkeit", "bilateral" get higher weights for investigation_lead, making Seismo's live scoring more sensitive to exactly these patterns.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Focused Labeling for Legislation</h3>
+        <p>Magnitu Mini and the main Label page both have a <strong>source filter</strong> (All / Legislation / News). Switch to "Legislation" to label only Lex items. This lets you efficiently build up the training data the model needs — without wading through RSS articles in between.</p>
+        <p>A target of 50–100 labeled legislation items (with reasoning notes on the important ones) is enough for the model to start distinguishing Swiss-relevant legislation from EU-internal housekeeping. The existing four labels map directly:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Investigation Lead</span>
+                <span class="about-detail-value">Could be a story: legislation that directly threatens Swiss market access, creates competitive disadvantage, or reveals policy shifts affecting Swiss interests.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Important</span>
+                <span class="about-detail-value">Worth monitoring: affects a Swiss-relevant sector but isn't immediately actionable.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Background</span>
+                <span class="about-detail-value">Tangentially related to Swiss interests, or too early-stage to assess impact.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Noise</span>
+                <span class="about-detail-value">EU-internal procedure, unrelated sector, or administrative routine with no Swiss angle.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Dashboard Phrase Signals</h3>
+        <p>The Dashboard now shows a <strong>Learned Legal Patterns</strong> panel with positive Swiss-impact signals and procedural/noise signals from the active recipe. Use it as a quick sanity check after training and push: if the patterns look off, label a few counterexamples and retrain.</p>
+    </div>
+</div>
+
+<!-- 11. Known Biases -->
+<div class="dashboard-section">
+    <h2>Known Biases &amp; Limitations</h2>
+    <p class="section-desc">Every scoring system has blind spots. Knowing about them helps you label more effectively and interpret scores more critically.</p>
+
+    <div class="about-section">
+        <h3>Text Length</h3>
+        <p>Longer articles contain more words, which can affect scoring in different ways depending on where the scoring happens.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Recipe (Seismo)</span>
+                <span class="about-detail-value">The recipe matches keywords against the full text. More text means more matches, which can inflate scores for long entries. Magnitu compensates by normalising keyword weights so that the typical entry lands at a consistent score level. Very long entries may still have a slight advantage, but the worst of the bias is removed.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Model (local)</span>
+                <span class="about-detail-value">{% if architecture == 'transformer' %}Largely immune. The language model produces a fixed-size fingerprint regardless of text length. Content is capped at 500 characters, and the title is repeated to ensure it dominates the fingerprint even for long articles.{% else %}TF-IDF naturally normalises for document length (it measures word frequency, not raw count), so the effect is smaller than in the recipe.{% endif %}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Source Bias</h3>
+        <p>If most of your "noise" labels come from RSS feeds and most of your "investigation lead" labels come from email, the model may learn that the <em>source</em> matters more than the <em>content</em>.</p>
+        <div class="about-detail-grid">
+            {% if architecture == 'transformer' %}
+            <div class="about-detail">
+                <span class="about-detail-label">Model</span>
+                <span class="about-detail-value">The transformer classifies purely on text meaning — it doesn't see the source type at all. Source bias can only sneak in if certain sources consistently use distinctive language (e.g. "Medienmitteilung" always comes from government RSS).</span>
+            </div>
+            {% else %}
+            <div class="about-detail">
+                <span class="about-detail-label">Model</span>
+                <span class="about-detail-value">Source type is included as an explicit feature. This is intentional (some sources genuinely produce more noise) but can over-fit if your labels are concentrated in a few sources.</span>
+            </div>
+            {% endif %}
+            <div class="about-detail">
+                <span class="about-detail-label">Recipe</span>
+                <span class="about-detail-value">Includes source weights (e.g. RSS entries get a small nudge toward noise). These reflect the model's learned patterns. If you notice a source being systematically over- or under-scored, check whether your labels for that source are representative.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Class Imbalance</h3>
+        <p>If you have 200 "noise" labels but only 15 "investigation lead" labels, the model has far more examples of one class than another. Without correction, it would learn to call everything noise — high accuracy on paper, but useless in practice.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">How Magnitu helps</span>
+                <span class="about-detail-value">The classifier automatically gives more weight to rare classes during training. A single investigation_lead label carries more influence than a single noise label, proportional to how outnumbered it is. This helps a lot, but with extreme imbalance (e.g. 5 vs 200) the model still struggles.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What you can do</span>
+                <span class="about-detail-value">Check the label distribution on the Dashboard. If one class has very few labels, focus your next labeling session on it. The smart labeling queue's "diverse" strategy also helps by surfacing underrepresented entries.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Language Bias</h3>
+        <p>If you label mostly German entries as "important" and mostly English entries as "noise", the model may learn that language itself is a signal — regardless of what the articles actually say.</p>
+        <div class="about-detail-grid">
+            {% if architecture == 'transformer' %}
+            <div class="about-detail">
+                <span class="about-detail-label">Mitigation</span>
+                <span class="about-detail-value">The language model (XLM-RoBERTa) was trained on 100 languages. "Untersuchung" and "investigation" produce similar fingerprints. It can learn from German labels and apply that knowledge to English entries. This cross-language transfer is one of the biggest advantages of the current architecture.</span>
+            </div>
+            {% else %}
+            <div class="about-detail">
+                <span class="about-detail-label">Limitation</span>
+                <span class="about-detail-value">TF-IDF treats each language as a separate vocabulary. German and English articles about the same topic look completely different to the model. Cross-language transfer is impossible. Try to label a mix of languages in each class.</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Recency Bias</h3>
+        <p>The model treats all labels equally, regardless of when they were created. If the topics you care about shift over time, old labels about now-irrelevant subjects still influence the model.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">No automatic fix yet</span>
+                <span class="about-detail-value">There is currently no time decay or label expiry. If your priorities change significantly, the best approach is to relabel entries that no longer reflect your current judgment, or start a fresh fork from the current state.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 12. Sharing Models -->
+<div class="dashboard-section">
+    <h2>Sharing Models</h2>
+    <p class="section-desc">Every Magnitu instance runs a named model profile. Models are portable — you can export them, send them to a colleague, and import them on another machine.</p>
+
+    <div class="about-section">
+        <h3>The .magnitu File</h3>
+        <p>A model is packaged as a <code>.magnitu</code> file — a zip archive containing everything needed to continue where you left off:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">manifest.json</span>
+                <span class="about-detail-value">The model's identity: name, unique ID, description, version history, and performance metrics.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">labels.json</span>
+                <span class="about-detail-value">All your labeled entries, including the article text and reasoning notes. This is the training data — the most valuable part of the package.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">model.joblib</span>
+                <span class="about-detail-value">{% if architecture == 'transformer' %}The trained classifier (small file — the language model itself is downloaded separately from HuggingFace).{% else %}The full trained pipeline, ready to score entries immediately after import.{% endif %}</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">calibration.json</span>
+                <span class="about-detail-value">Temperature scaling parameters fit during training so scores and explanations use the same calibrated probabilities as when the model was evaluated.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">recipe.json</span>
+                <span class="about-detail-value">The keyword recipe for Seismo, so scoring continues even before retraining.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>How Sharing Works</h3>
+        <p>Export your model from the <strong>Model</strong> page and send the <code>.magnitu</code> file to a colleague. They import it and get all your labels, the trained model, and the recipe. From there, they can continue labeling and retraining — each new training creates the next version in the chain.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>What Happens on Import</h3>
+        <p>Importing a model merges its data with whatever is already on the receiving machine:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Labels</span>
+                <span class="about-detail-value">Always merged. If both sides have labeled the same entry, the newer label (by timestamp) wins.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Trained model</span>
+                <span class="about-detail-value">Only loaded if the imported version is equal to or higher than the local version. You can never accidentally overwrite a better model with an older one.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">If the import is older</span>
+                <span class="about-detail-value">Labels are still merged (useful data), but the trained model is kept as-is. Retrain to incorporate the newly imported labels.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 13. Forking & Personalisation -->
+<div class="dashboard-section">
+    <h2>Forking &amp; Personalisation</h2>
+    <p class="section-desc">Magnitu supports a base-model-plus-fork workflow, designed for newsrooms where journalists share common ground but have different beats.</p>
+
+    <div class="about-section">
+        <h3>The Idea</h3>
+        <p>A newsroom maintains a <strong>base model</strong> — a shared set of labels that reflects what the team broadly agrees on: spam is noise, major breaking news is important, routine press releases are background. Every journalist benefits from this common ground.</p>
+        <p>But a journalist covering financial crime has different priorities than one covering local government. Rather than starting from scratch, they <strong>fork</strong> the base model: they get all the shared labels as a starting point, then relabel entries according to their own beat. After retraining, the forked model reflects both the team's consensus and the journalist's personal priorities.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>How Forking Works</h3>
+        <p>Use <strong>Fork as New Model</strong> on the Model page. This creates a new <code>.magnitu</code> file with a fresh identity (name and unique ID) but all the labels and training data from the base model. The journalist imports this file, and their Magnitu instance starts with everything the base model knows.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">What carries over</span>
+                <span class="about-detail-value">All labels (with article text and reasoning), the trained model, and the recipe. The fork is a complete snapshot.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What's new</span>
+                <span class="about-detail-value">A fresh model name and unique ID. The lineage (which model it was forked from) is recorded.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What happens next</span>
+                <span class="about-detail-value">The journalist relabels entries where their judgment differs and retrains. The new model learns from the combined labels — shared consensus plus personal adjustments.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Why Fork Instead of Starting From Scratch?</h3>
+        <p>A model needs at least 20 labels to train at all, and realistically 100+ for decent accuracy across four classes. A journalist starting from zero has to label everything before the model becomes useful.</p>
+        <p>A journalist who forks a base model with 400+ labels already has a working model on day one. They only need to relabel the entries where their beat diverges — maybe 50–200 entries. The shared judgments (spam is noise, breaking news is important) stay unchanged and continue to anchor the model.</p>
+        <p>There is no need to "reset" labels before forking. Simply relabeling the entries you care about is enough. Training always builds a fresh classifier from all labels, so the new labels mix cleanly with the inherited ones.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>Current Limitations</h3>
+        <p>Each Magnitu instance has one set of labels and one active model. When you push scores and a recipe to Seismo, they overwrite whatever was there before. This means:</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">One recipe at a time</span>
+                <span class="about-detail-value">Seismo stores a single active recipe. If journalist A pushes their recipe and journalist B pushes theirs, B's replaces A's.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">No per-user scoring</span>
+                <span class="about-detail-value">Everyone using Seismo sees the same scores — whichever recipe was pushed last.</span>
+            </div>
+        </div>
+        <p>The fork workflow works well for distributing a model to another person. For maintaining multiple topic-specific models yourself, use profiles instead.</p>
+    </div>
+</div>
+
+<!-- 14. Multi-Profile Architecture -->
+<div class="dashboard-section">
+    <h2>Multi-Profile Architecture</h2>
+    <p class="section-desc">One Magnitu instance can run several independent relevance models simultaneously — one per "profile". A profile is a complete, isolated relevance context: its own labels, trained model, recipe, and Seismo push target.</p>
+
+    <div class="about-section">
+        <h3>How Profiles Work</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Shared across all profiles</span>
+                <span class="about-detail-value">Entries and transformer embeddings. You sync once from the mothership Seismo and every profile uses the same entry pool. Embedding computation runs once per entry regardless of how many profiles you have.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Per-profile</span>
+                <span class="about-detail-value">Labels, trained model, recipe, and push target. Labeling "security" entries as Investigation Lead in the Security profile has no effect on what the Digital profile considers important.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Switching profiles</span>
+                <span class="about-detail-value">Click a profile name in the top bar, or navigate directly to /p/{slug}/. The URL always tells you which profile you're working in.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Adding a profile</span>
+                <span class="about-detail-value">Open Settings → <strong>Profiles</strong> (section at the top), enter a name and (optionally) the push-target URL and API key for a lightweight Seismo instance. Then label entries in that profile, train, and push.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Lightweight Seismo Instances</h3>
+        <p>Each profile can push scores and recipes to a different Seismo instance — typically a "lightweight" Seismo on the webspace that shares the mothership's entry data but has its own scoring tables and API key.</p>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Pull (global)</span>
+                <span class="about-detail-value">All profiles pull entries from the mothership Seismo (configured in global Settings). This is the one place that runs scrapers, handles emails, and aggregates feeds.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Push (per-profile)</span>
+                <span class="about-detail-value">Each profile pushes scores + recipe to its own configured target. The default profile typically pushes to the mothership. A "Security" profile would push to a separate lightweight Seismo instance that surfaces security-focused ranking to a different audience.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">API contract</span>
+                <span class="about-detail-value">Lightweight Seismo instances expose the same endpoints as the mothership (magnitu_scores, magnitu_recipe, magnitu_status). The JSON formats are identical — no Seismo changes needed for the scoring/recipe contract.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 15. History: Magnitu 1 vs 2 -->
+<div class="dashboard-section">
+    <h2>History: Magnitu 1 vs 2</h2>
+    <p class="section-desc">Magnitu 2 replaced the text-matching engine with a language model. Here's a comparison for reference.</p>
+
+    <div class="about-section">
+        <h3>Magnitu 1 — Word Counting (TF-IDF)</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">How it read text</span>
+                <span class="about-detail-value">Counted how often each word appeared. A bag of words — no understanding of order or meaning.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What it learned</span>
+                <span class="about-detail-value">Which words correlate with each label. "investigation" leads to investigation lead, "press release" leads to noise.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Limitation</span>
+                <span class="about-detail-value">"Not relevant" and "very relevant" looked similar because both contain "relevant". It couldn't understand negation, context, or synonyms.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Languages</span>
+                <span class="about-detail-value">Treated each language separately. German and English articles about the same topic looked completely different.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="about-section">
+        <h3>Magnitu 2 — Language Understanding (Transformer)</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">How it reads text</span>
+                <span class="about-detail-value">Converts each article into a 768-dimensional meaning vector that captures what the article is about — not just which words appear.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">What it learns</span>
+                <span class="about-detail-value">Which types of meaning predict each label. It understands that "Untersuchung" and "investigation" mean the same thing, and that "no evidence of wrongdoing" differs from "evidence of wrongdoing".</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Why it's better</span>
+                <span class="about-detail-value">The model already knows what words mean before you label a single entry. Your labels teach it what matters to you, not what words mean in general.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Recipe bridge</span>
+                <span class="about-detail-value">The transformer can't produce a keyword recipe directly, so a simpler "student" model is trained to mimic its predictions. The recipe is extracted from this student — same format for Seismo, but informed by deeper understanding. This is called knowledge distillation.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 16. Tips -->
+<div class="dashboard-section">
+    <h2>Tips for Faster Learning</h2>
+    <div class="about-tips">
+        <div class="about-tip">
+            <strong>Label consistently.</strong> If two similar articles should be "Important", label them both "Important". The model learns from patterns in your choices.
+        </div>
+        <div class="about-tip">
+            <strong>Add reasoning for investigation leads.</strong> A short note like "links X to Y" helps the recipe and helps you remember why later.
+        </div>
+        <div class="about-tip">
+            <strong>Correct the Top 30.</strong> When the model is confidently wrong, that correction teaches it more than 10 random labels.
+        </div>
+        <div class="about-tip">
+            <strong>Retrain often.</strong> After every ~10 new labels, hit Train to incorporate your latest feedback. Each version builds on all previous labels.
+        </div>
+        <div class="about-tip">
+            <strong>Don't skip the "boring" ones.</strong> Labeling Noise and Background entries is just as valuable as labeling Investigation Leads — the model needs to know what to filter out.
+        </div>
+        <div class="about-tip">
+            <strong>Check the Dashboard.</strong> Watch accuracy and F1 score climb across model versions. If a class has very few labels, focus your next session on it.
+        </div>
+        <div class="about-tip">
+            <strong>Use the Legislation filter.</strong> In Magnitu Mini or on the main Label page, switch to "Legislation" to label only Lex items. Write reasoning notes explaining the Swiss angle — the model can't see it in the legal text alone.
+        </div>
+    </div>
+</div>
+
+<!-- 17. Keyboard Shortcuts -->
+<div class="dashboard-section">
+    <h2>Keyboard Shortcuts (Label Page)</h2>
+    <div class="shortcuts-grid">
+        <span class="shortcut"><kbd>1</kbd> Investigation Lead</span>
+        <span class="shortcut"><kbd>2</kbd> Important</span>
+        <span class="shortcut"><kbd>3</kbd> Background</span>
+        <span class="shortcut"><kbd>4</kbd> Noise</span>
+        <span class="shortcut"><kbd>r</kbd> Focus reasoning field</span>
+        <span class="shortcut"><kbd>Esc</kbd> Exit reasoning field</span>
+        <span class="shortcut"><kbd>j</kbd> / <kbd>&darr;</kbd> Next card</span>
+        <span class="shortcut"><kbd>k</kbd> / <kbd>&uarr;</kbd> Previous card</span>
+        <span class="shortcut"><kbd>u</kbd> Undo label</span>
+    </div>
+</div>
+{% endblock %}

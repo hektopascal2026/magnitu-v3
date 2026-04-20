@@ -1,0 +1,46 @@
+---
+description: Seismo integration — API contract and coordination rules
+alwaysApply: true
+---
+
+# Seismo Integration
+
+Magnitu connects to **Seismo** (separate repo, PHP app hosted on netmind.ch). Seismo is a feed aggregator; Magnitu adds ML-powered relevance scoring.
+
+## API Contract (seismo is the server)
+
+All requests go to seismo's `index.php` with `api_key` as a query parameter (`?api_key=...`):
+
+- `GET ?action=magnitu_entries` — fetch entries (params: `since`, `type`, `limit`)
+- `POST ?action=magnitu_scores` — push batch scores (body: `{scores: [...], model_version}`)
+- `GET/POST ?action=magnitu_recipe` — GET returns recipe; POST uploads new recipe
+- `GET/POST ?action=magnitu_labels` — GET returns all labels; POST upserts labels (body: `{labels: [{entry_type, entry_id, label, reasoning, labeled_at}]}`)
+- `GET ?action=magnitu_status` — check connectivity + stats
+
+## Entry format received from seismo
+
+Each entry has: `entry_type` (feed_item|email|lex_item), `entry_id`, `title`, `description`, `content`, `link`, `author`, `published_date`, `source_name`, `source_category`, `source_type` (rss|substack|email|lex_eu|lex_ch).
+
+## Score format pushed to seismo
+
+```json
+{"entry_type": "feed_item", "entry_id": 123, "relevance_score": 0.87, "predicted_label": "investigation_lead", "explanation": {"top_features": [{"feature": "...", "weight": 0.4, "direction": "positive"}], "confidence": 0.87, "prediction": "investigation_lead"}}
+```
+
+## Recipe JSON format (pushed to seismo, evaluated by PHP)
+
+```json
+{"version": 1, "classes": ["investigation_lead","important","background","noise"], "class_weights": [1.0,0.66,0.33,0.0], "keywords": {"word": {"class": weight}}, "source_weights": {"rss": {"class": weight}}}
+```
+
+Seismo's PHP tokenizes text, matches against keywords, sums weights per class, applies softmax, then computes composite score. Changing this format requires updating `scoreEntryWithRecipe()` in seismo's `config.php`.
+
+## Labels: investigation_lead, important, background, noise
+
+## Rules when changing Magnitu
+
+- Do NOT change the score/recipe JSON structure without updating seismo's PHP scoring engine
+- Do NOT change `entry_type` values — must match seismo's ENUM: `feed_item`, `email`, `lex_item`
+- The `source_type` values from seismo are: `rss`, `substack`, `email`, `lex_eu`, `lex_ch`
+- Sync module (`sync.py`) handles all API communication — keep it as the single point of contact
+- Python 3.9 compatibility required (no `X | Y` type unions, use `Optional[X]` / `typing`)

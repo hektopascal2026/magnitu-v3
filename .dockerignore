@@ -1,0 +1,13 @@
+.git
+.github
+.cursor
+__pycache__/
+*.pyc
+.venv/
+magnitu.db
+magnitu.db-shm
+magnitu.db-wal
+magnitu_config.json
+models/
+install.zip
+agent-transcripts/

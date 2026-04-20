@@ -1,0 +1,40 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    MAGNITU_DATA_DIR=/app/data \
+    HF_HOME=/app/data/hf \
+    TRANSFORMERS_CACHE=/app/data/hf \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    curl \
+    ca-certificates \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /app/requirements.txt
+
+RUN python -m pip install --upgrade pip && \
+    python -m pip install -r /app/requirements.txt && \
+    python -m pip install --upgrade \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch
+
+COPY . /app
+
+RUN chmod +x /app/docker/entrypoint.sh && \
+    mkdir -p /app/data /app/data/models /app/data/hf
+
+EXPOSE 8000
+
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

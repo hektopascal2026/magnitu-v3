@@ -1,0 +1,543 @@
+{% extends "layout.html" %}
+{% block title %}Settings — {{ profile.display_name if profile else 'Magnitu' }}{% endblock %}
+
+{% block content %}
+<div class="settings-page">
+    <!-- Sync Health -->
+    <div id="syncHealthBanner" style="display:none; padding: 12px 16px; margin-bottom: 20px; border: 2px solid #FF2C2C; background: #fff0f0; font-size: 14px;">
+        <strong style="color: #FF2C2C;">Sync problem detected</strong>
+        <span id="syncHealthDetail" style="margin-left: 8px;"></span>
+    </div>
+
+    <!-- Profiles: list + create -->
+    <div class="dashboard-section" id="profiles">
+        <h2>Profiles</h2>
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+            Each profile has its own labels, trained model, and push target.
+            All profiles share the same entries and embeddings pulled from the mothership.
+        </p>
+
+        {% if profiles %}
+        <table class="profiles-table" style="width:100%; border-collapse:collapse; margin-bottom: 24px;">
+            <thead>
+                <tr style="border-bottom: 2px solid #000; text-align:left;">
+                    <th style="padding: 8px 12px;">Name</th>
+                    <th style="padding: 8px 12px;">Slug</th>
+                    <th style="padding: 8px 12px;">Push target</th>
+                    <th style="padding: 8px 12px;">Labels</th>
+                    <th style="padding: 8px 12px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for p in profiles %}
+                <tr style="border-bottom: 1px solid #eee;" data-profile-id="{{ p.id }}">
+                    <td style="padding: 10px 12px;">
+                        <a href="/p/{{ p.slug }}/" style="font-weight: bold; text-decoration: none;">{{ p.display_name }}</a>
+                        {% if p.is_default %}<span style="font-size: 11px; background: #000; color: #fff; padding: 2px 6px; margin-left: 6px;">default</span>{% endif %}
+                        {% if p.description %}<div style="font-size: 12px; color: #666; margin-top: 2px;">{{ p.description }}</div>{% endif %}
+                    </td>
+                    <td style="padding: 10px 12px; font-family: monospace; font-size: 13px;">{{ p.slug }}</td>
+                    <td style="padding: 10px 12px; font-size: 13px;">
+                        {% if p.seismo_url %}
+                            <span style="color: #080; font-family: monospace; font-size: 12px;">{{ p.seismo_url[:40] }}{% if p.seismo_url|length > 40 %}…{% endif %}</span>
+                        {% else %}
+                            <span style="color: #999;">mothership</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 10px 12px; font-size: 13px;">{{ p.label_count }}</td>
+                    <td style="padding: 10px 12px;">
+                        <a href="/p/{{ p.slug }}/settings" class="btn btn-sm" style="margin-right: 4px;">Open</a>
+                        {% if not p.is_default %}
+                        <button type="button" class="btn btn-sm btn-danger profile-delete-btn" data-profile-id="{{ p.id }}" data-profile-name="{{ p.display_name|e }}">Delete</button>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: #666; margin-bottom: 16px;">No profiles yet. <a href="/setup">Set up your first profile.</a></p>
+        {% endif %}
+
+        <h3 style="font-size: 16px; margin: 20px 0 12px 0;">Add profile</h3>
+        <div class="settings-form" id="addProfileForm">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Profile name <span style="color:red;">*</span></label>
+                    <input type="text" id="newName" placeholder="e.g. Security, Digitalthemen"
+                           oninput="autoSlugFromName()">
+                    <div class="form-help">Shown in the profile switcher</div>
+                </div>
+                <div class="form-group">
+                    <label>URL slug</label>
+                    <input type="text" id="newSlug" placeholder="auto-generated from name"
+                           style="font-family: monospace;">
+                    <div class="form-help">Used in URLs: /p/your-slug/</div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="newDesc" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>Push target URL</label>
+                    <input type="url" id="newSeismoUrl" placeholder="Leave blank to use mothership">
+                    <div class="form-help">Seismo that receives scores and recipes for this profile</div>
+                </div>
+                <div class="form-group">
+                    <label>Push target API key</label>
+                    <input type="text" id="newApiKey" placeholder="Leave blank to use mothership key"
+                           style="font-family: monospace;">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-primary" id="createProfileBtn">Create profile</button>
+                <span id="createStatus"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Per-Profile Push Target -->
+    {% if profile %}
+    <div class="dashboard-section">
+        <h2>Push Target — {{ profile.display_name }}</h2>
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+            Scores and recipes from this profile are pushed to the Seismo instance configured here.
+            Leave blank to use the global mothership settings below.
+        </p>
+        <div class="settings-form" id="profileForm">
+            <div class="form-group">
+                <label>Seismo URL (push)</label>
+                <input type="url" id="profileSeismoUrl" value="{{ profile.seismo_url or '' }}"
+                       placeholder="Leave blank to use mothership URL">
+            </div>
+            <div class="form-group">
+                <label>API Key (push)</label>
+                <input type="text" id="profileApiKey" value="{{ profile.api_key or '' }}"
+                       placeholder="Leave blank to use mothership API key"
+                       style="font-family: monospace;">
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveProfileBtn">Save Push Target</button>
+                <button class="btn" id="testProfileBtn">Test Connection</button>
+                <span id="profileStatus"></span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Global Mothership Connection -->
+    <div class="dashboard-section">
+        <h2>Mothership Connection <span style="font-size:12px; color:#888; font-weight:normal;">(global — used for pulling entries)</span></h2>
+        <div class="settings-form" id="connectionForm">
+            <div class="form-group">
+                <label>Seismo URL</label>
+                <input type="url" id="seismoUrl" value="{{ config.seismo_url }}"
+                       placeholder="https://your-domain.ch/seismo_0.3/index.php">
+                <div class="form-help">The full URL to seismo's index.php — all profiles pull entries from here</div>
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="text" id="apiKey" value="{{ config.api_key }}"
+                       placeholder="Paste your Seismo API key here"
+                       style="font-family: monospace;">
+                <div class="form-help">Find this in Seismo Settings &gt; Magnitu section</div>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveConnectionBtn">Save Connection</button>
+                <button class="btn" id="testConnectionBtn">Test Connection</button>
+                <span id="connectionStatus"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Model Architecture -->
+    <div class="dashboard-section">
+        <h2>Model Architecture</h2>
+        <div class="settings-form" id="archForm">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Architecture</label>
+                    <select id="modelArch" style="padding: 10px 14px; border: 2px solid #000000; font-size: 14px; font-family: inherit; background: #ffffff; color: #000000;">
+                        <option value="transformer" {% if config.model_architecture == 'transformer' %}selected{% endif %}>Transformer (XLM-RoBERTa) — recommended</option>
+                        <option value="tfidf" {% if config.model_architecture == 'tfidf' %}selected{% endif %}>TF-IDF + LogReg (Magnitu 1 fallback)</option>
+                    </select>
+                    <div class="form-help">Transformer uses a pre-trained language model for better understanding. TF-IDF uses keyword counting (faster, simpler).</div>
+                </div>
+                <div class="form-group">
+                    <label>Transformer Model</label>
+                    <input type="text" id="transformerModel" value="{{ config.transformer_model_name or 'xlm-roberta-base' }}"
+                           style="font-family: monospace;">
+                    <div class="form-help">HuggingFace model name. Default: xlm-roberta-base (multilingual, supports German/French). Change only if you know what you're doing.</div>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="useGpu" {% if config.get('use_gpu', true) %}checked{% endif %}>
+                        GPU acceleration (NVIDIA CUDA / Apple Silicon MPS)
+                    </label>
+                    <div class="form-help">Use CUDA on Linux/NVIDIA or Metal (MPS) on Apple Silicon for faster embedding computation.</div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveArchBtn">Save Architecture</button>
+                <span style="font-size: 12px; color: #666;">Changing architecture requires retraining.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Training Settings -->
+    <div class="dashboard-section">
+        <h2>Training Settings</h2>
+        <div class="settings-form" id="trainingForm">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Minimum Labels to Train</label>
+                    <input type="number" id="minLabels" value="{{ config.min_labels_to_train or 20 }}" min="5" max="500">
+                    <div class="form-help">How many labeled entries before the first model can be trained</div>
+                </div>
+                <div class="form-group">
+                    <label>Recipe Top Keywords</label>
+                    <input type="number" id="recipeKeywords" value="{{ config.recipe_top_keywords or 200 }}" min="50" max="1000">
+                    <div class="form-help">How many keywords to include in the recipe exported to Seismo</div>
+                </div>
+                <div class="form-group">
+                    <label>Alert Threshold (0.0 – 1.0)</label>
+                    <input type="number" id="alertThreshold" value="{{ config.alert_threshold or 0.75 }}" min="0" max="1" step="0.05">
+                    <div class="form-help">Score above which entries are highlighted as alerts in Seismo</div>
+                </div>
+                <div class="form-group">
+                    <label>Lead discovery blend (0.0 – 0.25)</label>
+                    <input type="number" id="discoveryLeadBlend" value="{{ config.discovery_lead_blend or 0 }}" min="0" max="0.25" step="0.05">
+                    <div class="form-help">Optional weight on <em>investigation_lead</em> probability in the pushed relevance score. Use a small value (e.g. 0.1) to surface more leads.</div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveTrainingBtn">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Advanced training knobs -->
+    <div class="dashboard-section">
+        <h2>Advanced training</h2>
+        <p class="section-subtitle">
+            Opt-in knobs that change how the next model run weights your labels. All default to off;
+            each affects the next <strong>train</strong>, not anything already trained.
+        </p>
+        <div class="settings-form">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Label time-decay half-life (days)</label>
+                    <input type="number" id="labelDecayDays" value="{{ config.label_time_decay_days or 0 }}" min="0" max="3650" step="1">
+                    <div class="form-help">
+                        Older labels count less during training. <code>0</code> = disabled;
+                        <code>120</code> ≈ a label from 4 months ago weighs half as much as today.
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Decay floor (0.0 – 1.0)</label>
+                    <input type="number" id="labelDecayFloor" value="{{ config.label_time_decay_floor if config.label_time_decay_floor is not none else 0.2 }}" min="0" max="1" step="0.05">
+                    <div class="form-help">Minimum weight an old label can drop to. Prevents ancient training data from vanishing entirely.</div>
+                </div>
+                <div class="form-group">
+                    <label>Reasoning-weight boost (1.0 = off)</label>
+                    <input type="number" id="reasoningBoost" value="{{ config.reasoning_weight_boost or 1.0 }}" min="0" max="5" step="0.1">
+                    <div class="form-help">Labels with a non-empty reasoning note count more. <code>1.5</code> is a sensible starting point.</div>
+                </div>
+            </div>
+            <div class="form-group" style="margin-top: 1rem;">
+                <label>Legal-signal patterns</label>
+                <textarea id="legalSignalPatterns" rows="4" style="width:100%; font-family:monospace;" placeholder="Drittland&#10;Binnenmarkt&#10;EWR&#10;CE-Kennzeichnung&#10;Ursprungserzeugnis">{{ "\n".join(config.legal_signal_patterns or []) }}</textarea>
+                <div class="form-help">
+                    One phrase (or regex) per line.  When a match is found in an entry it's prepended to the embedded text
+                    as <code>signals=…</code> so the transformer treats it as emphasized context, and the phrase is
+                    boosted in the distilled recipe for <em>investigation_lead</em>.
+                    Changing this list will clear all cached embeddings — next sync re-embeds.
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveAdvancedBtn">Save advanced knobs</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Reference -->
+    <div class="dashboard-section">
+        <h2>Keyboard Shortcuts</h2>
+        <div class="shortcuts-grid">
+            <div class="shortcut"><kbd>1</kbd> Investigation Lead</div>
+            <div class="shortcut"><kbd>2</kbd> Important</div>
+            <div class="shortcut"><kbd>3</kbd> Background</div>
+            <div class="shortcut"><kbd>4</kbd> Noise</div>
+            <div class="shortcut"><kbd>r</kbd> Focus reasoning field</div>
+            <div class="shortcut"><kbd>Esc</kbd> Exit reasoning field</div>
+            <div class="shortcut"><kbd>j</kbd> / <kbd>↓</kbd> Next entry</div>
+            <div class="shortcut"><kbd>k</kbd> / <kbd>↑</kbd> Previous entry</div>
+            <div class="shortcut"><kbd>u</kbd> Undo label</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var slug = '{{ profile.slug if profile else "" }}';
+
+    function scrollToProfilesSection() {
+        var el = document.getElementById('profiles');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    if (window.location.search.indexOf('profiles=1') >= 0 || window.location.hash === '#profiles') {
+        setTimeout(scrollToProfilesSection, 80);
+    }
+
+    function slugify(s) {
+        return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || '';
+    }
+    window.autoSlugFromName = function() {
+        var nameEl = document.getElementById('newName');
+        var slugField = document.getElementById('newSlug');
+        if (!nameEl || !slugField) return;
+        if (!slugField._edited) {
+            slugField.value = slugify(nameEl.value);
+        }
+    };
+    var newSlugEl = document.getElementById('newSlug');
+    if (newSlugEl) {
+        newSlugEl.addEventListener('input', function() {
+            this._edited = this.value.length > 0;
+        });
+    }
+
+    function deleteProfile(id, name) {
+        if (!confirm('Delete profile "' + name + '"? All its labels and model records will be removed. This cannot be undone.')) return;
+        fetch('/api/profiles/' + id, { method: 'DELETE' })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    window.location.reload();
+                } else {
+                    flash(d.error || 'Failed to delete profile.', 'error');
+                }
+            })
+            .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+    }
+
+    var createBtn = document.getElementById('createProfileBtn');
+    if (createBtn) {
+        createBtn.addEventListener('click', function() {
+            var name = document.getElementById('newName').value.trim();
+            var s = document.getElementById('newSlug').value.trim() || slugify(name);
+            var desc = document.getElementById('newDesc').value.trim();
+            var url = document.getElementById('newSeismoUrl').value.trim();
+            var key = document.getElementById('newApiKey').value.trim();
+            var status = document.getElementById('createStatus');
+            if (!name) { flash('Profile name is required.', 'error'); return; }
+            if (!s) { flash('Slug is required.', 'error'); return; }
+            status.textContent = 'Creating…';
+            fetch('/api/profiles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    display_name: name, slug: s, description: desc,
+                    seismo_url: url, api_key: key,
+                }),
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    window.location.href = '/p/' + d.profile.slug + '/';
+                } else {
+                    status.textContent = d.error || 'Failed.';
+                    status.className = 'status-error';
+                }
+            })
+            .catch(function(err) {
+                status.textContent = 'Error: ' + err.message;
+                status.className = 'status-error';
+            });
+        });
+    }
+    document.querySelectorAll('.profile-delete-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var id = parseInt(btn.getAttribute('data-profile-id'), 10);
+            var name = btn.getAttribute('data-profile-name') || '';
+            deleteProfile(id, name);
+        });
+    });
+
+    // Sync health
+    if (slug) {
+        fetch('/p/' + slug + '/api/sync/health')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var problems = [];
+                if (d.push && !d.push.ok && d.push.detail) {
+                    problems.push('Last push: ' + d.push.detail.details + ' (' + (d.push.detail.synced_at || '').substring(0, 16) + ')');
+                }
+                if (d.pull && !d.pull.ok && d.pull.detail) {
+                    problems.push('Last pull: ' + d.pull.detail.details + ' (' + (d.pull.detail.synced_at || '').substring(0, 16) + ')');
+                }
+                if (problems.length > 0) {
+                    document.getElementById('syncHealthBanner').style.display = 'block';
+                    document.getElementById('syncHealthDetail').textContent = problems.join(' | ');
+                }
+            })
+            .catch(function() {});
+    }
+
+    // Save per-profile push target
+    var saveProfileBtn = document.getElementById('saveProfileBtn');
+    if (saveProfileBtn && slug) {
+        var profileId = {{ profile.id if profile else 0 }};
+        saveProfileBtn.addEventListener('click', function() {
+            var data = {
+                seismo_url: document.getElementById('profileSeismoUrl').value.trim(),
+                api_key: document.getElementById('profileApiKey').value.trim(),
+            };
+            fetch('/api/profiles/' + profileId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) flash('Push target saved.', 'success');
+                else flash('Failed: ' + (d.error || ''), 'error');
+            })
+            .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+        });
+
+        document.getElementById('testProfileBtn').addEventListener('click', function() {
+            var status = document.getElementById('profileStatus');
+            status.textContent = 'Testing...';
+            fetch('/p/' + slug + '/api/sync/test')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    status.textContent = d.message;
+                    status.className = d.success ? 'status-ok' : 'status-error';
+                })
+                .catch(function(err) { status.textContent = 'Error: ' + err.message; status.className = 'status-error'; });
+        });
+    }
+
+    // Save mothership connection
+    document.getElementById('saveConnectionBtn').addEventListener('click', function() {
+        var data = {
+            seismo_url: document.getElementById('seismoUrl').value.trim(),
+            api_key: document.getElementById('apiKey').value.trim(),
+        };
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success) flash('Connection settings saved.', 'success');
+            else flash('Failed to save.', 'error');
+        })
+        .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+    });
+
+    // Test mothership connection
+    document.getElementById('testConnectionBtn').addEventListener('click', function() {
+        var status = document.getElementById('connectionStatus');
+        status.textContent = 'Testing...';
+        var data = {
+            seismo_url: document.getElementById('seismoUrl').value.trim(),
+            api_key: document.getElementById('apiKey').value.trim(),
+        };
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        })
+        .then(function() {
+            return slug ? fetch('/p/' + slug + '/api/sync/test') : Promise.reject('no profile');
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            status.textContent = d.message;
+            status.className = d.success ? 'status-ok' : 'status-error';
+        })
+        .catch(function(err) {
+            status.textContent = typeof err === 'string' ? err : 'Error: ' + err.message;
+            status.className = 'status-error';
+        });
+    });
+
+    // Save architecture
+    document.getElementById('saveArchBtn').addEventListener('click', function() {
+        var data = {
+            model_architecture: document.getElementById('modelArch').value,
+            transformer_model_name: document.getElementById('transformerModel').value.trim(),
+            use_gpu: document.getElementById('useGpu').checked,
+        };
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success) flash('Architecture saved. Retrain your model to apply changes.', 'success');
+            else flash('Failed to save.', 'error');
+        })
+        .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+    });
+
+    // Save training settings
+    document.getElementById('saveTrainingBtn').addEventListener('click', function() {
+        var data = {
+            min_labels_to_train: parseInt(document.getElementById('minLabels').value),
+            recipe_top_keywords: parseInt(document.getElementById('recipeKeywords').value),
+            alert_threshold: parseFloat(document.getElementById('alertThreshold').value),
+            discovery_lead_blend: parseFloat(document.getElementById('discoveryLeadBlend').value),
+        };
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success) flash('Training settings saved.', 'success');
+            else flash('Failed to save.', 'error');
+        })
+        .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+    });
+
+    // Save advanced training knobs
+    var advBtn = document.getElementById('saveAdvancedBtn');
+    if (advBtn) {
+        advBtn.addEventListener('click', function() {
+            var rawPatterns = document.getElementById('legalSignalPatterns').value || '';
+            var patterns = rawPatterns.split('\n')
+                .map(function(s) { return s.trim(); })
+                .filter(function(s) { return s.length > 0; });
+            var data = {
+                label_time_decay_days: parseInt(document.getElementById('labelDecayDays').value) || 0,
+                label_time_decay_floor: parseFloat(document.getElementById('labelDecayFloor').value),
+                reasoning_weight_boost: parseFloat(document.getElementById('reasoningBoost').value),
+                legal_signal_patterns: patterns,
+            };
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    flash('Saved. Retrain (and re-embed if you changed patterns) to apply.', 'success');
+                } else {
+                    flash(d.error || 'Failed to save.', 'error');
+                }
+            })
+            .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+        });
+    }
+})();
+</script>
+{% endblock %}

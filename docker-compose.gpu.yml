@@ -1,0 +1,13 @@
+services:
+  magnitu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    image: magnitu:gpu
+    gpus: all
+    environment:
+      MAGNITU_DATA_DIR: /app/data
+      HF_HOME: /app/data/hf
+      TRANSFORMERS_CACHE: /app/data/hf
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

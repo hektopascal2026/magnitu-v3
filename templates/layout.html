@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Magnitu{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="top-bar-left">
+                <span class="top-bar-title">
+                    <a href="/">Magnitu</a>
+                </span>
+                {% if all_profiles and all_profiles|length > 1 %}
+                <span class="profile-switcher">
+                    {% for p in all_profiles %}
+                        {% if profile and p.id == profile.id %}
+                            <span class="profile-pill profile-pill-active">{{ p.display_name }}</span>
+                        {% else %}
+                            <a href="/p/{{ p.slug }}/" class="profile-pill">{{ p.display_name }}</a>
+                        {% endif %}
+                    {% endfor %}
+                    <a href="/p/{{ profile.slug }}/settings#profiles" class="profile-pill profile-pill-manage" title="Profiles">+</a>
+                </span>
+                {% elif profile %}
+                <span class="top-bar-subtitle">
+                    {{ profile.display_name }}{% if active_model %} v{{ active_model.version }}{% endif %} &middot; {{ label_count }} labels
+                    {% if architecture is defined and architecture == 'transformer' %}
+                        &middot; <span class="arch-badge arch-transformer">transformer</span>
+                    {% elif architecture is defined %}
+                        &middot; <span class="arch-badge arch-tfidf">tf-idf</span>
+                    {% endif %}
+                </span>
+                <a href="/p/{{ profile.slug }}/settings#profiles" class="profile-pill profile-pill-manage" title="Profiles">+</a>
+                {% endif %}
+            </div>
+            <nav class="top-bar-nav">
+                {% if profile %}
+                <a href="/p/{{ profile.slug }}/" class="nav-link {% if request.url.path == '/p/' + profile.slug + '/' %}active{% endif %}">Label</a>
+                <a href="/p/{{ profile.slug }}/top" class="nav-link {% if '/top' in request.url.path %}active{% endif %}">Top 30</a>
+                <a href="/p/{{ profile.slug }}/model" class="nav-link {% if '/model' in request.url.path %}active{% endif %}">Model</a>
+                <a href="/p/{{ profile.slug }}/dashboard" class="nav-link {% if '/dashboard' in request.url.path %}active{% endif %}">Dashboard</a>
+                <a href="/p/{{ profile.slug }}/settings" class="nav-link {% if '/settings' in request.url.path %}active{% endif %}">Settings</a>
+                {% endif %}
+                <a href="/about" class="nav-link {% if request.url.path == '/about' %}active{% endif %}">About</a>
+            </nav>
+        </div>
+
+        <!-- Flash Messages -->
+        <div id="flash-messages"></div>
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+    function flash(msg, type) {
+        var el = document.getElementById('flash-messages');
+        var div = document.createElement('div');
+        div.className = 'message message-' + (type || 'info');
+        div.textContent = msg;
+        el.appendChild(div);
+        setTimeout(function() { div.remove(); }, 5000);
+    }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,543 @@
+{% extends "layout.html" %}
+{% block title %}Label — Magnitu{% endblock %}
+
+{% block content %}
+<!-- Progress Bar -->
+<div class="progress-section">
+    <div class="progress-stats">
+        <span class="progress-today">Today: <strong id="todayCount">{{ today_labels }}</strong></span>
+        <span class="progress-total">Total: <strong>{{ label_count }}</strong></span>
+        <span class="progress-remaining">Queue: <strong id="queueCount">{{ unlabeled_count }}</strong></span>
+    </div>
+    <div class="progress-bar">
+        {% set pct = (label_count / (label_count + unlabeled_count) * 100) if (label_count + unlabeled_count) > 0 else 0 %}
+        <div class="progress-fill" style="width: {{ pct | round(1) }}%"></div>
+    </div>
+    <div class="progress-actions">
+        <button class="btn btn-primary" id="syncPullBtn" title="Fetch new entries from Seismo">Sync</button>
+        <button class="btn" id="syncFullBtn" title="Backfill all Seismo entries and embeddings">Full Sync</button>
+        {% if label_count >= (config.min_labels_to_train or 20) %}
+            <button class="btn" id="trainBtn" title="Train model on labeled entries">Train</button>
+            {% if active_model %}
+                <button class="btn" id="pushBtn" title="Push scores + recipe to Seismo">Push to Seismo</button>
+            {% endif %}
+        {% else %}
+            <button class="btn" disabled title="Need {{ config.min_labels_to_train or 20 }} labels to train (have {{ label_count }})">Train ({{ label_count }}/{{ config.min_labels_to_train or 20 }})</button>
+        {% endif %}
+    </div>
+    <div class="task-progress" id="taskProgress" style="display:none;">
+        <div class="task-progress-label" id="taskProgressLabel">Working...</div>
+        <div class="task-progress-track">
+            <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+        </div>
+        <div class="task-progress-meta" id="taskProgressMeta">0%</div>
+    </div>
+</div>
+
+<!-- Source Filter -->
+<div class="source-filter">
+    <a href="/?source=all" class="source-filter-btn {% if source_filter == 'all' %}active{% endif %}">All</a>
+    <a href="/?source=lex" class="source-filter-btn {% if source_filter == 'lex' %}active{% endif %}">Legislation</a>
+    <a href="/?source=news" class="source-filter-btn {% if source_filter == 'news' %}active{% endif %}">News</a>
+</div>
+
+<!-- Label Distribution -->
+{% if label_distribution %}
+<div class="label-dist">
+    {% for label, count in label_distribution.items() %}
+        <span class="label-dist-item label-{{ label }}">
+            {{ label | replace('_', ' ') }}: {{ count }}
+        </span>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Smart Queue Summary -->
+{% if has_model and sampling_stats %}
+<div class="sampling-bar">
+    <span class="sampling-bar-label">Smart Queue</span>
+    {% if sampling_stats.get('uncertain', 0) > 0 %}
+        <span class="sampling-pill sampling-pill-uncertain">
+            <span class="sampling-pill-count">{{ sampling_stats.uncertain }}</span> uncertain
+        </span>
+    {% endif %}
+    {% if sampling_stats.get('conflict', 0) > 0 %}
+        <span class="sampling-pill sampling-pill-conflict">
+            <span class="sampling-pill-count">{{ sampling_stats.conflict }}</span> conflict
+        </span>
+    {% endif %}
+    {% if sampling_stats.get('diverse', 0) > 0 %}
+        <span class="sampling-pill sampling-pill-diverse">
+            <span class="sampling-pill-count">{{ sampling_stats.diverse }}</span> diverse
+        </span>
+    {% endif %}
+    {% if sampling_stats.get('new', 0) > 0 %}
+        <span class="sampling-pill sampling-pill-new">
+            <span class="sampling-pill-count">{{ sampling_stats.new }}</span> new
+        </span>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Entry Cards -->
+<div class="entries-section" id="entriesSection">
+    {% if entries %}
+        {% for entry in entries %}
+            <div class="entry-card {% if entry._label %}labeled labeled-{{ entry._label }}{% endif %}"
+                 data-entry-type="{{ entry.entry_type }}"
+                 data-entry-id="{{ entry.entry_id }}"
+                 data-sampling-reason="{{ entry._sampling_reason or 'new' }}"
+                 id="card-{{ entry.entry_type }}-{{ entry.entry_id }}">
+                <div class="entry-header">
+                    <span class="entry-source-tag source-{{ entry.source_type }}">
+                        {{ entry.source_type }}
+                    </span>
+                    {% if entry.source_category %}
+                        <span class="entry-category">{{ entry.source_category }}</span>
+                    {% endif %}
+                    {% if entry._sampling_reason and entry._sampling_reason != 'new' %}
+                        <span class="sampling-reason sampling-reason-{{ entry._sampling_reason }}">
+                            {{ entry._sampling_reason }}
+                        </span>
+                        {% if entry._sampling_detail %}
+                            <span class="sampling-detail">{{ entry._sampling_detail }}</span>
+                        {% endif %}
+                    {% endif %}
+                    {% if entry._label %}
+                        <span class="entry-current-label label-{{ entry._label }}">
+                            {{ entry._label | replace('_', ' ') }}
+                        </span>
+                    {% endif %}
+                    {% if entry.published_date %}
+                        <span class="entry-date">{{ entry.published_date[:10] }}</span>
+                    {% endif %}
+                </div>
+
+                <h3 class="entry-title">
+                    {% if entry.link %}
+                        <a href="{{ entry.link }}" target="_blank" rel="noopener">{{ entry.title }}</a>
+                    {% else %}
+                        {{ entry.title }}
+                    {% endif %}
+                </h3>
+
+                {% if entry.description %}
+                    <div class="entry-content">{{ entry.description[:300] }}{% if entry.description|length > 300 %}...{% endif %}</div>
+                {% endif %}
+
+                {% if entry.source_name %}
+                    <div class="entry-source">{{ entry.source_name }}</div>
+                {% endif %}
+
+                <div class="reasoning-row">
+                    <input type="text" class="reasoning-input"
+                           placeholder="{% if entry._label == 'investigation_lead' %}Why is this relevant?{% else %}Optional: why this label?{% endif %}"
+                           value="{{ entry._reasoning or '' }}"
+                           data-entry-type="{{ entry.entry_type }}"
+                           data-entry-id="{{ entry.entry_id }}"
+                           title="Optional reasoning (key: r to focus)">
+                </div>
+                <div class="label-buttons">
+                    <button class="label-btn label-btn-investigation {% if entry._label == 'investigation_lead' %}active{% endif %}"
+                            data-label="investigation_lead"
+                            title="Investigation lead (key 1)">
+                        <span class="label-key">1</span> Investigation
+                    </button>
+                    <button class="label-btn label-btn-important {% if entry._label == 'important' %}active{% endif %}"
+                            data-label="important"
+                            title="Important (key 2)">
+                        <span class="label-key">2</span> Important
+                    </button>
+                    <button class="label-btn label-btn-background {% if entry._label == 'background' %}active{% endif %}"
+                            data-label="background"
+                            title="Background (key 3)">
+                        <span class="label-key">3</span> Background
+                    </button>
+                    <button class="label-btn label-btn-noise {% if entry._label == 'noise' %}active{% endif %}"
+                            data-label="noise"
+                            title="Noise (key 4)">
+                        <span class="label-key">4</span> Noise
+                    </button>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty-state">
+            <p>No entries in the queue. Click <strong>Sync</strong> to fetch entries from Seismo.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var SLUG = '{{ profile.slug if profile else "" }}';
+    var P = SLUG ? '/p/' + SLUG : '';
+    var focusedCard = null;
+    var cards = document.querySelectorAll('.entry-card');
+    var todayEl = document.getElementById('todayCount');
+    var queueEl = document.getElementById('queueCount');
+    var todayCount = {{ today_labels }};
+    var queueCount = {{ unlabeled_count }};
+    var taskProgress = document.getElementById('taskProgress');
+    var taskProgressLabel = document.getElementById('taskProgressLabel');
+    var taskProgressFill = document.getElementById('taskProgressFill');
+    var taskProgressMeta = document.getElementById('taskProgressMeta');
+
+    // Focus first unlabeled card
+    function focusFirstUnlabeled() {
+        for (var i = 0; i < cards.length; i++) {
+            if (!cards[i].classList.contains('labeled')) {
+                setFocus(cards[i]);
+                return;
+            }
+        }
+        // All labeled, focus first card
+        if (cards.length > 0) setFocus(cards[0]);
+    }
+
+    function setFocus(card) {
+        if (focusedCard) focusedCard.classList.remove('focused');
+        focusedCard = card;
+        if (card) {
+            card.classList.add('focused');
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    function nextCard() {
+        if (!focusedCard) { focusFirstUnlabeled(); return; }
+        var idx = Array.from(cards).indexOf(focusedCard);
+        for (var i = idx + 1; i < cards.length; i++) {
+            if (!cards[i].classList.contains('labeled')) {
+                setFocus(cards[i]);
+                return;
+            }
+        }
+        // Wrap or stay
+        focusFirstUnlabeled();
+    }
+
+    function prevCard() {
+        if (!focusedCard) { focusFirstUnlabeled(); return; }
+        var idx = Array.from(cards).indexOf(focusedCard);
+        for (var i = idx - 1; i >= 0; i--) {
+            if (!cards[i].classList.contains('labeled')) {
+                setFocus(cards[i]);
+                return;
+            }
+        }
+    }
+
+    // Label an entry
+    function labelEntry(card, label) {
+        var entryType = card.dataset.entryType;
+        var entryId = card.dataset.entryId;
+        var wasLabeled = card.classList.contains('labeled');
+
+        // Get reasoning text from the input field
+        var reasoningInput = card.querySelector('.reasoning-input');
+        var reasoning = reasoningInput ? reasoningInput.value.trim() : '';
+
+        var formData = new FormData();
+        formData.append('entry_type', entryType);
+        formData.append('entry_id', entryId);
+        formData.append('label', label);
+        formData.append('reasoning', reasoning);
+
+        fetch(P + '/api/label', { method: 'POST', body: formData })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    // Update card visuals
+                    card.className = 'entry-card labeled labeled-' + label;
+                    if (card === focusedCard) card.classList.add('focused');
+
+                    // Update buttons
+                    card.querySelectorAll('.label-btn').forEach(function(btn) {
+                        btn.classList.toggle('active', btn.dataset.label === label);
+                    });
+
+                    // Update current label badge
+                    var badge = card.querySelector('.entry-current-label');
+                    if (!badge) {
+                        badge = document.createElement('span');
+                        badge.className = 'entry-current-label';
+                        card.querySelector('.entry-header').appendChild(badge);
+                    }
+                    badge.className = 'entry-current-label label-' + label;
+                    badge.textContent = label.replace(/_/g, ' ');
+
+                    // Update counters
+                    if (!wasLabeled) {
+                        todayCount++;
+                        queueCount = Math.max(0, queueCount - 1);
+                        todayEl.textContent = todayCount;
+                        queueEl.textContent = queueCount;
+                    }
+
+                    // Auto-advance to next unlabeled card
+                    setTimeout(nextCard, 150);
+                }
+            })
+            .catch(function(err) {
+                flash('Error labeling entry: ' + err.message, 'error');
+            });
+    }
+
+    // Click handlers for label buttons
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('.label-btn');
+        if (!btn) return;
+        var card = btn.closest('.entry-card');
+        labelEntry(card, btn.dataset.label);
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // If in reasoning input, only handle Escape (to blur) and Enter (to submit)
+        if (e.target.classList.contains('reasoning-input')) {
+            if (e.key === 'Escape') {
+                e.target.blur();
+                e.preventDefault();
+            }
+            return;
+        }
+        // Don't capture if typing in other inputs
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        var labelMap = { '1': 'investigation_lead', '2': 'important', '3': 'background', '4': 'noise' };
+
+        if (labelMap[e.key] && focusedCard) {
+            e.preventDefault();
+            labelEntry(focusedCard, labelMap[e.key]);
+        } else if (e.key === 'r' && focusedCard) {
+            // Focus the reasoning input of the current card
+            e.preventDefault();
+            var input = focusedCard.querySelector('.reasoning-input');
+            if (input) input.focus();
+        } else if (e.key === 'ArrowDown' || e.key === 'j') {
+            e.preventDefault();
+            nextCard();
+        } else if (e.key === 'ArrowUp' || e.key === 'k') {
+            e.preventDefault();
+            prevCard();
+        } else if (e.key === 'u' && focusedCard) {
+            // Undo label
+            e.preventDefault();
+            var entryType = focusedCard.dataset.entryType;
+            var entryId = focusedCard.dataset.entryId;
+            var formData = new FormData();
+            formData.append('entry_type', entryType);
+            formData.append('entry_id', entryId);
+            fetch(P + '/api/unlabel', { method: 'POST', body: formData })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        focusedCard.className = 'entry-card focused';
+                        focusedCard.querySelectorAll('.label-btn').forEach(function(btn) {
+                            btn.classList.remove('active');
+                        });
+                        var badge = focusedCard.querySelector('.entry-current-label');
+                        if (badge) badge.remove();
+                        queueCount++;
+                        todayCount = Math.max(0, todayCount - 1);
+                        todayEl.textContent = todayCount;
+                        queueEl.textContent = queueCount;
+                    }
+                });
+        }
+    });
+
+    function setProgress(visible, label, pct, meta) {
+        taskProgress.style.display = visible ? 'block' : 'none';
+        if (!visible) return;
+        taskProgressLabel.textContent = label || 'Working...';
+        taskProgressFill.style.width = (pct || 0) + '%';
+        taskProgressMeta.textContent = (meta || (pct || 0) + '%');
+    }
+
+    function pollJob(jobId, onDone, onFail) {
+        var timer = setInterval(function() {
+            fetch('/api/jobs/' + jobId)
+                .then(function(r) { return r.json(); })
+                .then(function(job) {
+                    setProgress(true, job.message || 'Working...', job.progress || 0, (job.progress || 0) + '%');
+                    if (job.status === 'success') {
+                        clearInterval(timer);
+                        onDone(job.result || {});
+                    } else if (job.status === 'error') {
+                        clearInterval(timer);
+                        onFail(job.error || 'Unknown error');
+                    }
+                })
+                .catch(function(err) {
+                    clearInterval(timer);
+                    onFail(err.message);
+                });
+        }, 1000);
+    }
+
+    function runSync(fullMode) {
+        var syncBtn = document.getElementById('syncPullBtn');
+        var fullBtn = document.getElementById('syncFullBtn');
+        syncBtn.disabled = true;
+        fullBtn.disabled = true;
+        syncBtn.textContent = fullMode ? 'Sync' : 'Syncing...';
+        fullBtn.textContent = fullMode ? 'Full Syncing...' : 'Full Sync';
+        setProgress(true, fullMode ? 'Starting full sync...' : 'Starting sync...', 1, '1%');
+
+        var url = fullMode ? '/api/sync/pull?full=true&background=true' : '/api/sync/pull?background=true';
+        fetch(url, { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success || !data.job_id) throw new Error(data.detail || 'Failed to start sync');
+                pollJob(
+                    data.job_id,
+                    function(result) {
+                        setProgress(true, 'Sync complete', 100, '100%');
+                        var msg = 'Fetched ' + result.entries_fetched + ' entries';
+                        if (result.full_mode && result.entries_by_type) {
+                            msg += ' (news ' + (result.entries_by_type.feed_item || 0) +
+                                   ', email ' + (result.entries_by_type.email || 0) +
+                                   ', lex ' + (result.entries_by_type.lex_item || 0) + ')';
+                        }
+                        if (result.embeddings_computed > 0) {
+                            msg += ', ' + result.embeddings_computed + ' embeddings computed';
+                        }
+                        if (result.full_mode) {
+                            msg += ' in ' + (result.embedding_rounds || 0) + ' embedding pass(es)';
+                        }
+                        if (result.labels_synced > 0) {
+                            msg += ', ' + result.labels_synced + ' labels synced';
+                        }
+                        if (result.sync_detail && result.sync_detail.indexOf('conflict') > -1) {
+                            msg += ' (some label conflicts resolved by timestamp)';
+                        }
+                        flash(msg + '.', 'success');
+                        if (result.embedding_warning) {
+                            flash(result.embedding_warning + ' Try syncing again.', 'error');
+                        }
+                        if (result.full_mode && result.remote_total && result.entry_count < result.remote_total) {
+                            flash(
+                                'Full sync coverage: local ' + result.entry_count + ' / remote ' + result.remote_total +
+                                ' entries. Run Full Sync again if needed.',
+                                'error'
+                            );
+                        }
+                        syncBtn.disabled = false;
+                        fullBtn.disabled = false;
+                        syncBtn.textContent = 'Sync';
+                        fullBtn.textContent = 'Full Sync';
+                        setTimeout(function() { location.reload(); }, 1500);
+                    },
+                    function(errMsg) {
+                        flash('Sync failed: ' + errMsg, 'error');
+                        syncBtn.disabled = false;
+                        fullBtn.disabled = false;
+                        syncBtn.textContent = 'Sync';
+                        fullBtn.textContent = 'Full Sync';
+                        setProgress(false);
+                    }
+                );
+            })
+            .catch(function(err) {
+                flash('Sync error: ' + err.message, 'error');
+                syncBtn.disabled = false;
+                fullBtn.disabled = false;
+                syncBtn.textContent = 'Sync';
+                fullBtn.textContent = 'Full Sync';
+                setProgress(false);
+            });
+    }
+
+    // Sync buttons
+    document.getElementById('syncPullBtn').addEventListener('click', function() { runSync(false); });
+    document.getElementById('syncFullBtn').addEventListener('click', function() { runSync(true); });
+
+    // Train button
+    var trainBtn = document.getElementById('trainBtn');
+    if (trainBtn) {
+        trainBtn.addEventListener('click', function() {
+            this.disabled = true;
+            this.textContent = 'Training...';
+            fetch(P + '/api/train', { method: 'POST' })
+                .then(function(r) {
+                    if (!r.ok) {
+                        return r.text().then(function(t) {
+                            throw new Error('Server error ' + r.status + ': ' + t.substring(0, 200));
+                        });
+                    }
+                    return r.json();
+                })
+                .then(function(data) {
+                    if (data.success) {
+                        flash('Model v' + data.version + ' trained! Accuracy: ' + (data.accuracy * 100).toFixed(1) + '%, F1: ' + (data.f1_score * 100).toFixed(1) + '%', 'success');
+                        setTimeout(function() { location.reload(); }, 1500);
+                    } else {
+                        flash('Training failed: ' + (data.error || 'Unknown error'), 'error');
+                    }
+                })
+                .catch(function(err) { flash('Training error: ' + err.message, 'error'); })
+                .finally(function() {
+                    trainBtn.disabled = false;
+                    trainBtn.textContent = 'Train';
+                });
+        });
+    }
+
+    // Push button
+    var pushBtn = document.getElementById('pushBtn');
+    if (pushBtn) {
+        pushBtn.addEventListener('click', function() {
+            pushBtn.disabled = true;
+            pushBtn.textContent = 'Pushing...';
+            setProgress(true, 'Starting push...', 1, '1%');
+            fetch(P + '/api/sync/push?background=true', { method: 'POST' })
+                .then(function(r) {
+                    if (!r.ok) {
+                        return r.text().then(function(body) {
+                            try { var j = JSON.parse(body); throw new Error(j.detail || 'HTTP ' + r.status); }
+                            catch(e) { if (e.message) throw e; throw new Error(body.substring(0, 200) || 'HTTP ' + r.status); }
+                        });
+                    }
+                    return r.json();
+                })
+                .then(function(data) {
+                    if (!data.success || !data.job_id) throw new Error(data.detail || 'Failed to start push');
+                    pollJob(
+                        data.job_id,
+                        function(result) {
+                            setProgress(true, 'Push complete', 100, '100%');
+                            if (result.success) {
+                                flash('Pushed ' + result.scores_pushed + ' scores to Seismo.', 'success');
+                            } else {
+                                flash('Push failed: ' + (result.detail || 'Unknown error'), 'error');
+                            }
+                            pushBtn.disabled = false;
+                            pushBtn.textContent = 'Push to Seismo';
+                            setTimeout(function() { setProgress(false); }, 1200);
+                        },
+                        function(errMsg) {
+                            flash('Push failed: ' + errMsg, 'error');
+                            pushBtn.disabled = false;
+                            pushBtn.textContent = 'Push to Seismo';
+                            setProgress(false);
+                        }
+                    );
+                })
+                .catch(function(err) {
+                    flash('Push failed: ' + err.message, 'error');
+                    pushBtn.disabled = false;
+                    pushBtn.textContent = 'Push to Seismo';
+                    setProgress(false);
+                });
+        });
+    }
+
+    // Auto-focus first unlabeled card
+    focusFirstUnlabeled();
+})();
+</script>
+{% endblock %}
