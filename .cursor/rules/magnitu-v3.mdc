@@ -1,0 +1,43 @@
+---
+description: Magnitu v3 — synthetic labeling, model library, recipe/training guardrails
+alwaysApply: true
+---
+
+# Magnitu v3 (Gemini & Model Library)
+
+Python 3.9 only (`Optional`, `typing`; no `X | Y`). Seismo HTTP stays in `sync.py` (see `seismo-integration.mdc`).
+
+## 1. Data integrity & schema
+
+- **`.magnitu` zip**: Do not change archive layout or `manifest.json` shape without bumping **manifest version** and updating any reader/writer that consumes it.
+- **Merging labels** (imports / sync): On conflict for the same entry, keep the row with the **most recent `labeled_at` timestamp** (or documented tie-breaker if equal).
+- **`reasoning` / `reasoning_note`**: Every **synthetic** label must carry non-empty reasoning **except** where explicitly allowed below.
+- **`investigation_lead`**: **Never** persist a synthetic label with class `investigation_lead` and empty reasoning. If Gemini returns empty reasoning for that class: **retry once** with a stricter prompt, then **reject** or **block save** (do not silently store).
+
+## 2. Recipe handshake (Python → Seismo PHP)
+
+- Recipes remain **keyword-based** approximations. **Do not** send raw transformer embeddings or dense vectors to Seismo; only the established recipe JSON contract.
+- **Keyword extraction** that feeds the recipe must apply the **1.5× weight boost** for terms sourced from **reasoning** text (single shared path in train/recipe code—no duplicate multipliers in Gemini-only code).
+
+## 3. Synthetic labeling (Gemini)
+
+- Use **`GeminiClient`** (REST / v1beta) as the **only** path for Gemini calls in this app.
+- **Swiss beat persona**: System instructions must ask for **exclusion / third-country patterns** (e.g. *Drittstaaten*, *EU or EEA*, *Member States only*, *Binnenmarkt*) even when Switzerland is not named.
+- **Provenance**: Synthetic rows in **local** `labels.json` must include **`"source": "Gemini"`** (or equivalent agreed key) so Review & Correct can filter. **Backward compatibility**: Missing `source` = treat as legacy/human unless UI says otherwise.
+- **Seismo POST `magnitu_labels`**: The server body is `{entry_type, entry_id, label, reasoning, labeled_at}`. Do **not** add `source` to the Seismo payload **unless** Seismo’s PHP schema is updated in lockstep; keep `source` local when needed.
+
+## 4. Training & metrics
+
+- After a **synthetic batch** completes, **surface** the option to **Train** (or run train in background if product requires automation). When reporting numbers, use the **same** accuracy / F1 definitions as the existing training pipeline or dashboard (document which: e.g. macro vs per-class).
+- Low **F1** with decent accuracy may indicate **neglect of rare classes** (especially `investigation_lead`)—call this out in UI/logs when relevant.
+- Preserve the project’s **train/test isolation** policy (e.g. **~20% held-out test** where the codebase already enforces it); do not leak test examples into training when implementing new flows.
+
+## 5. Model library
+
+- Each **profile** must have a **stable unique `id`** in manifest/metadata so recipes and Seismo targets cannot cross-wire.
+- **Fork**: Duplicating a profile creates a **new** `.magnitu` with a **new id**, copying **labels** from the parent as specified by the user; never reuse the fork’s id for a different lineage.
+
+## 6. Implementation hygiene
+
+- Validate Gemini output → enums: `investigation_lead`, `important`, `background`, `noise` only.
+- Rate limits / partial batch failure: surface errors; support retry of failed items without duplicating successful ones where possible.
