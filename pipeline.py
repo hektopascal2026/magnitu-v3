@@ -597,15 +597,35 @@ def train(profile_id: int = 1) -> dict:
     return _train_tfidf(profile_id=profile_id)
 
 
-def load_active_model(profile_id: int = 1):
-    """Load the currently active model for a profile."""
+def get_active_model_paths(profile_id: int = 1) -> Optional[dict]:
+    """Resolved paths for the active model row (model, optional recipe, optional calibration)."""
     model_info = db.get_active_model(profile_id=profile_id)
     if not model_info or not model_info.get("model_path"):
         return None
     model_path = model_info["model_path"]
-    if not Path(model_path).exists():
+    mp = Path(model_path)
+    if not mp.exists():
         return None
-    return joblib.load(model_path)
+    out = {
+        "model_path": str(mp.resolve()),
+        "recipe_path": "",
+        "calibration_path": "",
+    }
+    rp = model_info.get("recipe_path") or ""
+    if rp and Path(rp).exists():
+        out["recipe_path"] = str(Path(rp).resolve())
+    cal = calibration_sidecar_path(str(mp))
+    if cal.exists():
+        out["calibration_path"] = str(cal.resolve())
+    return out
+
+
+def load_active_model(profile_id: int = 1):
+    """Load the currently active model for a profile."""
+    paths = get_active_model_paths(profile_id=profile_id)
+    if not paths:
+        return None
+    return joblib.load(paths["model_path"])
 
 
 def score_entries(entries: List[dict], profile_id: int = 1) -> List[dict]:
@@ -871,6 +891,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
         model_path=model_path,
         architecture="transformer",
         profile_id=profile_id,
+        label_distribution=label_dist,
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -1126,6 +1147,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
         model_path=model_path,
         architecture="tfidf",
         profile_id=profile_id,
+        label_distribution=label_dist,
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)

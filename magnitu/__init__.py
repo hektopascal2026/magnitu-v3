@@ -1,1 +1,1 @@
-"""Magnitu core modules (Gemini client, prompts, synthetic scorer, synthetic batch)."""
+"""Magnitu core modules (Gemini, synthetic batch, on-disk ``.magnitu`` library catalog)."""

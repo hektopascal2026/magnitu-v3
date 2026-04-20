@@ -188,6 +188,47 @@ except Exception as e:
     fail(str(e))
 
 
+print("\n=== library_catalog ===")
+
+t = test("summarize_magnitu_package reads manifest and labels")
+try:
+    import json
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    from magnitu.library_catalog import summarize_magnitu_package, safe_package_path
+
+    td = Path(tempfile.mkdtemp())
+    zpath = td / "demo.magnitu"
+    manifest = {
+        "manifest_format_version": 1,
+        "model_name": "Demo",
+        "model_uuid": "abc",
+        "version": 3,
+        "label_count": 2,
+        "metrics": {"accuracy": 0.9, "f1": 0.85},
+        "label_distribution": {"investigation_lead": 1, "important": 1, "background": 0, "noise": 0},
+    }
+    labels = [
+        {"label": "noise", "reasoning": "x"},
+        {"label": "important", "reasoning": "y"},
+    ]
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        zf.writestr("labels.json", json.dumps(labels))
+        zf.writestr("model.joblib", b"fake")
+    s = summarize_magnitu_package(zpath)
+    assert s["model_name"] == "Demo"
+    assert s["label_distribution"]["noise"] >= 1
+    assert s["has_model_joblib"]
+    resolved = safe_package_path(td, "demo.magnitu")
+    assert resolved == zpath.resolve()
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
 print("\n" + "=" * 50)
 print("Results: {} passed, {} failed".format(PASS, FAIL))
 if ERRORS:

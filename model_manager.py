@@ -17,13 +17,24 @@ import zipfile
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import joblib
 
 import db
 import pipeline
 from config import MODELS_DIR, VERSION, get_config
+
+
+def _label_distribution_from_labels_list(labels: List[dict]) -> dict:
+    counts = {c: 0 for c in pipeline.CLASSES}
+    for row in labels:
+        if not isinstance(row, dict):
+            continue
+        lbl = (row.get("label") or "").strip()
+        if lbl in counts:
+            counts[lbl] += 1
+    return counts
 
 
 # ─── Profile helpers (backward-compat wrappers used by main.py) ─────────────
@@ -78,7 +89,11 @@ def _build_manifest(model_name: str, model_uuid: str, description: str,
     config = get_config()
     active_model = db.get_active_model(profile_id)
 
+    raw_dist = db.get_label_distribution(profile_id)
+    label_distribution = {c: int(raw_dist.get(c, 0)) for c in pipeline.CLASSES}
+
     manifest = {
+        "manifest_format_version": 1,
         "magnitu_version": VERSION,
         "model_name": model_name,
         "model_uuid": model_uuid,
@@ -87,6 +102,7 @@ def _build_manifest(model_name: str, model_uuid: str, description: str,
         "exported_at": datetime.utcnow().isoformat(),
         "version": active_model["version"] if active_model else 0,
         "label_count": db.get_label_count(profile_id),
+        "label_distribution": label_distribution,
         "architecture": (active_model.get("architecture", "tfidf")
                          if active_model
                          else config.get("model_architecture", "transformer")),
@@ -203,11 +219,22 @@ def export_as_new_model(new_name: str, new_description: str,
 
 # ─── Import ──────────────────────────────────────────────────────────────────
 
-def import_model(file_path: str, profile_id: Optional[int] = None) -> dict:
+def import_model(
+    file_path: str,
+    profile_id: Optional[int] = None,
+    force: bool = False,
+    import_labels: bool = True,
+) -> dict:
     """Import a .magnitu package into a profile.
 
     profile_id: target profile. If None, a new profile is created (or the
     default profile is used when no profiles exist yet).
+
+    force: when True, always copy ``model.joblib`` and register a new active model row
+    using the next DB version (Library \"set active\"), even if the manifest version
+    is older than the current active model.
+
+    import_labels: when False, skip merging ``labels.json`` into the profile (model-only).
     """
     if not zipfile.is_zipfile(file_path):
         raise ValueError("Not a valid .magnitu file (not a zip archive).")
@@ -224,10 +251,14 @@ def import_model(file_path: str, profile_id: Optional[int] = None) -> dict:
         with open(manifest_path) as f:
             manifest = json.load(f)
 
-        imported_name         = manifest.get("model_name", "Unknown")
-        imported_uuid         = manifest.get("model_uuid", "")
-        imported_version      = manifest.get("version", 0)
-        imported_description  = manifest.get("description", "")
+        imported_name = manifest.get("model_name", "Unknown")
+        imported_uuid = manifest.get("model_uuid", "")
+        imported_version = manifest.get("version", 0)
+        try:
+            imported_version = int(imported_version)
+        except (TypeError, ValueError):
+            imported_version = 0
+        imported_description = manifest.get("description", "")
         imported_architecture = manifest.get("architecture", "tfidf")
 
         # Resolve target profile: create a new one if not specified
@@ -245,38 +276,48 @@ def import_model(file_path: str, profile_id: Optional[int] = None) -> dict:
             )
             profile_id = new_p["id"]
         else:
-            db.set_model_profile(imported_name, imported_uuid,
-                                 imported_description,
-                                 manifest.get("created_at", ""),
-                                 profile_id=profile_id)
+            db.set_model_profile(
+                imported_name,
+                imported_uuid,
+                imported_description,
+                manifest.get("created_at", ""),
+                profile_id=profile_id,
+            )
 
         result = {
-            "model_name":       imported_name,
-            "model_uuid":       imported_uuid,
-            "profile_id":       profile_id,
+            "model_name": imported_name,
+            "model_uuid": imported_uuid,
+            "profile_id": profile_id,
             "imported_version": imported_version,
-            "labels":           {"imported": 0, "skipped": 0, "updated": 0},
-            "model_loaded":     False,
-            "message":          "",
+            "labels": {"imported": 0, "skipped": 0, "updated": 0},
+            "model_loaded": False,
+            "message": "",
+            "activated_version": None,
         }
 
-        # Import labels into target profile
         labels_path = tmp_dir / "labels.json"
+        labels_data: List[dict] = []
         if labels_path.exists():
             with open(labels_path) as f:
-                labels = json.load(f)
-            result["labels"] = db.import_labels(labels, profile_id=profile_id)
+                raw_labels = json.load(f)
+            if isinstance(raw_labels, list):
+                labels_data = [x for x in raw_labels if isinstance(x, dict)]
+        if import_labels and labels_data:
+            result["labels"] = db.import_labels(labels_data, profile_id=profile_id)
 
-        # Load model if newer (or if no local model)
-        local_model   = db.get_active_model(profile_id)
+        local_model = db.get_active_model(profile_id)
         local_version = local_model["version"] if local_model else 0
-        model_file    = tmp_dir / "model.joblib"
+        model_file = tmp_dir / "model.joblib"
 
-        should_load = (model_file.exists() and
-                       (local_version == 0 or imported_version >= local_version))
+        should_load = model_file.exists() and (
+            force or local_version == 0 or imported_version >= local_version
+        )
+        store_version = imported_version
+        if should_load and force:
+            store_version = db.get_next_model_version(profile_id)
 
         if should_load:
-            dest = MODELS_DIR / "model_v{}.joblib".format(imported_version)
+            dest = MODELS_DIR / "model_v{}.joblib".format(store_version)
             shutil.copy2(str(model_file), str(dest))
 
             cal_file = tmp_dir / "calibration.json"
@@ -287,26 +328,48 @@ def import_model(file_path: str, profile_id: Optional[int] = None) -> dict:
             recipe_file = tmp_dir / "recipe.json"
             recipe_dest = ""
             if recipe_file.exists():
-                recipe_dest = str(MODELS_DIR / "recipe_v{}.json".format(imported_version))
+                recipe_dest = str(MODELS_DIR / "recipe_v{}.json".format(store_version))
                 shutil.copy2(str(recipe_file), recipe_dest)
 
-            metrics = manifest.get("metrics", {})
+            pack_label_dist = (
+                _label_distribution_from_labels_list(labels_data) if labels_data else {}
+            )
+            if not any(pack_label_dist.values()):
+                mdist = manifest.get("label_distribution")
+                if isinstance(mdist, dict):
+                    pack_label_dist = {
+                        c: int(mdist.get(c, 0) or 0) for c in pipeline.CLASSES
+                    }
+            if not any(pack_label_dist.values()):
+                pack_label_dist = {
+                    c: int(db.get_label_distribution(profile_id).get(c, 0))
+                    for c in pipeline.CLASSES
+                }
+
+            metrics = manifest.get("metrics", {}) or {}
+            lbl_count = int(manifest.get("label_count") or 0)
+            if labels_data:
+                lbl_count = max(lbl_count, len(labels_data))
+
+            f1_val = metrics.get("f1", metrics.get("f1_score", 0.0))
+
             db.save_model_record(
-                version=imported_version,
-                accuracy=metrics.get("accuracy", 0.0),
-                f1=metrics.get("f1", 0.0),
-                precision=metrics.get("precision", 0.0),
-                recall=metrics.get("recall", 0.0),
-                label_count=manifest.get("label_count", 0),
+                version=store_version,
+                accuracy=float(metrics.get("accuracy", 0.0) or 0.0),
+                f1=float(f1_val or 0.0),
+                precision=float(metrics.get("precision", 0.0) or 0.0),
+                recall=float(metrics.get("recall", 0.0) or 0.0),
+                label_count=lbl_count,
                 feature_count=0,
                 model_path=str(dest),
                 recipe_path=recipe_dest,
                 architecture=imported_architecture,
                 profile_id=profile_id,
+                label_distribution=pack_label_dist,
             )
             result["model_loaded"] = True
+            result["activated_version"] = store_version
 
-        # Always update the profile identity from the manifest
         db.set_model_profile(
             model_name=imported_name,
             model_uuid=imported_uuid,
@@ -321,10 +384,13 @@ def import_model(file_path: str, profile_id: Optional[int] = None) -> dict:
         if new_labels:
             parts.append("{} labels imported".format(new_labels))
         if result["model_loaded"]:
-            parts.append("model v{} loaded".format(imported_version))
-        elif imported_version and imported_version < local_version:
-            parts.append("keeping local model v{} (imported v{} is older)".format(
-                local_version, imported_version))
+            parts.append("model v{} loaded".format(store_version))
+        elif imported_version and imported_version < local_version and not force:
+            parts.append(
+                "keeping local model v{} (imported v{} is older)".format(
+                    local_version, imported_version
+                )
+            )
         if not parts[1:]:
             parts.append("no new data")
         if new_labels and not result["model_loaded"]:

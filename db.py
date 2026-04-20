@@ -142,6 +142,12 @@ def _migrate_db(conn: sqlite3.Connection):
             "ALTER TABLE sync_log ADD COLUMN profile_id INTEGER DEFAULT NULL"
         )
 
+    model_cols2 = {r[1] for r in conn.execute("PRAGMA table_info(models)").fetchall()}
+    if "label_distribution" not in model_cols2:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN label_distribution TEXT DEFAULT '{}'"
+        )
+
     conn.commit()
 
 
@@ -650,17 +656,23 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
                       feature_count: int, model_path: str, recipe_path: str = "",
                       recipe_quality: float = 0.0,
                       architecture: str = "tfidf",
-                      profile_id: int = 1) -> int:
+                      profile_id: int = 1,
+                      label_distribution: Optional[dict] = None) -> int:
     """Save a model training record and set it as active for this profile."""
+    dist_json = "{}"
+    if label_distribution is not None:
+        dist_json = json.dumps(label_distribution, ensure_ascii=False)
     conn = get_db()
     conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
     conn.execute("""
         INSERT INTO models (profile_id, version, accuracy, f1_score, precision_score,
                            recall_score, label_count, feature_count, model_path,
-                           recipe_path, recipe_quality, is_active, architecture)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                           recipe_path, recipe_quality, is_active, architecture,
+                           label_distribution)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     """, (profile_id, version, accuracy, f1, precision, recall, label_count,
-          feature_count, model_path, recipe_path, recipe_quality, architecture))
+          feature_count, model_path, recipe_path, recipe_quality, architecture,
+          dist_json))
     model_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()

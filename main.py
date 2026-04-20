@@ -8,6 +8,7 @@ Multi-profile routing:
   /p/{slug}/dashboard  → dashboard
   /p/{slug}/top        → top entries
   /p/{slug}/model      → model page
+  /p/{slug}/library    → .magnitu library (MODELS_DIR)
   /p/{slug}/settings   → profile-specific settings
   /profiles            → redirect to Settings → Profiles section
   /about               → global
@@ -36,7 +37,8 @@ import distiller
 import sampler
 import model_manager
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
-from config import get_config, save_config, BASE_DIR, VERSION
+from magnitu.library_catalog import list_magnitu_library, safe_package_path
+from config import get_config, save_config, BASE_DIR, VERSION, MODELS_DIR
 import logging
 
 logger = logging.getLogger(__name__)
@@ -500,7 +502,59 @@ async def gemini_page(request: Request, slug: str):
         "rows, then conflict/diverse picks to reach your limit. Unlabeled entries only, unless "
         "you check re-label for rows previously labeled by Gemini (retry failures)."
     )
+    paths = pipeline.get_active_model_paths(profile_id)
+    ctx["active_model_paths"] = paths
+    ctx["active_model_basename"] = ""
+    if paths and paths.get("model_path"):
+        ctx["active_model_basename"] = Path(paths["model_path"]).name
     return templates.TemplateResponse("gemini.html", ctx)
+
+
+@app.get("/p/{slug}/library", response_class=HTMLResponse)
+async def library_page(request: Request, slug: str):
+    """On-disk ``.magnitu`` library under ``MODELS_DIR``; activate a package for this profile."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    ctx = _base_context(request, profile)
+    ctx["library_packages"] = list_magnitu_library(MODELS_DIR)
+    ctx["models_dir"] = str(MODELS_DIR.resolve())
+    paths = pipeline.get_active_model_paths(profile_id)
+    ctx["active_model_paths"] = paths
+    ctx["active_model_basename"] = ""
+    if paths and paths.get("model_path"):
+        ctx["active_model_basename"] = Path(paths["model_path"]).name
+    return templates.TemplateResponse("library.html", ctx)
+
+
+@app.post("/p/{slug}/api/library/activate")
+async def library_activate_package(slug: str, request: Request):
+    """Import a ``.magnitu`` from ``MODELS_DIR`` and force it active for this profile."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    filename = str(body.get("filename", "")).strip()
+    if not filename:
+        raise HTTPException(400, "filename is required")
+    import_labels = bool(body.get("import_labels", True))
+    try:
+        pkg_path = safe_package_path(MODELS_DIR, filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    try:
+        result = model_manager.import_model(
+            str(pkg_path),
+            profile_id=profile_id,
+            force=True,
+            import_labels=import_labels,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"success": True, **result}
 
 
 @app.post("/p/{slug}/api/gemini/batch")

@@ -12,6 +12,12 @@
             · <em>No trained model yet</em> (batch still runs; Smart Queue falls back to newest unlabeled)
         {% endif %}
     </p>
+    {% if active_model_basename %}
+    <p class="help-text subtle">
+        Loaded classifier: <code>{{ active_model_basename }}</code>
+        (same paths the Label queue uses for scoring).
+    </p>
+    {% endif %}
     <p class="help-text">{{ gemini_queue_help }}</p>
 
     <div class="gemini-form">

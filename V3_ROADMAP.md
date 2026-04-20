@@ -93,27 +93,30 @@ Working document to implement v3 **in order**, without destabilizing Magnitu 2 b
 
 ### Tasks
 
-- [ ] **3.1** **Library tab**: scan **`models/`** for `.magnitu` archives (zip); list them.
-- [ ] **3.2** **Metadata per model** (from **manifest** inside profile or sidecar — agree schema):
-  - [ ] Accuracy / F1 (from `manifest.json` or equivalent).
-  - [ ] **Label distribution** counts for all four categories (imbalance visible).
-- [ ] **3.3** **Set as active**: copy or symlink **`model.joblib`** + **`labels.json`** (and any paired files) so the app uses the selected profile for training/inference UI.
-- [ ] **3.4** Refactor **model loading** so “active profile” is a named path, not hard-coded single files.
-- [ ] **3.5** Ensure **Gemini tab** “target” reflects active library selection (align with 2.2).
+- [x] **3.1** **Library tab**: scan **`models/`** for `.magnitu` archives (zip); list them.
+- [x] **3.2** **Metadata per model** (from **manifest** inside profile or sidecar — agree schema):
+  - [x] Accuracy / F1 (from `manifest.json` or equivalent).
+  - [x] **Label distribution** counts for all four categories (imbalance visible).
+- [x] **3.3** **Set as active**: copy or symlink **`model.joblib`** + **`labels.json`** (and any paired files) so the app uses the selected profile for training/inference UI.
+- [x] **3.4** Refactor **model loading** so “active profile” is a named path, not hard-coded single files.
+- [x] **3.5** Ensure **Gemini tab** “target” reflects active library selection (align with 2.2).
 
 ### Acceptance
 
-- [ ] User can switch profiles from Library; dashboard/training use the active profile.
-- [ ] Manifest fields are versioned or documented so UI does not show bogus metrics.
+- [x] User can switch profiles from Library; dashboard/training use the active profile.
+- [x] Manifest fields are versioned or documented so UI does not show bogus metrics.
 
-### Manifest schema (fill when fixed)
+### Manifest schema (v1)
 
-```json
-{
-  "version": 1,
-  "comment": "Define fields when implementing 3.2"
-}
-```
+Exports include **`manifest_format_version`: 1**, **`label_distribution`** (counts per class), and **`metrics`** (`accuracy`, `f1`, `precision`, `recall` as floats 0–1). The Library UI recomputes class counts from **`labels.json`** inside the zip when present so older zips without `label_distribution` still show useful numbers.
+
+| Item | Location |
+|------|----------|
+| Scan + summarise zips | `magnitu/library_catalog.py` |
+| Library UI + activate API | `templates/library.html`, `GET /p/{slug}/library`, `POST /p/{slug}/api/library/activate` |
+| Force-activate import | `model_manager.import_model(..., force=True, import_labels=?)` |
+| Resolved paths helper | `pipeline.get_active_model_paths` |
+| DB snapshot on train/import | `db.save_model_record(..., label_distribution=...)` |
 
 ---
 
@@ -164,3 +167,4 @@ Map display names ↔ enums in one module (Phase 1 prompt factory).
 |------|-------|----------------|
 | 2026-04-20 | 1 | `validate_synthetic_label_output`, `synthetic_scorer.call_gemini_for_synthetic_label`, `test_gemini.py`, `.env.example` Gemini knobs documented |
 | 2026-04-20 | 2 | `/p/{slug}/gemini` UI, background batch job, `label_source` / export `source`, `magnitu/synthetic_batch.py` |
+| 2026-04-20 | 3 | Library tab, `library_catalog`, manifest v1 + `label_distribution`, `import_model(force=)`, `get_active_model_paths` |
