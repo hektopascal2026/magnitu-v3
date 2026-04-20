@@ -10,7 +10,7 @@ Requirements:
 
 Install (paste into Terminal):
 
-  git clone https://github.com/hektopascal2026/magnitu.git ~/magnitu && bash ~/magnitu/install/bootstrap.sh
+  git clone https://github.com/hektopascal2026/magnitu-v3.git ~/magnitu-v3 && bash ~/magnitu-v3/install/bootstrap.sh
 
   It will:
   1. Download Magnitu to ~/magnitu

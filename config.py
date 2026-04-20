@@ -6,7 +6,7 @@ import os
 import json
 from pathlib import Path
 
-VERSION = "2.0.1"
+VERSION = "3.0.0"
 
 BASE_DIR = Path(__file__).parent
 
@@ -26,7 +26,7 @@ DEFAULTS = {
     "recipe_top_keywords": 200,
     "auto_train_after_n_labels": 10,
     "alert_threshold": 0.75,
-    # Transformer settings (Magnitu 2)
+    # Transformer settings (cached embeddings + classifier head)
     "model_architecture": "transformer",     # "tfidf" or "transformer"
     "transformer_model_name": "xlm-roberta-base",
     "embedding_dim": 768,

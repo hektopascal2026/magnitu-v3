@@ -1,9 +1,9 @@
 """
-ML Pipeline for Magnitu 2.
+ML pipeline for Magnitu.
 
 Two architectures behind the same interface:
-- "tfidf":       TF-IDF + Logistic Regression (original Magnitu 1)
-- "transformer": Cached XLM-RoBERTa embeddings + MLP classifier (Magnitu 2)
+- "tfidf":       TF-IDF + Logistic Regression (classic fallback + recipe distiller)
+- "transformer": Cached XLM-RoBERTa embeddings + MLP classifier (default)
 
 The transformer path computes mean-pooled embeddings once at sync time and
 stores them in the DB.  Training and scoring use these cached embeddings with
@@ -207,7 +207,7 @@ def _discovery_adjusted_relevance(composite: float, p_lead: float) -> float:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Embedding helpers (Magnitu 2)
+#  Embedding helpers (transformer path)
 # ═══════════════════════════════════════════════════════════════════
 
 _embedder = None   # lazy-loaded singleton
@@ -527,7 +527,7 @@ def compute_sample_weights(labeled: List[dict],
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  TF-IDF pipeline (Magnitu 1 — kept as fallback + recipe distiller)
+#  TF-IDF pipeline (fallback + recipe distiller)
 # ═══════════════════════════════════════════════════════════════════
 
 def _prepare_text(entries: List[dict]) -> pd.DataFrame:
@@ -655,7 +655,7 @@ def get_feature_importance(profile_id: int = 1) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Transformer training + scoring (Magnitu 2)
+#  Transformer training + scoring
 # ═══════════════════════════════════════════════════════════════════
 
 class _LabelDecodingClassifier:
@@ -1016,7 +1016,7 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  TF-IDF training + scoring (Magnitu 1 fallback)
+#  TF-IDF training + scoring (fallback)
 # ═══════════════════════════════════════════════════════════════════
 
 def _train_tfidf(profile_id: int = 1) -> dict:

@@ -1,5 +1,5 @@
 """
-Magnitu 2 — ML-powered relevance scoring for Seismo.
+Magnitu — ML-powered relevance scoring for Seismo.
 FastAPI application: serves the labeling UI, dashboard, and orchestrates ML pipeline.
 
 Multi-profile routing:

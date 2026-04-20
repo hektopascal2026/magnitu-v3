@@ -2,7 +2,7 @@
 Recipe Distiller: converts a trained model into a lightweight keyword-weight
 JSON recipe that seismo's PHP can evaluate.
 
-Magnitu 2: when the active model is a transformer, uses knowledge distillation.
+Magnitu: when the active model is a transformer, uses knowledge distillation.
 A TF-IDF 'student' model is trained on the transformer's predictions across all
 entries.  The recipe is then extracted from the student's coefficients — same
 format, same PHP, but informed by transformer-quality classifications.
@@ -148,9 +148,9 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     Extract top keywords per class from the active model and package them as
     a JSON recipe for seismo.
 
-    For TF-IDF models: extracts directly from coefficients (Magnitu 1 path).
+    For TF-IDF models: extracts directly from coefficients.
     For transformer models: trains a TF-IDF student via knowledge distillation,
-    then extracts from the student's coefficients (Magnitu 2 path).
+    then extracts from the student's coefficients (distillation path).
 
     Returns the recipe dict, or None if no active model.
     """

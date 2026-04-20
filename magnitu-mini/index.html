@@ -275,7 +275,31 @@ body {
 }
 
 .flash-success { background: #f0fff0; }
-.flash-error { background: #fff0f0; border-color: #FF2C2C; max-height: 40vh; overflow-y: auto; word-break: break-word; }
+.flash-error {
+    background: #fff0f0;
+    border-color: #FF2C2C;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+}
+.flash-body {
+    max-height: 50vh;
+    overflow-y: auto;
+    word-break: break-word;
+    white-space: pre-wrap;
+    line-height: 1.45;
+}
+.flash-dismiss {
+    align-self: flex-end;
+    padding: 6px 12px;
+    font-size: 12px;
+    border: 2px solid #000;
+    background: #fff;
+    cursor: pointer;
+    font-family: inherit;
+}
+.flash-dismiss:hover { background: #f5f5f5; }
 
 @keyframes flashIn {
     from { opacity: 0; transform: translateY(-8px); }
@@ -503,16 +527,30 @@ body {
     function flash(msg, type) {
         var container = document.getElementById('flashContainer');
         var div = document.createElement('div');
-        div.className = 'flash flash-' + (type || 'success');
-        div.textContent = msg;
-        if (type === 'error') {
+        var t = type || 'success';
+        div.className = 'flash flash-' + t;
+
+        var body = document.createElement('div');
+        body.className = 'flash-body';
+        body.textContent = msg;
+        div.appendChild(body);
+
+        if (t === 'error') {
             console.error('[magnitu-mini]', msg);
-            div.style.cursor = 'pointer';
-            div.title = 'Tap to dismiss';
-            div.onclick = function() { div.remove(); };
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'flash-dismiss';
+            btn.textContent = 'Dismiss';
+            btn.addEventListener('click', function() {
+                div.remove();
+            });
+            div.appendChild(btn);
+        } else {
+            setTimeout(function() {
+                if (div.parentNode) div.remove();
+            }, 4000);
         }
         container.appendChild(div);
-        setTimeout(function() { div.remove(); }, type === 'error' ? 15000 : 4000);
     }
 
     // ── Seismo API ──

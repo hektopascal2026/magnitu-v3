@@ -1,5 +1,5 @@
 """
-Integration tests for Magnitu 2.
+Integration tests for Magnitu (app, DB, pipeline, API).
 
 Tests the critical paths:
 1. Config: transformer settings load correctly
@@ -69,9 +69,9 @@ def fail(msg):
 # ═══════════════════════════════════════════
 print("\n=== 1. Config ===")
 
-t = test("Version is 2.x")
+t = test("Version is 3.x")
 try:
-    assert config.VERSION.startswith("2."), "Expected version 2.x, got " + config.VERSION
+    assert config.VERSION.startswith("3."), "Expected version 3.x, got " + config.VERSION
     ok()
 except Exception as e:
     fail(str(e))
@@ -523,7 +523,9 @@ try:
         manifest = json.loads(zf.read("manifest.json"))
     assert "architecture" in manifest
     assert "magnitu_version" in manifest
-    assert manifest["magnitu_version"].startswith("2.")
+    assert manifest["magnitu_version"].startswith("3.")
+    assert manifest.get("manifest_format_version") == 1
+    assert "label_distribution" in manifest
     ok()
 except Exception as e:
     fail(str(e))

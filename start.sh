@@ -13,7 +13,7 @@ PY="$DIR/.venv/bin/python"
 clear 2>/dev/null || true
 echo ""
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "   Magnitu 2"
+echo "   Magnitu v3"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 

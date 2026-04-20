@@ -11,7 +11,7 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
             <div class="form-group">
                 <label style="font-size: 12px; font-weight: 600;">Model Name (fixed)</label>
-                <input type="text" value="{{ profile.model_name }}" readonly
+                <input type="text" value="{{ profile.display_name }}" readonly
                        style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box; background: #f5f5f5; cursor: default;">
             </div>
             <div class="form-group">
@@ -87,7 +87,7 @@
         <h3 style="margin-bottom: 8px;">Export as New Model</h3>
         <p style="font-size: 12px; margin-bottom: 12px; line-height: 1.5;">
             Create a new, independent model based on this one. All labels and the trained model are included.
-            The new model's metadata will permanently record that it was based on <strong>{{ profile.model_name }}</strong>.
+            The new model's metadata will permanently record that it was based on <strong>{{ profile.display_name }}</strong>.
         </p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
             <div>
@@ -108,7 +108,7 @@
             <span id="forkStatus" style="font-size: 12px;"></span>
         </div>
         <p style="font-size: 11px; color: #666; margin-top: 8px;">
-            Based on: <strong>{{ profile.model_name }}</strong> ({{ profile.model_uuid[:8] }}…) — this lineage cannot be removed from the exported file.
+            Based on: <strong>{{ profile.display_name }}</strong> ({{ profile.model_uuid[:8] }}…) — this lineage cannot be removed from the exported file.
         </p>
     </div>
 

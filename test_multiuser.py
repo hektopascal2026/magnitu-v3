@@ -1,5 +1,5 @@
 """
-Multi-user sync tests for Magnitu 2.
+Multi-user sync tests for Magnitu.
 
 Simulates two users (Alice and Bob) with separate local databases but
 syncing through the same label store.  Tests conflict resolution,

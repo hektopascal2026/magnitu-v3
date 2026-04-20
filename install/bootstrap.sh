@@ -3,15 +3,15 @@
 #  Magnitu — Remote installer
 #
 #  For PUBLIC repos:
-#    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hektopascal2026/magnitu/main/install/bootstrap.sh)"
+#    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hektopascal2026/magnitu-v3/main/install/bootstrap.sh)"
 #
 #  For PRIVATE repos (one-liner):
-#    git clone https://github.com/hektopascal2026/magnitu.git ~/magnitu && bash ~/magnitu/install/bootstrap.sh
+#    git clone https://github.com/hektopascal2026/magnitu-v3.git ~/magnitu-v3 && bash ~/magnitu-v3/install/bootstrap.sh
 # ─────────────────────────────────────────────
 
 set -e
 
-DEFAULT_URL="https://www.hektopascal.org/seismo-staging/index.php"
+DEFAULT_URL="https://www.hektopascal.org/seismo/index.php"
 
 # Determine install dir: if we're already inside the repo, use that
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
@@ -79,7 +79,7 @@ if [ -f "$INSTALL_DIR/main.py" ]; then
         echo "         Updated."
     fi
 else
-    REPO="https://github.com/hektopascal2026/magnitu.git"
+    REPO="https://github.com/hektopascal2026/magnitu-v3.git"
     if [ -d "$INSTALL_DIR" ]; then
         echo "         $INSTALL_DIR exists but is not a Magnitu install."
         echo "         Please remove it first: rm -rf $INSTALL_DIR"

@@ -1,6 +1,6 @@
 # Magnitu v3 — Gemini Synthetic Scorer & Model Library
 
-Working document to implement v3 **in order**, without destabilizing Magnitu 2 behavior. Check boxes as you complete work; add dates or PR links in notes if useful.
+Working document to ship Magnitu **v3** capabilities **in order** on top of the existing Seismo + training stack. Check boxes as you complete work; add dates or PR links in notes if useful.
 
 ## Goals
 

@@ -1,5 +1,5 @@
 {
-  "seismo_url": "https://www.hektopascal.org/seismo-staging/index.php",
+  "seismo_url": "https://www.hektopascal.org/seismo/index.php",
   "api_key": "YOUR_API_KEY_HERE",
   "min_labels_to_train": 20,
   "recipe_top_keywords": 200,

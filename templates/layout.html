@@ -61,10 +61,29 @@
     function flash(msg, type) {
         var el = document.getElementById('flash-messages');
         var div = document.createElement('div');
-        div.className = 'message message-' + (type || 'info');
-        div.textContent = msg;
+        var t = type || 'info';
+        div.className = 'message message-' + t;
+
+        var body = document.createElement('div');
+        body.className = 'message-body';
+        body.textContent = msg;
+        div.appendChild(body);
+
+        if (t === 'error') {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'message-dismiss';
+            btn.textContent = 'Dismiss';
+            btn.addEventListener('click', function() {
+                div.remove();
+            });
+            div.appendChild(btn);
+        } else {
+            setTimeout(function() {
+                if (div.parentNode) div.remove();
+            }, 5000);
+        }
         el.appendChild(div);
-        setTimeout(function() { div.remove(); }, 5000);
     }
     </script>
     {% block scripts %}{% endblock %}

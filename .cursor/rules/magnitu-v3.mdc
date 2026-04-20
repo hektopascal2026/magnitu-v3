@@ -1,9 +1,9 @@
 ---
-description: Magnitu v3 — synthetic labeling, model library, recipe/training guardrails
+description: Magnitu — Gemini, model library, recipe/training guardrails
 alwaysApply: true
 ---
 
-# Magnitu v3 (Gemini & Model Library)
+# Magnitu (Gemini & model library)
 
 Python 3.9 only (`Optional`, `typing`; no `X | Y`). Seismo HTTP stays in `sync.py` (see `seismo-integration.mdc`).
 

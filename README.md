@@ -3,7 +3,9 @@
 Magnitu is a machine-learning relevance engine for Seismo.  
 It learns your labeling decisions (`investigation_lead`, `important`, `background`, `noise`) and pushes scores + a lightweight keyword recipe back to Seismo for live ranking.
 
-## Current Stack (Magnitu 2)
+Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthetic labeling, an on-disk **`.magnitu` library**, and richer export manifests—on the same Seismo contract and multi-profile layout as before.
+
+## Current stack
 
 - **Local model**: transformer embeddings (`xlm-roberta-base` by default) + MLP classifier
 - **Seismo runtime**: keyword recipe evaluated in PHP (distilled from local model via knowledge distillation)
@@ -48,6 +50,8 @@ It learns your labeling decisions (`investigation_lead`, `important`, `backgroun
 - **Model portability**
   - Export / import `.magnitu` packages (zip with model, labels, recipe, calibration)
   - Fork: export current model as a new identity for redistribution
+- **Gemini synthetic labeling** (optional): background batch jobs from the Smart Queue; labels stored with reasoning for training (`GEMINI_API_KEY` in `.env`)
+- **Library**: list `*.magnitu` under the models directory and activate one per profile without leaving the UI
 
 ## Typical Workflow
 
@@ -73,14 +77,16 @@ Mothership Seismo → Magnitu pull (all profiles share entries)
 
 To add a profile: **Profiles** page → **Add Profile** → give it a name and (optionally) a dedicated push-target URL.
 
-## Run Locally
+## Run locally
 
 ```bash
-git clone https://github.com/hektopascal2026/magnitu.git
-cd magnitu
+git clone https://github.com/hektopascal2026/magnitu-v3.git
+cd magnitu-v3
 bash install/bootstrap.sh
 ./start.sh
 ```
+
+Use any directory name you like; `install/bootstrap.sh` detects an existing checkout when run from inside the repo.
 
 Open: `http://127.0.0.1:8000`  
 First run redirects to `/setup` to name your first profile.

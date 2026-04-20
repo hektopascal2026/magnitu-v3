@@ -1,7 +1,7 @@
 """
 Explainability module: per-entry explanations and global keyword rankings.
 
-Magnitu 2: for transformer models, provides class probability breakdowns.
+Magnitu: for transformer models, provides class probability breakdowns.
 For TF-IDF models, provides keyword-level feature attribution.
 """
 import numpy as np
@@ -98,7 +98,7 @@ def explain_entry(entry: dict, profile_id: int = 1) -> Optional[dict]:
 
 
 def _explain_tfidf(entry: dict, profile_id: int = 1) -> Optional[dict]:
-    """Explain using TF-IDF coefficient * feature_value (original Magnitu 1 path)."""
+    """Explain using TF-IDF coefficient * feature_value (TF-IDF architecture path)."""
     model = load_active_model(profile_id=profile_id)
     if model is None:
         return None

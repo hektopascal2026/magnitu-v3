@@ -159,7 +159,7 @@
                     <label>Architecture</label>
                     <select id="modelArch" style="padding: 10px 14px; border: 2px solid #000000; font-size: 14px; font-family: inherit; background: #ffffff; color: #000000;">
                         <option value="transformer" {% if config.model_architecture == 'transformer' %}selected{% endif %}>Transformer (XLM-RoBERTa) — recommended</option>
-                        <option value="tfidf" {% if config.model_architecture == 'tfidf' %}selected{% endif %}>TF-IDF + LogReg (Magnitu 1 fallback)</option>
+                        <option value="tfidf" {% if config.model_architecture == 'tfidf' %}selected{% endif %}>TF-IDF + LogReg (classic fallback)</option>
                     </select>
                     <div class="form-help">Transformer uses a pre-trained language model for better understanding. TF-IDF uses keyword counting (faster, simpler).</div>
                 </div>
