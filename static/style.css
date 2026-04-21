@@ -1308,46 +1308,6 @@ kbd {
     margin-top: 8px;
 }
 
-/* ═══ Model library page ═══ */
-.library-page .page-title {
-    font-size: 18px;
-    margin-bottom: 8px;
-}
-.library-page .page-subtitle {
-    font-size: 14px;
-    margin-bottom: 10px;
-}
-.library-page code {
-    font-size: 12px;
-}
-.library-table-wrap {
-    overflow-x: auto;
-    margin-top: 12px;
-    background: #ffffff;
-    border: 1px solid #e8e8e8;
-    border-radius: 6px;
-}
-.library-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-}
-.library-table th,
-.library-table td {
-    padding: 8px 10px;
-    text-align: left;
-    border-bottom: 1px solid #eee;
-}
-.library-table th {
-    font-weight: 600;
-    background: #fff7f7;
-}
-.library-dist span {
-    display: inline-block;
-    margin-right: 6px;
-    font-size: 11px;
-    color: #333;
-}
 .btn-small {
     padding: 4px 10px;
     font-size: 12px;

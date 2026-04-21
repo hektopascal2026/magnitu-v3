@@ -906,7 +906,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
     }
 
     # Evaluate on held-out test using the same probabilities as scoring
-    version = db.get_next_model_version()
+    version = db.get_next_model_version(profile_id)
     model_filename = "model_v{}.joblib".format(version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(clf, model_path)
@@ -1166,7 +1166,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
         "class_names": class_names_fit,
     }
 
-    version = db.get_next_model_version()
+    version = db.get_next_model_version(profile_id)
     model_filename = "model_v{}.joblib".format(version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(pipeline, model_path)

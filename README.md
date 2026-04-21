@@ -3,7 +3,7 @@
 Magnitu is a machine-learning relevance engine for Seismo.  
 It learns your labeling decisions (`investigation_lead`, `important`, `background`, `noise`) and pushes scores + a lightweight keyword recipe back to Seismo for live ranking.
 
-Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthetic labeling, an on-disk **`.magnitu` library**, and richer export manifests—on the same Seismo contract and multi-profile layout as before.
+Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthetic labeling and richer export manifests—on the same Seismo contract and multi-profile layout as before.
 
 ## Current stack
 
@@ -51,7 +51,6 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - Export / import `.magnitu` packages (zip with model, labels, recipe, calibration)
   - Fork: export current model as a new identity for redistribution
 - **Gemini synthetic labeling** (optional): background batch jobs from the Smart Queue; labels stored with reasoning for training (`GEMINI_API_KEY` in `.env`)
-- **Library**: list `*.magnitu` under the models directory and activate one per profile without leaving the UI
 
 ## Typical Workflow
 

@@ -33,7 +33,7 @@ Python 3.9 only (`Optional`, `typing`; no `X | Y`). Seismo HTTP stays in `sync.p
 - Low **F1** with decent accuracy may indicate **neglect of rare classes** (especially `investigation_lead`)—call this out in UI/logs when relevant.
 - Preserve the project’s **train/test isolation** policy (e.g. **~20% held-out test** where the codebase already enforces it); do not leak test examples into training when implementing new flows.
 
-## 5. Model library
+## 5. Profiles / `.magnitu` manifests
 
 - Each **profile** must have a **stable unique `id`** in manifest/metadata so recipes and Seismo targets cannot cross-wire.
 - **Fork**: Duplicating a profile creates a **new** `.magnitu` with a **new id**, copying **labels** from the parent as specified by the user; never reuse the fork’s id for a different lineage.
