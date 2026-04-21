@@ -112,10 +112,13 @@ def _sync_pull_impl(
 ) -> dict:
     """Pull entries + labels into local DB.
 
-    Entries and ``magnitu_labels`` always use global Settings (mothership URL).
+    Entries always come from global mothership Settings.
 
-    ``profile``: when set (e.g. /p/{slug}/api/sync/pull), merged mothership
-    labels apply to this profile_id; when omitted, profile_id 1 (legacy).
+    Labels merge into ``profile_id`` using this profile's satellite URL/key when
+    configured; otherwise labels are fetched from global mothership too.
+
+    ``profile``: when set (sync from labeling UI), labels merge into this id;
+    when omitted, profile_id 1 for labels (legacy).
     """
     profile_id_for_labels = int(profile["id"]) if profile else 1
 
@@ -188,8 +191,22 @@ def _sync_pull_impl(
     if progress_cb:
         progress_cb(92, "Pulling labels...")
     labels_synced = 0
+    label_pull_warning = ""
+    label_pull_source = "global"
     try:
-        labels_synced = sync.pull_labels(profile_id=profile_id_for_labels)
+        labels_synced = sync.pull_labels(
+            profile_id=profile_id_for_labels,
+            profile=profile,
+        )
+        if profile and sync.profile_satellite_blank(profile):
+            label_pull_warning = (
+                "This profile has no satellite URL/API key — labels were pulled "
+                "from global mothership (same source as entries). "
+                "Set satellite credentials to pull labels only from that Seismo."
+            )
+            label_pull_source = "mothership_fallback"
+        elif profile:
+            label_pull_source = "satellite"
     except Exception as e:
         logger.warning("Label pull failed during sync: %s", e)
         db.log_sync("pull", 0, "FAILED label pull: {}".format(e))
@@ -211,6 +228,8 @@ def _sync_pull_impl(
         "embeddings": emb_after, "embeddings_computed": emb_computed,
         "entry_count": entry_count, "embedding_warning": emb_warning,
         "embedding_rounds": embedding_rounds,
+        "label_pull_source": label_pull_source,
+        "label_pull_warning": label_pull_warning,
     }
     if full:
         result["entries_by_type"] = entries_by_type
@@ -329,6 +348,8 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
             if isinstance(e, _httpx.HTTPStatusError):
                 detail = "Seismo HTTP {}: {}".format(e.response.status_code, e.response.text[:300])
             recipe_result = {"error": detail}
+
+    sync.refresh_profile_accent(profile_row)
 
     return {
         "success": True,
@@ -1098,7 +1119,7 @@ async def sync_labels(slug: str):
         raise HTTPException(500, "Failed to push labels: {}".format(e))
     pull_error = None
     try:
-        pulled = sync.pull_labels(profile_id=profile_id)
+        pulled = sync.pull_labels(profile_id=profile_id, profile=profile)
     except Exception as e:
         logger.warning("Label pull failed: %s", e)
         pull_error = str(e)
@@ -1108,10 +1129,23 @@ async def sync_labels(slug: str):
     return result
 
 
-@app.get("/p/{slug}/api/sync/test")
-async def sync_test(slug: str):
-    profile = _get_profile_or_404(slug)
-    target = sync._profile_target(profile)
+def _satellite_sync_test_payload(profile: dict, data: dict) -> dict:
+    """Test Seismo using profile push target (overlay ``data`` onto saved profile)."""
+    overlay = dict(profile)
+    if "seismo_url" in data:
+        overlay["seismo_url"] = (data.get("seismo_url") or "").strip()
+    if "api_key" in data:
+        overlay["api_key"] = (data.get("api_key") or "").strip()
+    if sync.profile_satellite_blank(overlay):
+        return {
+            "success": False,
+            "message": (
+                "Enter this profile's satellite URL and API key to test that Seismo. "
+                "When both are blank here, Magnitu uses global mothership for push and "
+                "label pull — use 'Test mothership' under Mothership Connection instead."
+            ),
+        }
+    target = sync._profile_target(overlay)
     ok, msg, status_payload = sync.test_connection(seismo_target=target)
     if not ok:
         return {"success": False, "message": msg}
@@ -1120,6 +1154,47 @@ async def sync_test(slug: str):
     if not label_ok:
         return {"success": True, "message": msg, "warning": label_msg}
     return {"success": True, "message": msg}
+
+
+@app.post("/api/sync/test-mothership")
+async def sync_test_mothership(request: Request):
+    """Test mothership URL + API key from JSON body (unsaved form values OK)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    cfg = get_config()
+    url = (data.get("seismo_url") or "").strip()
+    key = (data.get("api_key") or "").strip()
+    target = {
+        "seismo_url": url or cfg["seismo_url"],
+        "api_key": key or cfg["api_key"],
+    }
+    ok, msg, status_payload = sync.test_connection(seismo_target=target)
+    if not ok:
+        return {"success": False, "message": msg}
+    label_ok, label_msg = sync.verify_seismo_endpoints(seismo_target=target)
+    if not label_ok:
+        return {"success": True, "message": msg, "warning": label_msg}
+    return {"success": True, "message": msg}
+
+
+@app.post("/p/{slug}/api/sync/test-satellite")
+async def sync_test_satellite(slug: str, request: Request):
+    """Test satellite Seismo for this profile (optional JSON overlay for unsaved inputs)."""
+    profile = _get_profile_or_404(slug)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    return _satellite_sync_test_payload(profile, data)
+
+
+@app.get("/p/{slug}/api/sync/test")
+async def sync_test(slug: str):
+    """Backward-compatible satellite test using saved profile credentials only."""
+    profile = _get_profile_or_404(slug)
+    return _satellite_sync_test_payload(profile, {})
 
 
 @app.get("/p/{slug}/api/sync/health")

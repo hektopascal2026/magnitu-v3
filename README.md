@@ -9,7 +9,7 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
 
 - **Local model**: transformer embeddings (`xlm-roberta-base` by default) + MLP classifier
 - **Seismo runtime**: keyword recipe evaluated in PHP (distilled from local model via knowledge distillation)
-- **Data sync**: pull entries/labels from a mothership Seismo; push scores/recipe/labels per profile
+- **Data sync**: pull **entries** from global mothership Settings; pull **labels** from each profile’s satellite (or mothership if satellite URL/key blank); push scores/recipe/labels per profile
 - **Multi-profile**: multiple topic profiles (e.g. security, digital policy) each with their own labels, model, and push target — sharing one entry pool
 
 ## Key Features
@@ -75,7 +75,19 @@ Mothership Seismo → Magnitu pull (all profiles share entries)
          mothership        Seismo "security"   Seismo "digital"
 ```
 
-To add a profile: **Profiles** page → **Add Profile** → give it a name and (optionally) a dedicated push-target URL.
+To add a profile: **Settings** (for any profile) → **Profiles** → **Add profile** → name, optional **satellite** URL + API key.
+
+### Mothership → satellite → Magnitu (canonical flow)
+
+This is the intended path when Seismo manages **lightweight satellites** (topic-specific PHP installs on separate webspace):
+
+1. **Seismo (mothership admin)** — Create a satellite (slug, display name, accent colour, etc.), download the generated JSON / deployment bundle.
+2. **Deploy** — Generate or copy satellite files onto the webspace; each satellite has its **own** MySQL database for scores, recipes, and Magnitu-related state. The mothership remains the **system of record for entries**; satellites mirror or read that feed per your Seismo setup.
+3. **Magnitu** — Add a **profile** whose **satellite URL** and **API key** point at that instance. Training (**Train**) builds that profile’s classifier locally (`.joblib` under your data dir); nothing uploads a “model binary” to PHP — Seismo receives **scores**, a **recipe**, and **labels** via the existing API.
+4. **Sync** — **Entries**: always fetched using **global Mothership Connection** in Settings (shared article pool for all profiles). **Labels**: fetched from **`magnitu_labels` on the satellite** when both satellite fields are set on the profile; if URL and key are blank, Magnitu falls back to mothership for label import (with a warning in the UI).
+5. **Push** — Sends scores, recipe, and labels **to that profile’s satellite**.
+
+Optional **accent** for the Magnitu header tab: Seismo may expose `accent_color` on **`magnitu_status`** (`#rrggbb` / `#rgb`). Magnitu stores it after **Test satellite** or **Push**. Satellites must mirror entry IDs with the mothership so labels and scores line up.
 
 ## Run locally
 

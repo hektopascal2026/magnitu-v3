@@ -479,6 +479,9 @@ try:
     assert parse_accent_hex_string("#fff") == "#ffffff"
     assert contrast_text_on_accent("#ffffff") == "#000000"
     assert contrast_text_on_accent("#000000") == "#ffffff"
+    assert parse_accent_from_magnitu_status(
+        {"status": "ok", "data": {"accent_color": "#abc"}}
+    ) == "#aabbcc"
     ok()
 except Exception as e:
     fail(str(e))

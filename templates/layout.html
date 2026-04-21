@@ -25,8 +25,11 @@
                     {% endfor %}
                 </span>
                 {% elif profile %}
-                <span class="top-bar-subtitle">
-                    {{ profile.display_name }}{% if active_model %} v{{ active_model.version }}{% endif %} &middot; {{ label_count }} labels
+                <span class="profile-switcher">
+                    <span class="profile-pill profile-pill-active"{% if profile_accent_bg %} style="background-color: {{ profile_accent_bg }}; color: {{ profile_accent_fg }}; border-color: {{ profile_accent_bg }};"{% endif %}>{{ profile.display_name }}</span>
+                </span>
+                <span class="top-bar-subtitle" style="margin-left: 10px;">
+                    {% if active_model %}v{{ active_model.version }}{% endif %} &middot; {{ label_count }} labels
                     {% if architecture is defined and architecture == 'transformer' %}
                         &middot; <span class="arch-badge arch-transformer">transformer</span>
                     {% elif architecture is defined %}

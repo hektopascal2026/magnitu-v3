@@ -27,10 +27,35 @@ def parse_accent_hex_string(raw: Any) -> Optional[str]:
 
 
 def parse_accent_from_magnitu_status(status: Dict[str, Any]) -> Optional[str]:
-    """Read optional accent_color from a magnitu_status JSON object."""
+    """Read optional accent_color from a magnitu_status JSON object.
+
+    Supports top-level ``accent_color`` and shallow nesting (some Seismo builds
+    nest metadata under ``data``, ``payload``, ``config``, ``magnitu``, etc.).
+    """
     if not isinstance(status, dict):
         return None
-    return parse_accent_hex_string(status.get("accent_color"))
+
+    direct = parse_accent_hex_string(status.get("accent_color"))
+    if direct:
+        return direct
+
+    nested_keys = (
+        "data",
+        "payload",
+        "config",
+        "magnitu",
+        "meta",
+        "response",
+        "result",
+    )
+    for key in nested_keys:
+        inner = status.get(key)
+        if isinstance(inner, dict):
+            nested = parse_accent_hex_string(inner.get("accent_color"))
+            if nested:
+                return nested
+
+    return None
 
 
 def contrast_text_on_accent(accent_hex6: str) -> str:

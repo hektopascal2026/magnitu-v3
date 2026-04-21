@@ -11,6 +11,20 @@
     <p>Magnitu supports <strong>multiple profiles</strong> — each profile trains its own model on its own labeled entries and can push scores to a different Seismo instance. All profiles share the same entry pool pulled from your main (mothership) Seismo, so you only sync once.</p>
 </div>
 
+<!-- Mothership / satellite flow -->
+<div class="dashboard-section">
+    <h2>Mothership, satellites, and your profile</h2>
+    <p class="section-desc">When your team uses Seismo’s mothership plus <strong>lightweight satellites</strong> (one PHP install per topic), this is the usual path end to end.</p>
+    <ol style="max-width: 720px; line-height: 1.6; padding-left: 1.25rem;">
+        <li style="margin-bottom: 12px;"><strong>In Seismo</strong> — Create the satellite (name, slug, accent colour). Download the JSON / bundle Seismo gives you.</li>
+        <li style="margin-bottom: 12px;"><strong>On the server</strong> — Deploy the satellite files and database so that URL is a live Seismo instance. Entries still come from the mothership-side feed setup; the satellite holds its own scores and Magnitu-facing state.</li>
+        <li style="margin-bottom: 12px;"><strong>In Magnitu</strong> — Add a <strong>profile</strong> and enter that satellite’s URL and API key under Settings → <em>Satellite</em> for that profile. Label entries, hit <strong>Train</strong> — that trains <em>this profile’s</em> model on your labels (stored locally).</li>
+        <li style="margin-bottom: 12px;"><strong>Sync</strong> pulls <strong>articles</strong> using the global <strong>Mothership Connection</strong> (everyone shares one entry pool). It merges <strong>labels</strong> from the satellite’s <code>magnitu_labels</code> when your profile has satellite credentials; if both fields are blank, Magnitu warns you that label import falls back to mothership.</li>
+        <li><strong>Push</strong> sends relevance scores, the distilled recipe, and labels <strong>to that satellite</strong>, so Seismo can rank feeds for that audience.</li>
+    </ol>
+    <p style="max-width: 720px; margin-top: 14px;">Satellite branding colour in the Magnitu tab may appear when Seismo returns <code>accent_color</code> on <code>magnitu_status</code> — use <strong>Test satellite</strong> or run <strong>Push</strong> after deploying.</p>
+</div>
+
 <!-- 2. The Four Labels -->
 <div class="dashboard-section">
     <h2>The Four Labels</h2>

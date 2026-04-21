@@ -1,8 +1,12 @@
 """
 Sync engine: connects to Seismo's API to fetch entries and push scores/recipe.
 
-Pull (entries and label metadata from ``magnitu_labels``) **always** uses the
-global ``seismo_url`` / ``api_key`` — the mothership feed everyone shares.
+Pull **entries** always uses global ``seismo_url`` / ``api_key`` (mothership).
+
+Pull **labels** merges into a profile using that profile's push target
+(``_profile_target``): typically the satellite. If both satellite URL and API key
+are blank on the profile, label pull falls back to the same global mothership
+connection.
 
 Push (scores, recipe, labels to Seismo) uses each profile's ``seismo_url`` /
 ``api_key`` so satellites stay lightweight clients.
@@ -99,13 +103,31 @@ def _compute_pending_embeddings():
         logger.warning("Failed to compute embeddings: %s", e)
 
 
-def pull_labels(profile_id: int = 1) -> int:
-    """Pull labels from mothership Seismo and merge into this profile.
+def profile_satellite_blank(profile: Optional[Dict]) -> bool:
+    """True when the profile has no satellite URL and no API key of its own."""
+    if not profile:
+        return False
+    return not (profile.get("seismo_url") or "").strip() and not (
+        profile.get("api_key") or ""
+    ).strip()
+
+
+def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
+    """Pull labels from Seismo and merge into this profile.
+
+    When ``profile`` is given, HTTP target is ``_profile_target(profile)``
+    (satellite); if URL and key are both blank, falls back to global mothership.
+    When ``profile`` is omitted, uses global mothership only.
 
     Conflict resolution: newer timestamp wins.
     Returns count of labels imported or updated.
     """
-    data = _request("GET", {"action": "magnitu_labels"}).json()
+    target = None
+    if profile is not None:
+        target = _profile_target(profile)
+    data = _request(
+        "GET", {"action": "magnitu_labels"}, seismo_target=target
+    ).json()
     labels = data.get("labels", [])
     imported = 0
     updated = 0
@@ -274,6 +296,23 @@ def test_connection(seismo_target: Optional[Dict] = None) -> tuple:
         return False, "Connection failed. Check the Seismo URL.", {}
     except Exception as e:
         return False, "Error: {}".format(str(e)), {}
+
+
+def refresh_profile_accent(profile: Optional[Dict]) -> None:
+    """Fetch ``magnitu_status`` from the profile push target and persist accent_color.
+
+    Uses ``_profile_target`` (satellite URL/key; falls back to global mothership
+    when blank). Called after Push and from satellite connection test — never raises.
+    """
+    if not profile:
+        return
+    profile_id = int(profile["id"])
+    target = _profile_target(profile)
+    try:
+        status = get_status(seismo_target=target)
+        maybe_profile_accent_from_status(status, profile_id)
+    except Exception as ex:
+        logger.warning("Accent refresh skipped: %s", ex)
 
 
 def maybe_profile_accent_from_status(status: dict, profile_id: int) -> None:

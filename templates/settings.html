@@ -14,7 +14,7 @@
         <h2>Profiles</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
             Each profile has its own labels, trained model, and push target.
-            All profiles share the same entries and embeddings pulled from the mothership.
+            All profiles share the same entries and embeddings (pulled once from global Mothership Connection below). Label imports during Sync use each profile's satellite credentials when set; otherwise they fall back to mothership — see Push Target warnings.
         </p>
 
         {% if profiles %}
@@ -80,13 +80,17 @@
                 </div>
                 <div class="form-group">
                     <label>Push target URL</label>
-                    <input type="url" id="newSeismoUrl" placeholder="Leave blank to use mothership">
-                    <div class="form-help">Seismo that receives scores and recipes for this profile</div>
+                    <input type="url" id="newSeismoUrl" placeholder="Satellite URL (recommended)">
+                    <div class="form-help">
+                        Satellite Seismo receives scores/recipes/pushed labels from this profile.
+                        If blank, pushes and Sync label-pull use global mothership (same as entries).
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Push target API key</label>
-                    <input type="text" id="newApiKey" placeholder="Leave blank to use mothership key"
+                    <input type="text" id="newApiKey" placeholder="Satellite API key"
                            style="font-family: monospace;">
+                    <div class="form-help">If blank with blank URL, mothership credentials are used.</div>
                 </div>
             </div>
             <div class="form-actions">
@@ -99,27 +103,35 @@
     <!-- Per-Profile Push Target -->
     {% if profile %}
     <div class="dashboard-section">
-        <h2>Push Target — {{ profile.display_name }}</h2>
+        <h2>Satellite — {{ profile.display_name }}</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
-            Scores and recipes from this profile are pushed to the Seismo instance configured here.
-            Leave blank to use the global mothership settings below.
-            When you use <strong>Test Connection</strong> and Seismo returns a valid <code>accent_color</code> on <code>magnitu_status</code>, Magnitu stores it for this profile's active tab colour in the header (optional; older Seismo versions omit it).
+            This is the lightweight Seismo that <strong>receives</strong> scores, recipes, and labels you push from this profile.
+            Sync imports labels <strong>from here</strong> when URL and key are set (entries always come from mothership).
+            When <strong>Test satellite</strong> succeeds and Seismo returns <code>accent_color</code>, Magnitu uses it for the header tab colour (optional).
         </p>
+        {% if not profile.seismo_url and not profile.api_key %}
+        <div id="satelliteFallbackBanner" style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #cc8800; background: #fffbf0; font-size: 13px;">
+            <strong>No satellite configured.</strong>
+            Push and Sync label-pull fall back to <strong>global mothership</strong> (same URL as Mothership Connection below).
+            To keep satellite-only labels, set URL + API key here before syncing.
+        </div>
+        {% endif %}
         <div class="settings-form" id="profileForm">
             <div class="form-group">
-                <label>Seismo URL (push)</label>
+                <label>Satellite Seismo URL</label>
                 <input type="url" id="profileSeismoUrl" value="{{ profile.seismo_url or '' }}"
-                       placeholder="Leave blank to use mothership URL">
+                       placeholder="Satellite index.php URL">
+                <div class="form-help">Must mirror mothership entries. If blank with blank key, mothership is used.</div>
             </div>
             <div class="form-group">
-                <label>API Key (push)</label>
+                <label>Satellite API key</label>
                 <input type="text" id="profileApiKey" value="{{ profile.api_key or '' }}"
-                       placeholder="Leave blank to use mothership API key"
+                       placeholder="API key for this satellite"
                        style="font-family: monospace;">
             </div>
             <div class="form-actions">
-                <button class="btn btn-primary" id="saveProfileBtn">Save Push Target</button>
-                <button class="btn" id="testProfileBtn">Test Connection</button>
+                <button class="btn btn-primary" id="saveProfileBtn">Save Satellite</button>
+                <button class="btn" id="testProfileBtn" type="button">Test satellite</button>
                 <span id="profileStatus"></span>
             </div>
         </div>
@@ -128,24 +140,28 @@
 
     <!-- Global Mothership Connection -->
     <div class="dashboard-section">
-        <h2>Mothership Connection <span style="font-size:12px; color:#888; font-weight:normal;">(global — used for pulling entries)</span></h2>
+        <h2>Mothership Connection <span style="font-size:12px; color:#888; font-weight:normal;">(global)</span></h2>
+        <p style="color:#666;font-size:13px;margin-bottom:12px;">
+            Always used to <strong>pull entries</strong> (the shared article pool).
+            Also used for <strong>pulling labels</strong> only when a profile's satellite URL and API key are both blank.
+        </p>
         <div class="settings-form" id="connectionForm">
             <div class="form-group">
-                <label>Seismo URL</label>
+                <label>Mothership Seismo URL</label>
                 <input type="url" id="seismoUrl" value="{{ config.seismo_url }}"
-                       placeholder="https://your-domain.ch/seismo_0.5/index.php">
-                <div class="form-help">The full URL to seismo's index.php — all profiles pull entries from here</div>
+                       placeholder="https://your-domain.ch/seismo/index.php">
+                <div class="form-help">Full URL to mothership index.php — source of all entries</div>
             </div>
             <div class="form-group">
-                <label>API Key</label>
+                <label>Mothership API key</label>
                 <input type="text" id="apiKey" value="{{ config.api_key }}"
-                       placeholder="Paste your Seismo API key here"
+                       placeholder="Mothership Magnitu API key"
                        style="font-family: monospace;">
-                <div class="form-help">Find this in Seismo Settings &gt; Magnitu section</div>
+                <div class="form-help">Seismo Settings → Magnitu</div>
             </div>
             <div class="form-actions">
-                <button class="btn btn-primary" id="saveConnectionBtn">Save Connection</button>
-                <button class="btn" id="testConnectionBtn">Test Connection</button>
+                <button class="btn btn-primary" id="saveConnectionBtn">Save mothership</button>
+                <button class="btn" id="testConnectionBtn" type="button">Test mothership</button>
                 <span id="connectionStatus"></span>
             </div>
         </div>
@@ -416,11 +432,19 @@
         document.getElementById('testProfileBtn').addEventListener('click', function() {
             var status = document.getElementById('profileStatus');
             status.textContent = 'Testing...';
-            fetch('/p/' + slug + '/api/sync/test')
+            fetch('/p/' + slug + '/api/sync/test-satellite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    seismo_url: document.getElementById('profileSeismoUrl').value.trim(),
+                    api_key: document.getElementById('profileApiKey').value.trim(),
+                }),
+            })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
-                    status.textContent = d.message;
+                    status.textContent = d.message + (d.warning ? ' — ' + d.warning : '');
                     status.className = d.success ? 'status-ok' : 'status-error';
+                    if (d.warning && typeof flash === 'function') flash(d.warning, 'error');
                 })
                 .catch(function(err) { status.textContent = 'Error: ' + err.message; status.className = 'status-error'; });
         });
@@ -445,29 +469,26 @@
         .catch(function(err) { flash('Error: ' + err.message, 'error'); });
     });
 
-    // Test mothership connection
+    // Test mothership only (uses form fields; does not save)
     document.getElementById('testConnectionBtn').addEventListener('click', function() {
         var status = document.getElementById('connectionStatus');
         status.textContent = 'Testing...';
-        var data = {
-            seismo_url: document.getElementById('seismoUrl').value.trim(),
-            api_key: document.getElementById('apiKey').value.trim(),
-        };
-        fetch('/api/settings', {
+        fetch('/api/sync/test-mothership', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        })
-        .then(function() {
-            return slug ? fetch('/p/' + slug + '/api/sync/test') : Promise.reject('no profile');
+            body: JSON.stringify({
+                seismo_url: document.getElementById('seismoUrl').value.trim(),
+                api_key: document.getElementById('apiKey').value.trim(),
+            }),
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            status.textContent = d.message;
+            status.textContent = d.message + (d.warning ? ' — ' + d.warning : '');
             status.className = d.success ? 'status-ok' : 'status-error';
+            if (d.warning && typeof flash === 'function') flash(d.warning, 'error');
         })
         .catch(function(err) {
-            status.textContent = typeof err === 'string' ? err : 'Error: ' + err.message;
+            status.textContent = 'Error: ' + err.message;
             status.className = 'status-error';
         });
     });

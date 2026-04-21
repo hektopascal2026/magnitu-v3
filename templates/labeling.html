@@ -419,6 +419,9 @@
                             msg += ' (some label conflicts resolved by timestamp)';
                         }
                         flash(msg + '.', 'success');
+                        if (result.label_pull_warning) {
+                            flash(result.label_pull_warning, 'error');
+                        }
                         if (result.embedding_warning) {
                             flash(result.embedding_warning + ' Try syncing again.', 'error');
                         }
