@@ -19,7 +19,7 @@ Magnitu now supports multiple **profiles** — each profile has its own labels, 
 
 - The API contract between Magnitu and Seismo is **identical**. No changes to JSON formats, field names, or endpoint signatures.
 - Magnitu still pulls all entries from the **mothership** Seismo (one pull source, as before).
-- Each lightweight Seismo only **receives** scores and recipes — it does not need its own scraper.
+- Each lightweight Seismo **receives** scores, keyword recipes, and **label** sync (`magnitu_labels` GET/POST) from the Magnitu profile mapped to that instance — it does not need its own scraper for raw content (entries come from the mothership DB via Option A/B, or from Magnitu’s shared cache + API in Option C).
 
 ---
 
@@ -28,11 +28,13 @@ Magnitu now supports multiple **profiles** — each profile has its own labels, 
 A lightweight Seismo is a **separate PHP installation** (running the same Seismo codebase) that:
 
 1. **Reads entries from the mothership's database** — no independent scraping, no separate entry tables.  
-2. **Maintains its own scoring and recipe tables** — scores and recipes from Magnitu's topic profile land here, independently of the mothership.
-3. **Has its own API key** — so Magnitu can authenticate when pushing scores/recipes.
+2. **Maintains its own scoring, recipe, and label tables** — scores, distilled recipes, and topic-specific training labels from Magnitu’s profile land here, independently of other satellites (and independently of the mothership’s own label rows when you use per-profile targets in Magnitu).
+3. **Has its own API key** — so Magnitu can authenticate when pushing scores, recipes, and labels.
 4. **Exposes the same API endpoints** as the mothership (`magnitu_entries`, `magnitu_scores`, `magnitu_recipe`, `magnitu_status`, `magnitu_labels`).
 
-The mothership remains the system of record for entries, labels, and the global model. Lightweight instances are purely **consumers** of Magnitu scores and the entry pool.
+The mothership remains the **system of record for raw entries** (and optionally for a default/global Magnitu profile that still targets the mothership URL with both satellite fields cleared). **Topic-specific labels and scores** for satellite-backed profiles live on each lightweight instance Magnitu is configured to call.
+
+**Magnitu credential rule:** each profile stores a satellite `seismo_url` and `api_key` together. Magnitu rejects **incomplete** pairs (URL without key or key without URL) so it never accidentally sends a satellite URL with the mothership API key, or the reverse.
 
 ---
 
@@ -187,15 +189,15 @@ Mothership Seismo (netmind.ch)
 │         ↓
 │   Magnitu labels + trains per profile
 │         ↓
-├─◄ Default profile pushes scores/recipe/labels
+├─◄ Default profile pushes scores/recipe/labels (often still the mothership URL)
 │
 │
 Lightweight Seismo — "Security" (webspace)
 │
 ├─  reads entries FROM mothership DB (shared table or view)
-├─◄ Security profile pushes scores/recipe
+├─◄ Security profile pushes scores/recipe/labels
 │
-└─  its own consumers (readers, alerts) use security-specific scores
+└─  its own consumers (readers, alerts) use security-specific scores and labels
 ```
 
 ---
@@ -215,7 +217,6 @@ Lightweight Seismo — "Security" (webspace)
 
 2. **API key provisioning**: How are API keys generated in Seismo? The lightweight instance needs its own key registered before Magnitu can push to it.
 
-3. **Label sync on lightweight instances**: Currently, `magnitu_labels` GET/POST is used to sync labels back. For lightweight instances, labels are profile-specific (e.g. security labels). Do the lightweight instances need to serve `magnitu_labels` at all, or should label sync go to the mothership only?  
-   *Suggested answer*: Lightweight instances only need to accept `magnitu_scores` and `magnitu_recipe`. Label sync (`magnitu_labels` GET/POST) can be pointed at the mothership for all profiles — labels are global training data, not per-topic. Magnitu can be configured this way without any code change.
+3. **Label sync on lightweight instances**: Magnitu pulls and pushes `magnitu_labels` against **the same base URL + API key** stored on the profile (the satellite when both fields are set; otherwise the global mothership connection). For hub-and-spoke topic isolation, each topic profile should use a **dedicated** lightweight instance so security labels never share a `magnitu_labels` table with digital-policy or with the mothership. Pointing all profiles at the mothership for labels is still possible (clear both satellite fields on those profiles) but defeats per-topic isolation.
 
 4. **Deployment path**: Should each lightweight instance have its own subdomain (e.g. `seismo-security.netmind.ch/index.php`) or run as subdirectories of the same domain?

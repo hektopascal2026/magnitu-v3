@@ -491,6 +491,68 @@ except Exception as e:
 
 
 # ═══════════════════════════════════════════
+#  8. Satellite URL + API key must be paired (no mothership mix-in)
+# ═══════════════════════════════════════════
+print("\n=== 8. Satellite credential pairing ===")
+
+t = test("_profile_target None when both seismo fields blank")
+try:
+    assert sync._profile_target({"seismo_url": "", "api_key": ""}) is None
+    assert sync._profile_target({"seismo_url": "  ", "api_key": " \t"}) is None
+    assert sync._profile_target(None) is None
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("_profile_target returns exact url+key when both set (no global fill-in)")
+try:
+    got = sync._profile_target({
+        "seismo_url": "https://satellite.example/seismo/index.php",
+        "api_key": "satellite_only_key",
+    })
+    assert got["seismo_url"] == "https://satellite.example/seismo/index.php"
+    assert got["api_key"] == "satellite_only_key"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("_profile_target raises ValueError when only URL is set")
+try:
+    sync._profile_target({"seismo_url": "https://only-url.example/index.php", "api_key": ""})
+    fail("Expected ValueError for partial credentials")
+except ValueError as e:
+    assert "Incomplete satellite" in str(e)
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("_profile_target raises ValueError when only API key is set")
+try:
+    sync._profile_target({"seismo_url": "", "api_key": "only_key"})
+    fail("Expected ValueError for partial credentials")
+except ValueError as e:
+    assert "Incomplete satellite" in str(e)
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("profile_satellite_incomplete detects XOR of url vs key")
+try:
+    assert sync.profile_satellite_incomplete({"seismo_url": "x", "api_key": ""})
+    assert sync.profile_satellite_incomplete({"seismo_url": "", "api_key": "k"})
+    assert not sync.profile_satellite_incomplete({"seismo_url": "", "api_key": ""})
+    assert not sync.profile_satellite_incomplete({"seismo_url": "x", "api_key": "y"})
+    assert not sync.profile_satellite_incomplete(None)
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+# ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════
 print("\n" + "=" * 50)

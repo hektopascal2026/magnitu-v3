@@ -156,13 +156,20 @@ def _sync_pull_impl(
 
     Entries always come from global mothership Settings.
 
-    Labels merge into ``profile_id`` using this profile's satellite URL/key when
-    configured; otherwise labels are fetched from global mothership too.
+    Labels merge into the given ``profile`` using ``_profile_target(profile)``
+    (satellite when URL + key are set; mothership when both blank).
 
-    ``profile``: when set (sync from labeling UI), labels merge into this id;
-    when omitted, profile_id 1 for labels (legacy).
+    ``profile`` is required (resolved by HTTP handlers from ``profile_slug`` or
+    the active workspace profile).
     """
-    profile_id_for_labels = int(profile["id"]) if profile else 1
+    if not profile:
+        raise ValueError(
+            "Sync pull requires a profile. Use /p/{slug}/api/sync/pull, POST "
+            "/api/sync/pull?profile_slug=..., or set an active profile in Settings."
+        )
+    if sync.profile_satellite_incomplete(profile):
+        raise ValueError(sync.INCOMPLETE_SATELLITE_CREDENTIALS_MSG)
+    profile_id_for_labels = int(profile["id"])
 
     emb_before = db.get_embedding_count()
     count = 0
@@ -249,6 +256,8 @@ def _sync_pull_impl(
             label_pull_source = "mothership_fallback"
         elif profile:
             label_pull_source = "satellite"
+    except ValueError:
+        raise
     except Exception as e:
         logger.warning("Label pull failed during sync: %s", e)
         db.log_sync("pull", 0, "FAILED label pull: {}".format(e))
@@ -284,6 +293,12 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
 
     if progress_cb:
         progress_cb(5, "Preparing push...")
+
+    profile_row = db.get_profile_by_id(profile_id)
+    if not profile_row:
+        raise ValueError("Profile not found.")
+    if sync.profile_satellite_incomplete(profile_row):
+        raise ValueError(sync.INCOMPLETE_SATELLITE_CREDENTIALS_MSG)
 
     model_info = db.get_active_model(profile_id)
     if not model_info:
@@ -334,7 +349,6 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
         except Exception:
             pass
 
-    profile_row = db.get_profile_by_id(profile_id)
     profile_info = model_manager.get_profile(profile_id)
     model_meta = None
     if profile_info:
@@ -819,6 +833,11 @@ async def create_profile_api(request: Request):
     seismo_url = (data.get("seismo_url") or "").strip()
     api_key    = (data.get("api_key") or "").strip()
     description = (data.get("description") or "").strip()
+    if sync.profile_satellite_incomplete({"seismo_url": seismo_url, "api_key": api_key}):
+        return JSONResponse(
+            {"success": False, "error": sync.INCOMPLETE_SATELLITE_CREDENTIALS_MSG},
+            status_code=400,
+        )
     profile = db.create_profile(slug, display_name, description, seismo_url, api_key)
     if len(db.get_all_profiles()) == 1:
         db.set_active_profile_id(profile["id"])
@@ -839,6 +858,19 @@ async def update_profile_api(profile_id: int, request: Request):
             return JSONResponse({"success": False, "error": "Slug already in use."}, 400)
     else:
         new_slug = None
+
+    merged_url = (existing.get("seismo_url") or "").strip()
+    merged_key = (existing.get("api_key") or "").strip()
+    if "seismo_url" in data:
+        merged_url = (data.get("seismo_url") or "").strip()
+    if "api_key" in data:
+        merged_key = (data.get("api_key") or "").strip()
+    if "seismo_url" in data or "api_key" in data:
+        if sync.profile_satellite_incomplete({"seismo_url": merged_url, "api_key": merged_key}):
+            return JSONResponse(
+                {"success": False, "error": sync.INCOMPLETE_SATELLITE_CREDENTIALS_MSG},
+                status_code=400,
+            )
 
     db.update_profile(
         profile_id=profile_id,
@@ -1050,6 +1082,11 @@ async def _run_sync_pull_handlers(
 ):
     """Shared executor path for mothership sync (pull entries + merge labels)."""
     import asyncio
+    if not profile:
+        raise HTTPException(
+            400,
+            "Sync pull requires a profile (use profile_slug or activate a profile in Settings).",
+        )
     if background:
         job_type = "sync_pull_full" if full else "sync_pull"
         job_id = _create_job(job_type)
@@ -1068,6 +1105,8 @@ async def _run_sync_pull_handlers(
             None,
             lambda: _sync_pull_impl(full=full, profile=profile),
         )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -1080,16 +1119,26 @@ async def sync_pull(
 ):
     """Pull entries using global Settings URL (mothership).
 
-    Optional ``profile_slug``: merge mothership labels into that profile.
-    When omitted, merged labels use profile id 1 (legacy).
+    Resolves which profile receives merged labels:
+
+    - If ``profile_slug`` is given, that profile is used.
+    - Otherwise the **active workspace** profile from Settings is used (same as
+      the Label / Push UI). There is no longer a silent default to profile id 1.
     """
     profile = None
-    if profile_slug:
+    if profile_slug and profile_slug.strip():
         profile = db.get_profile_by_slug(profile_slug.strip())
         if not profile:
             raise HTTPException(
                 404,
-                "Unknown profile slug '{}'".format(profile_slug),
+                "Unknown profile slug '{}'".format(profile_slug.strip()),
+            )
+    else:
+        profile = db.get_active_profile()
+        if not profile:
+            raise HTTPException(
+                400,
+                "Specify profile_slug on the request, or activate a profile in Settings.",
             )
     return await _run_sync_pull_handlers(full, background, profile)
 
@@ -1122,6 +1171,8 @@ async def sync_push(slug: str, background: bool = False):
         return await loop.run_in_executor(
             None, lambda: _sync_push_impl(profile_id=profile_id)
         )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -1142,11 +1193,15 @@ async def sync_labels(slug: str):
     pulled = 0
     try:
         pushed = sync.push_labels(profile_id=profile_id, profile=profile)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, "Failed to push labels: {}".format(e))
     pull_error = None
     try:
         pulled = sync.pull_labels(profile_id=profile_id, profile=profile)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         logger.warning("Label pull failed: %s", e)
         pull_error = str(e)
@@ -1172,7 +1227,10 @@ def _satellite_sync_test_payload(profile: dict, data: dict) -> dict:
                 "label pull — use 'Test mothership' under Mothership Connection instead."
             ),
         }
-    target = sync._profile_target(overlay)
+    try:
+        target = sync._profile_target(overlay)
+    except ValueError as e:
+        return {"success": False, "message": str(e)}
     ok, msg, status_payload = sync.test_connection(seismo_target=target)
     if not ok:
         return {"success": False, "message": msg}

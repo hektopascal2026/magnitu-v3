@@ -394,7 +394,17 @@
             ? ('/api/sync/pull?full=true&background=true' + slugQ)
             : ('/api/sync/pull?background=true' + slugQ);
         fetch(url, { method: 'POST' })
-            .then(function(r) { return r.json(); })
+            .then(function(r) {
+                return r.json().then(function(data) {
+                    if (!r.ok) {
+                        var msg = (data && data.detail) ? data.detail
+                            : (data && data.error) ? data.error
+                            : ('HTTP ' + r.status);
+                        throw new Error(msg);
+                    }
+                    return data;
+                });
+            })
             .then(function(data) {
                 if (!data.success || !data.job_id) throw new Error(data.detail || 'Failed to start sync');
                 pollJob(

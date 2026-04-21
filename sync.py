@@ -4,12 +4,13 @@ Sync engine: connects to Seismo's API to fetch entries and push scores/recipe.
 Pull **entries** always uses global ``seismo_url`` / ``api_key`` (mothership).
 
 Pull **labels** merges into a profile using that profile's push target
-(``_profile_target``): typically the satellite. If both satellite URL and API key
-are blank on the profile, label pull falls back to the same global mothership
-connection.
+(``_profile_target``): the satellite when **both** ``seismo_url`` and ``api_key``
+are set on the profile. If both are blank, label pull uses global mothership.
+**Incomplete** credentials (only one of URL or key set) are rejected with
+``ValueError`` so Magnitu never mixes a satellite URL with the mothership API
+key (or the reverse).
 
-Push (scores, recipe, labels to Seismo) uses each profile's ``seismo_url`` /
-``api_key`` so satellites stay lightweight clients.
+Push (scores, recipe, labels to Seismo) uses the same rules via ``_profile_target``.
 """
 import logging
 import httpx
@@ -20,6 +21,20 @@ import db
 from magnitu.accent_theme import parse_accent_from_magnitu_status
 
 logger = logging.getLogger(__name__)
+
+INCOMPLETE_SATELLITE_CREDENTIALS_MSG = (
+    "Incomplete satellite credentials on this profile: set both Seismo URL and "
+    "API key for this satellite, or clear both to use global mothership settings only."
+)
+
+
+def profile_satellite_incomplete(profile: Optional[Dict]) -> bool:
+    """True when exactly one of seismo_url / api_key is set (invalid pair)."""
+    if not profile:
+        return False
+    url = (profile.get("seismo_url") or "").strip()
+    key = (profile.get("api_key") or "").strip()
+    return bool(url) != bool(key)
 
 
 def _request(method: str, params: dict,
@@ -44,18 +59,26 @@ def _request(method: str, params: dict,
 
 
 def _profile_target(profile: Optional[Dict]) -> Optional[Dict]:
-    """Extract seismo_url/api_key from a profile dict, falling back to global."""
+    """Resolve HTTP target for label/score/recipe sync for this profile.
+
+    Returns ``None`` to use global mothership (``get_config()`` URL + key) when
+    both profile fields are blank.
+
+    When both ``seismo_url`` and ``api_key`` are non-empty, returns exactly that
+    pair (no mixing with global config).
+
+    Raises ``ValueError`` with :data:`INCOMPLETE_SATELLITE_CREDENTIALS_MSG` if
+    exactly one field is set.
+    """
     if not profile:
         return None
     url = (profile.get("seismo_url") or "").strip()
     key = (profile.get("api_key") or "").strip()
+    if profile_satellite_incomplete(profile):
+        raise ValueError(INCOMPLETE_SATELLITE_CREDENTIALS_MSG)
     if not url and not key:
         return None
-    cfg = get_config()
-    return {
-        "seismo_url": url or cfg["seismo_url"],
-        "api_key": key or cfg["api_key"],
-    }
+    return {"seismo_url": url, "api_key": key}
 
 
 # ─── Pull (always mothership — global config) ────────────────────────────────
@@ -116,8 +139,10 @@ def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
     """Pull labels from Seismo and merge into this profile.
 
     When ``profile`` is given, HTTP target is ``_profile_target(profile)``
-    (satellite); if URL and key are both blank, falls back to global mothership.
+    (satellite when URL and key are both set; mothership when both blank).
     When ``profile`` is omitted, uses global mothership only.
+
+    Raises ``ValueError`` if ``profile`` has only one of URL / API key set.
 
     Conflict resolution: newer timestamp wins.
     Returns count of labels imported or updated.
@@ -178,8 +203,8 @@ def push_scores(scores: List[Dict], model_version: int,
                 profile: Optional[Dict] = None) -> dict:
     """Push batch of scores to the profile's Seismo target.
 
-    profile: profiles table row (has seismo_url, api_key).
-    Falls back to global config when profile has no target configured.
+    profile: profiles table row (has seismo_url, api_key). Uses mothership when
+    both are blank; raises ``ValueError`` if only one is set.
     """
     target = _profile_target(profile)
     payload = {"scores": scores, "model_version": model_version}
@@ -327,7 +352,11 @@ def refresh_profile_accent(profile: Optional[Dict]) -> None:
     if not profile:
         return
     profile_id = int(profile["id"])
-    target = _profile_target(profile)
+    try:
+        target = _profile_target(profile)
+    except ValueError as ex:
+        logger.warning("Accent refresh skipped: %s", ex)
+        return
     try:
         status = get_status(seismo_target=target)
         maybe_profile_accent_from_status(status, profile_id)
