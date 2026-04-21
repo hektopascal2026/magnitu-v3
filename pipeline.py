@@ -47,6 +47,41 @@ CLASS_WEIGHT_MAP = {
 }
 
 
+def _train_test_split_stratified_safe(X, y, sample_weight, test_size: float,
+                                      random_state: int = 42):
+    """
+    Stratified train/test split that sklearn can apply without error.
+
+    With a small labeled set and four classes, a 10%% holdout can yield fewer
+    test samples than classes; ``stratify=y`` then raises ValueError.  We bump
+    the test fraction to at least n_classes/n (when both folds can still hold
+    every class), otherwise fall back to an unstratified split.
+    """
+    y_arr = np.asarray(y)
+    n = len(y_arr)
+    n_classes = len(np.unique(y_arr))
+    min_frac = float(n_classes) / float(max(n, 1))
+    if n < 2 * n_classes:
+        return train_test_split(
+            X, y, sample_weight, test_size=test_size,
+            stratify=None, random_state=random_state,
+        )
+    max_test_frac = 1.0 - min_frac
+    ts = float(test_size)
+    ts = max(ts, min_frac)
+    ts = min(ts, max_test_frac)
+    try:
+        return train_test_split(
+            X, y, sample_weight, test_size=ts,
+            stratify=y, random_state=random_state,
+        )
+    except ValueError:
+        return train_test_split(
+            X, y, sample_weight, test_size=test_size,
+            stratify=None, random_state=random_state,
+        )
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Probability calibration (temperature scaling on validation logits)
 # ═══════════════════════════════════════════════════════════════════
@@ -754,10 +789,17 @@ def _train_transformer(profile_id: int = 1) -> dict:
     else:
         test_size = min(0.2, min_class_count / len(y))
         test_size = max(test_size, 0.1)
-        X_train, X_test, y_train, y_test, sw_train, _sw_test = train_test_split(
-            X, y, sw_all, test_size=test_size, stratify=y, random_state=42
+        X_train, X_test, y_train, y_test, sw_train, _sw_test = (
+            _train_test_split_stratified_safe(
+                X, y, sw_all, test_size=test_size, random_state=42,
+            )
         )
-        split_note = "{}/{} train/test split".format(int((1 - test_size) * 100), int(test_size * 100))
+        te = len(y_test)
+        tr = len(y_train)
+        split_note = "{}/{} train/test split".format(
+            int(round(100.0 * tr / (tr + te))),
+            int(round(100.0 * te / (tr + te))),
+        )
 
     # Hold out part of the training fold for temperature scaling (kept out of oversampling)
     X_tr_raw, y_tr_raw = X_train, y_train
@@ -1049,10 +1091,17 @@ def _train_tfidf(profile_id: int = 1) -> dict:
     else:
         test_size = min(0.2, min_class_count / len(labels))
         test_size = max(test_size, 0.1)
-        X_train, X_test, y_train, y_test, sw_train, _sw_test = train_test_split(
-            df, labels, sw_all, test_size=test_size, stratify=labels, random_state=42
+        X_train, X_test, y_train, y_test, sw_train, _sw_test = (
+            _train_test_split_stratified_safe(
+                df, labels, sw_all, test_size=test_size, random_state=42,
+            )
         )
-        split_note = "{}/{} train/test split".format(int((1 - test_size) * 100), int(test_size * 100))
+        te = len(y_test)
+        tr = len(y_train)
+        split_note = "{}/{} train/test split".format(
+            int(round(100.0 * tr / (tr + te))),
+            int(round(100.0 * te / (tr + te))),
+        )
 
     # Slice of training fold for temperature calibration (kept out of TF-IDF fit)
     X_tr, y_tr = X_train, y_train

@@ -388,7 +388,10 @@
         fullBtn.textContent = fullMode ? 'Full Syncing...' : 'Full Sync';
         setProgress(true, fullMode ? 'Starting full sync...' : 'Starting sync...', 1, '1%');
 
-        var url = fullMode ? '/api/sync/pull?full=true&background=true' : '/api/sync/pull?background=true';
+        var slugQ = SLUG ? ('&profile_slug=' + encodeURIComponent(SLUG)) : '';
+        var url = fullMode
+            ? ('/api/sync/pull?full=true&background=true' + slugQ)
+            : ('/api/sync/pull?background=true' + slugQ);
         fetch(url, { method: 'POST' })
             .then(function(r) { return r.json(); })
             .then(function(data) {

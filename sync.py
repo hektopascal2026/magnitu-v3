@@ -1,9 +1,11 @@
 """
 Sync engine: connects to Seismo's API to fetch entries and push scores/recipe.
 
-Pull (entries, labels) always uses the global config (mothership Seismo).
-Push (scores, recipe, labels) uses the profile's own seismo_url / api_key so
-different profiles can target different lightweight Seismo instances.
+Pull (entries and label metadata from ``magnitu_labels``) **always** uses the
+global ``seismo_url`` / ``api_key`` — the mothership feed everyone shares.
+
+Push (scores, recipe, labels to Seismo) uses each profile's ``seismo_url`` /
+``api_key`` so satellites stay lightweight clients.
 """
 import logging
 import httpx
@@ -52,7 +54,7 @@ def _profile_target(profile: Optional[Dict]) -> Optional[Dict]:
     }
 
 
-# ─── Pull (global — always from mothership) ──────────────────────────────────
+# ─── Pull (always mothership — global config) ────────────────────────────────
 
 def pull_entries(
     since: str = None,
@@ -61,7 +63,8 @@ def pull_entries(
     compute_embeddings: bool = True,
 ) -> int:
     """Fetch entries from mothership Seismo and store locally.
-    Shared across all profiles — entries are not profile-scoped.
+
+    Entries are shared across profiles (single local cache).
     """
     params = {"action": "magnitu_entries", "type": entry_type, "limit": str(limit)}
     if since:
@@ -97,7 +100,7 @@ def _compute_pending_embeddings():
 
 
 def pull_labels(profile_id: int = 1) -> int:
-    """Pull labels from the mothership and merge into this profile.
+    """Pull labels from mothership Seismo and merge into this profile.
 
     Conflict resolution: newer timestamp wins.
     Returns count of labels imported or updated.

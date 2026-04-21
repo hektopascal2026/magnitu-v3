@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
-from typing import Optional
+from typing import Optional, Dict
 import threading
 import uuid
 from datetime import datetime
@@ -105,7 +105,20 @@ def _run_job(job_id: str, target):
 
 # ─── Sync implementations ────────────────────────────────────────────────────
 
-def _sync_pull_impl(full: bool, progress_cb=None) -> dict:
+def _sync_pull_impl(
+    full: bool,
+    progress_cb=None,
+    profile: Optional[Dict] = None,
+) -> dict:
+    """Pull entries + labels into local DB.
+
+    Entries and ``magnitu_labels`` always use global Settings (mothership URL).
+
+    ``profile``: when set (e.g. /p/{slug}/api/sync/pull), merged mothership
+    labels apply to this profile_id; when omitted, profile_id 1 (legacy).
+    """
+    profile_id_for_labels = int(profile["id"]) if profile else 1
+
     emb_before = db.get_embedding_count()
     count = 0
     entries_by_type = {}
@@ -136,7 +149,9 @@ def _sync_pull_impl(full: bool, progress_cb=None) -> dict:
             if progress_cb:
                 progress_cb(10 + idx * 20, "Pulling {} entries...".format(entry_type))
             fetched = sync.pull_entries(
-                entry_type=entry_type, limit=limit, compute_embeddings=False,
+                entry_type=entry_type,
+                limit=limit,
+                compute_embeddings=False,
             )
             entries_by_type[entry_type] = fetched
             count += fetched
@@ -174,7 +189,7 @@ def _sync_pull_impl(full: bool, progress_cb=None) -> dict:
         progress_cb(92, "Pulling labels...")
     labels_synced = 0
     try:
-        labels_synced = sync.pull_labels()
+        labels_synced = sync.pull_labels(profile_id=profile_id_for_labels)
     except Exception as e:
         logger.warning("Label pull failed during sync: %s", e)
         db.log_sync("pull", 0, "FAILED label pull: {}".format(e))
@@ -979,24 +994,63 @@ async def remove_label(
 
 # ─── API: Sync — global pull, per-profile push ───────────────────────────────
 
-@app.post("/api/sync/pull")
-async def sync_pull(full: bool = False, background: bool = False):
-    """Pull entries from mothership — shared across all profiles."""
+
+async def _run_sync_pull_handlers(
+    full: bool,
+    background: bool,
+    profile: Optional[Dict],
+):
+    """Shared executor path for mothership sync (pull entries + merge labels)."""
     import asyncio
     if background:
         job_type = "sync_pull_full" if full else "sync_pull"
         job_id = _create_job(job_type)
         t = threading.Thread(
-            target=lambda: _run_job(job_id, lambda cb: _sync_pull_impl(full=full, progress_cb=cb)),
+            target=lambda: _run_job(
+                job_id,
+                lambda cb: _sync_pull_impl(full=full, progress_cb=cb, profile=profile),
+            ),
             daemon=True,
         )
         t.start()
         return {"success": True, "job_id": job_id}
     try:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: _sync_pull_impl(full=full))
+        return await loop.run_in_executor(
+            None,
+            lambda: _sync_pull_impl(full=full, profile=profile),
+        )
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/sync/pull")
+async def sync_pull(
+    full: bool = False,
+    background: bool = False,
+    profile_slug: Optional[str] = None,
+):
+    """Pull entries using global Settings URL (mothership).
+
+    Optional ``profile_slug``: merge mothership labels into that profile.
+    When omitted, merged labels use profile id 1 (legacy).
+    """
+    profile = None
+    if profile_slug:
+        profile = db.get_profile_by_slug(profile_slug.strip())
+        if not profile:
+            raise HTTPException(
+                404,
+                "Unknown profile slug '{}'".format(profile_slug),
+            )
+    return await _run_sync_pull_handlers(full, background, profile)
+
+
+@app.post("/p/{slug}/api/sync/pull")
+async def sync_pull_for_profile(slug: str, full: bool = False, background: bool = False):
+    """Pull from mothership (global URL); merge pulled labels into this profile."""
+    profile = _get_profile_or_404(slug)
+    return await _run_sync_pull_handlers(full, background, profile)
 
 
 @app.post("/p/{slug}/api/sync/push")
