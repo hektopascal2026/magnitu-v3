@@ -315,7 +315,11 @@
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (d.success) {
-                    window.location.reload();
+                    if (d.redirect_slug) {
+                        window.location.href = '/p/' + d.redirect_slug + '/settings#profiles';
+                    } else {
+                        window.location.href = '/';
+                    }
                 } else {
                     flash(d.error || 'Failed to delete profile.', 'error');
                 }

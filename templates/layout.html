@@ -23,7 +23,6 @@
                             <a href="/p/{{ p.slug }}/" class="profile-pill">{{ p.display_name }}</a>
                         {% endif %}
                     {% endfor %}
-                    <a href="/p/{{ profile.slug }}/settings#profiles" class="profile-pill profile-pill-manage" title="Profiles">+</a>
                 </span>
                 {% elif profile %}
                 <span class="top-bar-subtitle">
@@ -34,7 +33,6 @@
                         &middot; <span class="arch-badge arch-tfidf">tf-idf</span>
                     {% endif %}
                 </span>
-                <a href="/p/{{ profile.slug }}/settings#profiles" class="profile-pill profile-pill-manage" title="Profiles">+</a>
                 {% endif %}
             </div>
             <nav class="top-bar-nav">

@@ -810,7 +810,13 @@ async def delete_profile_api(profile_id: int):
         return JSONResponse({"success": False,
                              "error": "Cannot delete the default profile."}, 400)
     db.delete_profile(profile_id)
-    return {"success": True}
+    # Client was on /p/{slug}/settings; reload would 404. Send a surviving profile slug.
+    fallback = db.get_default_profile()
+    if not fallback:
+        others = db.get_all_profiles()
+        fallback = others[0] if others else None
+    redirect_slug = fallback["slug"] if fallback else None
+    return {"success": True, "redirect_slug": redirect_slug}
 
 
 # ─── API: Model — profile-scoped ─────────────────────────────────────────────
