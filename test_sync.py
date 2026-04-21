@@ -482,6 +482,9 @@ try:
     assert parse_accent_from_magnitu_status(
         {"status": "ok", "data": {"accent_color": "#abc"}}
     ) == "#aabbcc"
+    assert parse_accent_from_magnitu_status(
+        {"wrapper": {"inner": {"accent_color": "#1a2b3c"}}}
+    ) == "#1a2b3c"
     ok()
 except Exception as e:
     fail(str(e))

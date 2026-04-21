@@ -267,6 +267,25 @@ def verify_seismo_endpoints(seismo_target: Optional[Dict] = None) -> tuple:
         return False, "Label push endpoint broken: {}".format(e)
 
 
+def _magnitu_status_reports_ok(status: dict) -> bool:
+    """Accept common variants so Test satellite stores accent after a real OK."""
+    if not isinstance(status, dict):
+        return False
+    st = status.get("status")
+    if isinstance(st, str) and st.strip().lower() == "ok":
+        return True
+    if status.get("success") is True:
+        return True
+    inner = status.get("data")
+    if isinstance(inner, dict):
+        if inner.get("success") is True:
+            return True
+        st2 = inner.get("status")
+        if isinstance(st2, str) and st2.strip().lower() == "ok":
+            return True
+    return False
+
+
 def test_connection(seismo_target: Optional[Dict] = None) -> tuple:
     """Test connection to a Seismo target.
 
@@ -276,8 +295,9 @@ def test_connection(seismo_target: Optional[Dict] = None) -> tuple:
     """
     try:
         status = get_status(seismo_target)
-        if status.get("status") == "ok":
-            total = status.get("entries", {}).get("total", 0)
+        if _magnitu_status_reports_ok(status):
+            entries = status.get("entries") if isinstance(status.get("entries"), dict) else {}
+            total = entries.get("total", 0)
             return (
                 True,
                 "Connected. Seismo has {} entries.".format(total),

@@ -942,11 +942,9 @@ async def set_label(
         raise HTTPException(400, "Invalid label.")
     db.set_label(entry_type, entry_id, label,
                  reasoning=reasoning.strip(), profile_id=profile_id)
-    try:
-        sync.push_labels(profile_id=profile_id, profile=profile)
-    except Exception as e:
-        logger.warning("Background label push failed: %s", e)
-        db.log_sync("push", 0, "FAILED: {}".format(e), profile_id=profile_id)
+    # Labels are pushed in batch by Sync → Push (scores + recipe + labels) or
+    # POST /p/{slug}/api/sync/labels — not on every save (avoids sync_log spam
+    # and one HTTP round-trip per card).
     return {"success": True, "entry_type": entry_type,
             "entry_id": entry_id, "label": label}
 

@@ -26,11 +26,27 @@ def parse_accent_hex_string(raw: Any) -> Optional[str]:
     return None
 
 
+def _parse_accent_nested(obj: Any, depth: int, max_depth: int) -> Optional[str]:
+    """Find first valid accent_color hex at any nesting depth (bounded)."""
+    if depth > max_depth or not isinstance(obj, dict):
+        return None
+    nested = parse_accent_hex_string(obj.get("accent_color"))
+    if nested:
+        return nested
+    for v in obj.values():
+        if isinstance(v, dict):
+            found = _parse_accent_nested(v, depth + 1, max_depth)
+            if found:
+                return found
+    return None
+
+
 def parse_accent_from_magnitu_status(status: Dict[str, Any]) -> Optional[str]:
     """Read optional accent_color from a magnitu_status JSON object.
 
-    Supports top-level ``accent_color`` and shallow nesting (some Seismo builds
-    nest metadata under ``data``, ``payload``, ``config``, ``magnitu``, etc.).
+    Supports top-level ``accent_color``, shallow wrappers (``data``, ``payload``,
+    etc.), then a bounded deep scan — some Seismo builds nest branding several
+    levels deep.
     """
     if not isinstance(status, dict):
         return None
@@ -47,6 +63,10 @@ def parse_accent_from_magnitu_status(status: Dict[str, Any]) -> Optional[str]:
         "meta",
         "response",
         "result",
+        "satellite",
+        "seismo",
+        "theme",
+        "branding",
     )
     for key in nested_keys:
         inner = status.get(key)
@@ -55,7 +75,7 @@ def parse_accent_from_magnitu_status(status: Dict[str, Any]) -> Optional[str]:
             if nested:
                 return nested
 
-    return None
+    return _parse_accent_nested(status, 0, 8)
 
 
 def contrast_text_on_accent(accent_hex6: str) -> str:
