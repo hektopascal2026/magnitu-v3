@@ -19,7 +19,7 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - Each profile can push to a different (lightweight) Seismo instance
   - All profiles share the same entries and embeddings — sync once, score differently
   - Profile switcher in the top bar; **Settings → Profiles** to add and manage profiles (`/profiles` redirects there)
-  - URL structure: `/p/{slug}/` for labeling, dashboard, model, settings
+  - URL structure: `/p/{slug}/` for labeling, model (overview + exports), settings
 - **Smart labeling queue**
   - `uncertain` — entries the current model is most confused about
   - `conflict` — model and recipe disagree

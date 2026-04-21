@@ -1,13 +1,13 @@
 """
 Magnitu — ML-powered relevance scoring for Seismo.
-FastAPI application: serves the labeling UI, dashboard, and orchestrates ML pipeline.
+FastAPI application: serves the labeling UI, model overview, and orchestrates ML pipeline.
 
 Multi-profile routing:
   /                    → redirect to default profile
   /p/{slug}/           → labeling page (profile-scoped)
-  /p/{slug}/dashboard  → dashboard
+  /p/{slug}/dashboard  → redirects to model (bookmark compatibility)
   /p/{slug}/top        → top entries
-  /p/{slug}/model      → model page
+  /p/{slug}/model      → model overview + profile actions
   /p/{slug}/settings   → profile-specific settings
   /profiles            → redirect to Settings → Profiles section
   /about               → global
@@ -613,22 +613,10 @@ async def api_profile_entries(slug: str, source: str = "all", limit: int = 500):
     return {"entries": entries, "profile_slug": slug}
 
 
-@app.get("/p/{slug}/dashboard", response_class=HTMLResponse)
-async def dashboard_page(request: Request, slug: str):
-    profile = _get_profile_or_404(slug)
-    profile_id = profile["id"]
-    ctx = _base_context(request, profile)
-    ctx["models"] = db.get_all_models(profile_id)
-    ctx["syncs"] = db.get_recent_syncs(20, profile_id=profile_id)
-    ctx["legal_patterns"] = _extract_legal_patterns(profile_id=profile_id)
-    ctx["keywords"] = {}
-    if ctx["active_model"]:
-        try:
-            kw = explainer.global_keywords(limit=30, profile_id=profile_id)
-            ctx["keywords"] = kw
-        except Exception as e:
-            logger.warning("Failed to load dashboard keywords: %s", e)
-    return templates.TemplateResponse("dashboard.html", ctx)
+@app.get("/p/{slug}/dashboard")
+async def dashboard_page(slug: str):
+    """Old path: overview is now the Model page."""
+    return RedirectResponse("/p/{}/model".format(slug), status_code=302)
 
 
 @app.get("/p/{slug}/top", response_class=HTMLResponse)
@@ -723,8 +711,18 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
 @app.get("/p/{slug}/model", response_class=HTMLResponse)
 async def model_page(request: Request, slug: str):
     profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
     ctx = _base_context(request, profile)
-    ctx["models"] = db.get_all_models(profile["id"])
+    ctx["models"] = db.get_all_models(profile_id)
+    ctx["syncs"] = db.get_recent_syncs(20, profile_id=profile_id)
+    ctx["legal_patterns"] = _extract_legal_patterns(profile_id=profile_id)
+    ctx["keywords"] = {}
+    if ctx["active_model"]:
+        try:
+            kw = explainer.global_keywords(limit=30, profile_id=profile_id)
+            ctx["keywords"] = kw
+        except Exception as e:
+            logger.warning("Failed to load model page keywords: %s", e)
     return templates.TemplateResponse("model.html", ctx)
 
 

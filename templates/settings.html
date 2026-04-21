@@ -138,6 +138,26 @@
     </div>
     {% endif %}
 
+    <!-- Import .magnitu into active profile -->
+    {% if profile %}
+    <div class="dashboard-section" id="importPackage">
+        <h2>Import package</h2>
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+            Merge a <code>.magnitu</code> snapshot into <strong>{{ profile.display_name }}</strong> (labels, classifier, recipe). Use the first-run <a href="/setup">setup</a> flow to create a profile from a file instead.
+        </p>
+        <div class="settings-form">
+            <div class="form-group">
+                <label>Snapshot file</label>
+                <input type="file" id="importMagnituFile" accept=".magnitu,.zip">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-primary" id="importMagnituBtn">Import into this profile</button>
+                <span id="importMagnituStatus" style="font-size: 13px;"></span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Global Mothership Connection -->
     <div class="dashboard-section">
         <h2>Mothership Connection <span style="font-size:12px; color:#888; font-weight:normal;">(global)</span></h2>
@@ -562,6 +582,52 @@
                 }
             })
             .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+        });
+    }
+
+    // Import .magnitu into current profile (Settings → Import package)
+    var impBtn = document.getElementById('importMagnituBtn');
+    if (impBtn && slug) {
+        impBtn.addEventListener('click', function() {
+            var fileEl = document.getElementById('importMagnituFile');
+            var status = document.getElementById('importMagnituStatus');
+            if (!fileEl || !fileEl.files.length) {
+                flash('Select a .magnitu file.', 'error');
+                return;
+            }
+            var formData = new FormData();
+            formData.append('file', fileEl.files[0]);
+            impBtn.disabled = true;
+            impBtn.textContent = 'Importing…';
+            status.textContent = '';
+            fetch('/p/' + slug + '/api/model/import', { method: 'POST', body: formData })
+                .then(function(r) {
+                    return r.text().then(function(t) {
+                        var d = {};
+                        try { d = JSON.parse(t); } catch (e) { d = { error: t || ('HTTP ' + r.status) }; }
+                        return { ok: r.ok, data: d };
+                    });
+                })
+                .then(function(o) {
+                    impBtn.disabled = false;
+                    impBtn.textContent = 'Import into this profile';
+                    if (o.ok && o.data.success) {
+                        flash(o.data.message || 'Import completed.', 'success');
+                        status.textContent = '';
+                        fileEl.value = '';
+                        setTimeout(function() { window.location.reload(); }, 900);
+                    } else {
+                        var msg = (o.data && (o.data.error || o.data.detail)) || 'Import failed.';
+                        flash(msg, 'error');
+                        status.textContent = '';
+                    }
+                })
+                .catch(function(err) {
+                    impBtn.disabled = false;
+                    impBtn.textContent = 'Import into this profile';
+                    flash('Error: ' + err.message, 'error');
+                    status.textContent = '';
+                });
         });
     }
 })();

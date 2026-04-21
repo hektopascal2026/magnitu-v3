@@ -2,154 +2,265 @@
 {% block title %}Model — Magnitu{% endblock %}
 
 {% block content %}
-<div class="dashboard-section">
-    <h2>Model Profile</h2>
+<!-- ─── Overview (metrics, distribution, explainability, history, sync) ─── -->
 
-    {% if profile %}
-    <!-- Model Identity -->
+<div class="dashboard-section">
+    <h2>Model Status</h2>
+    {% if active_model %}
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">v{{ active_model.version }}</div>
+                <div class="stat-label">Model Version</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ (active_model.accuracy * 100) | round(1) }}%</div>
+                <div class="stat-label">Accuracy</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ (active_model.f1_score * 100) | round(1) }}%</div>
+                <div class="stat-label">F1 Score</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ active_model.label_count }}</div>
+                <div class="stat-label">Labels Used (train)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ label_count }}</div>
+                <div class="stat-label">Labels Total</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ active_model.feature_count }}</div>
+                <div class="stat-label">{% if active_model.architecture == 'transformer' %}Embedding Dim{% else %}Features{% endif %}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">
+                    {% if active_model.architecture == 'transformer' %}
+                        <span class="arch-badge arch-transformer" style="font-size: 12px;">transformer</span>
+                    {% else %}
+                        <span class="arch-badge arch-tfidf" style="font-size: 12px;">tf-idf</span>
+                    {% endif %}
+                </div>
+                <div class="stat-label">Architecture</div>
+            </div>
+        </div>
+        {% if architecture == 'transformer' %}
+        <div style="margin-top: 12px; font-size: 12px; color: #666;">
+            Embeddings: {{ embedding_count }} / {{ entry_count }} entries
+            {% if embedding_count < entry_count %}
+                — <button class="btn" style="padding: 2px 8px; font-size: 11px;" id="computeEmbBtn">Compute missing</button>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% else %}
+        <div class="empty-state">
+            <p>No model trained yet. Label at least {{ config.min_labels_to_train or 20 }} entries, then train.</p>
+        </div>
+    {% endif %}
+</div>
+
+<div class="dashboard-section">
+    <h2>Label Distribution</h2>
+    {% if label_distribution %}
+        <div class="label-dist-chart">
+            {% set total = label_distribution.values() | sum %}
+            {% for label, count in label_distribution.items() %}
+                <div class="dist-row">
+                    <span class="dist-label label-{{ label }}">{{ label | replace('_', ' ') }}</span>
+                    <div class="dist-bar-container">
+                        <div class="dist-bar dist-bar-{{ label }}" style="width: {{ (count / total * 100) | round(1) }}%"></div>
+                    </div>
+                    <span class="dist-count">{{ count }} ({{ (count / total * 100) | round(0) }}%)</span>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-state"><p>No labels yet.</p></div>
+    {% endif %}
+</div>
+
+<div class="dashboard-section">
+    <h2>Top Keywords</h2>
+    {% if keywords %}
+        <div class="keywords-grid">
+            {% for cls, pairs in keywords.items() %}
+                <div class="keyword-class">
+                    <h3 class="label-{{ cls }}">{{ cls | replace('_', ' ') }}</h3>
+                    <table class="keyword-table">
+                        <thead><tr><th>Keyword</th><th>Weight</th></tr></thead>
+                        <tbody>
+                            {% for keyword, weight in pairs[:20] %}
+                                <tr>
+                                    <td class="kw-name">{{ keyword }}</td>
+                                    <td class="kw-weight {% if weight > 0 %}kw-positive{% else %}kw-negative{% endif %}">
+                                        {{ "%.3f" | format(weight) }}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-state"><p>Train a model to see learned keywords.</p></div>
+    {% endif %}
+</div>
+
+<div class="dashboard-section">
+    <h2>Learned Legal Patterns</h2>
+    {% if legal_patterns and (legal_patterns.positive or legal_patterns.negative) %}
+        <div class="legal-patterns-grid">
+            <div class="legal-pattern-column">
+                <h3>Swiss-Impact Signals</h3>
+                <div class="legal-pattern-list">
+                    {% for phrase, weight in legal_patterns.positive %}
+                        <div class="legal-pattern-item legal-pattern-positive">
+                            <span class="legal-pattern-text">{{ phrase }}</span>
+                            <span class="legal-pattern-weight">+{{ "%.3f" | format(weight) }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="legal-pattern-column">
+                <h3>Procedural / Noise Signals</h3>
+                <div class="legal-pattern-list">
+                    {% for phrase, weight in legal_patterns.negative %}
+                        <div class="legal-pattern-item legal-pattern-negative">
+                            <span class="legal-pattern-text">{{ phrase }}</span>
+                            <span class="legal-pattern-weight">+{{ "%.3f" | format(weight) }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        <p style="margin-top: 10px; font-size: 12px; color: #666;">
+            These are phrase-level patterns from the active recipe. They are used by Seismo's keyword scorer and
+            are especially important for legal text where single words are often too generic.
+        </p>
+    {% else %}
+        <div class="empty-state"><p>Train and push a model to see learned legal phrase patterns.</p></div>
+    {% endif %}
+</div>
+
+<div class="dashboard-section">
+    <h2>Training History</h2>
+    {% if models %}
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Version</th>
+                    <th>Accuracy</th>
+                    <th>F1</th>
+                    <th>Labels</th>
+                    <th>Features</th>
+                    <th>Trained</th>
+                    <th>Active</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in models %}
+                    <tr class="{% if m.is_active %}active-model{% endif %}">
+                        <td>v{{ m.version }}</td>
+                        <td>{{ (m.accuracy * 100) | round(1) }}%</td>
+                        <td>{{ (m.f1_score * 100) | round(1) }}%</td>
+                        <td>{{ m.label_count }}</td>
+                        <td>{{ m.feature_count }}</td>
+                        <td>{{ m.trained_at[:16] if m.trained_at else '' }}</td>
+                        <td>{% if m.is_active %}Active{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="empty-state"><p>No models trained yet.</p></div>
+    {% endif %}
+</div>
+
+<div class="dashboard-section">
+    <h2>Sync Log</h2>
+    {% if syncs %}
+        <table class="history-table">
+            <thead><tr><th>Direction</th><th>Items</th><th>Details</th><th>Time</th></tr></thead>
+            <tbody>
+                {% for s in syncs %}
+                    <tr>
+                        <td><span class="sync-dir sync-{{ s.direction }}">{{ s.direction }}</span></td>
+                        <td>{{ s.items_count }}</td>
+                        <td>{{ s.details }}</td>
+                        <td>{{ s.synced_at[:16] if s.synced_at else '' }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="empty-state"><p>No syncs yet.</p></div>
+    {% endif %}
+</div>
+
+<!-- ─── Actions: identity, export, fork ─── -->
+{% if profile %}
+<div class="dashboard-section">
+    <h2>Profile &amp; packages</h2>
+    <p style="color:#666;font-size:13px;margin-bottom:16px;">Update how this profile is described, export a shareable snapshot, or fork a new package ID.</p>
+
     <div style="padding: 16px; border: 2px solid #000000; background: #fafafa; margin-bottom: 16px;">
+        <h3 style="margin-bottom: 10px; font-size: 15px;">Description</h3>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
             <div class="form-group">
-                <label style="font-size: 12px; font-weight: 600;">Model Name (fixed)</label>
+                <label style="font-size: 12px; font-weight: 600;">Profile name (read-only)</label>
                 <input type="text" value="{{ profile.display_name }}" readonly
-                       style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box; background: #f5f5f5; cursor: default;">
+                       style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box; background: #f5f5f5;">
             </div>
             <div class="form-group">
-                <label style="font-size: 12px; font-weight: 600;">UUID (read-only)</label>
+                <label style="font-size: 12px; font-weight: 600;">UUID</label>
                 <input type="text" value="{{ profile.model_uuid }}" readonly
-                       style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: monospace; font-size: 12px; background: #f5f5f5; box-sizing: border-box; cursor: pointer;"
+                       style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: monospace; font-size: 12px; background: #f5f5f5; cursor: pointer;"
                        onclick="this.select(); document.execCommand('copy');" title="Click to copy">
             </div>
         </div>
         <div class="form-group" style="margin-bottom: 12px;">
             <label style="font-size: 12px; font-weight: 600;">Description</label>
             <input type="text" id="profileDesc" value="{{ profile.description or '' }}"
-                   placeholder="Short description of what this model is trained to detect"
+                   placeholder="What this profile is trained to prioritise"
                    style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box;">
         </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="btn btn-primary" id="saveProfileBtn">Save Changes</button>
-            <span style="font-size: 12px; color: #000000;">Created: {{ profile.created_at[:10] if profile.created_at else 'Unknown' }}</span>
-        </div>
+        <button class="btn btn-primary" id="saveProfileBtn">Save description</button>
+        <span style="font-size: 12px; color: #666; margin-left: 10px;">Created {{ profile.created_at[:10] if profile.created_at else '—' }}</span>
     </div>
 
-    <!-- Current Metrics -->
-    {% if active_model %}
-    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px;">
-        <div class="stat-card">
-            <div class="stat-value">v{{ active_model.version }}</div>
-            <div class="stat-label">Version</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ "%.1f"|format(active_model.accuracy * 100) }}%</div>
-            <div class="stat-label">Accuracy</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ active_model.label_count }}</div>
-            <div class="stat-label">Labels Trained</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ label_count }}</div>
-            <div class="stat-label">Labels Total</div>
-        </div>
-    </div>
-    {% else %}
-    <div class="message message-info" style="margin-bottom: 16px;">No model trained yet. Label entries and train to get started.</div>
-    {% endif %}
-
-    <!-- Export / Import -->
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div style="padding: 16px; border: 2px solid #000000;">
             <h3 style="margin-bottom: 8px;">Export</h3>
             <p style="font-size: 12px; margin-bottom: 12px; line-height: 1.5;">
-                Download this model as a <code>.magnitu</code> file. Includes the trained classifier, its calibration metadata, all labels, and the recipe. Share it with colleagues so they can continue training.
+                Download this profile’s active model as a <code>.magnitu</code> file (classifier, calibration, labels, recipe).
             </p>
-            <button class="btn" id="exportBtn" {% if not active_model and label_count == 0 %}disabled title="Nothing to export yet"{% endif %}>
-                Download .magnitu
-            </button>
+            <button class="btn" id="exportBtn" {% if not active_model and label_count == 0 %}disabled title="Nothing to export yet"{% endif %}>Download .magnitu</button>
             <span id="exportStatus" style="font-size: 12px; margin-left: 8px;"></span>
         </div>
         <div style="padding: 16px; border: 2px solid #000000;">
-            <h3 style="margin-bottom: 8px;">Import</h3>
+            <h3 style="margin-bottom: 8px;">Fork</h3>
             <p style="font-size: 12px; margin-bottom: 12px; line-height: 1.5;">
-                Load a <code>.magnitu</code> file to merge labels. If the imported model is newer than yours, the trained model is loaded too. Otherwise, retrain after import.
+                Create a <strong>new</strong> package identity with the same weights and labels — for sharing or archival lineage.
             </p>
-            <form id="importForm" enctype="multipart/form-data" style="display: flex; gap: 8px; align-items: center;">
-                <input type="file" id="importFile" accept=".magnitu" style="font-size: 12px; flex: 1;">
-                <button type="submit" class="btn">Import</button>
-            </form>
-            <div id="importStatus" style="margin-top: 8px;"></div>
-        </div>
-    </div>
-
-    <!-- Export as New Model -->
-    <div style="padding: 16px; border: 2px solid #000000; margin-bottom: 16px;">
-        <h3 style="margin-bottom: 8px;">Export as New Model</h3>
-        <p style="font-size: 12px; margin-bottom: 12px; line-height: 1.5;">
-            Create a new, independent model based on this one. All labels and the trained model are included.
-            The new model's metadata will permanently record that it was based on <strong>{{ profile.display_name }}</strong>.
-        </p>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div>
-                <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">New Model Name</label>
-                <input type="text" id="forkName" placeholder="e.g. pascal2"
-                       style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                <div>
+                    <label style="font-size: 11px; font-weight: 600; display: block; margin-bottom: 4px;">New package name</label>
+                    <input type="text" id="forkName" placeholder="e.g. pascal2"
+                           style="width: 100%; padding: 6px 8px; border: 2px solid #000000; font-size: 13px; box-sizing: border-box;">
+                </div>
+                <div>
+                    <label style="font-size: 11px; font-weight: 600; display: block; margin-bottom: 4px;">Description</label>
+                    <input type="text" id="forkDesc" placeholder="Focus of the fork"
+                           style="width: 100%; padding: 6px 8px; border: 2px solid #000000; font-size: 13px; box-sizing: border-box;">
+                </div>
             </div>
-            <div>
-                <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Description</label>
-                <input type="text" id="forkDesc" placeholder="What will this model focus on?"
-                       style="width: 100%; padding: 8px 10px; border: 2px solid #000000; font-family: inherit; font-size: 14px; box-sizing: border-box;">
-            </div>
+            <button class="btn" id="forkBtn" {% if not active_model and label_count == 0 %}disabled title="Nothing to fork yet"{% endif %}>Create fork &amp; download</button>
+            <span id="forkStatus" style="font-size: 12px; margin-left: 8px;"></span>
+            <p style="font-size: 11px; color: #666; margin-top: 8px;">Based on {{ profile.display_name }} — lineage is stored in the file.</p>
         </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="btn" id="forkBtn" {% if not active_model and label_count == 0 %}disabled title="Nothing to export yet"{% endif %}>
-                Create &amp; Download .magnitu
-            </button>
-            <span id="forkStatus" style="font-size: 12px;"></span>
-        </div>
-        <p style="font-size: 11px; color: #666; margin-top: 8px;">
-            Based on: <strong>{{ profile.display_name }}</strong> ({{ profile.model_uuid[:8] }}…) — this lineage cannot be removed from the exported file.
-        </p>
     </div>
-
-    <!-- Version History -->
-    {% if models %}
-    <div style="padding: 16px; border: 2px solid #000000;">
-        <h3 style="margin-bottom: 12px;">Version History</h3>
-        <table class="history-table" style="width: 100%;">
-            <thead>
-                <tr>
-                    <th>Version</th>
-                    <th>Trained</th>
-                    <th>Labels</th>
-                    <th>Accuracy</th>
-                    <th>F1</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for m in models %}
-                <tr class="{% if m.is_active %}active-model{% endif %}">
-                    <td>v{{ m.version }}</td>
-                    <td>{{ m.trained_at[:16] if m.trained_at else '' }}</td>
-                    <td>{{ m.label_count }}</td>
-                    <td>{{ "%.1f"|format(m.accuracy * 100) }}%</td>
-                    <td>{{ "%.2f"|format(m.f1_score) }}</td>
-                    <td>{% if m.is_active %}<strong>Active</strong>{% else %}&mdash;{% endif %}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% else %}
-    <div class="empty-state">
-        <p>No model profile configured.</p>
-        <p style="margin-top: 8px;"><a href="/setup" class="btn btn-primary">Set up a model</a></p>
-    </div>
-    {% endif %}
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -157,38 +268,67 @@
 (function() {
     var SLUG = '{{ profile.slug if profile else "" }}';
     var P = SLUG ? '/p/' + SLUG : '';
-    /* Save profile */
+
+    var embBtn = document.getElementById('computeEmbBtn');
+    if (embBtn) {
+        embBtn.addEventListener('click', function() {
+            embBtn.disabled = true;
+            embBtn.textContent = 'Computing...';
+            fetch('/api/embeddings/compute', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    flash('Embeddings computed: ' + data.embedding_count + '/' + data.entry_count, 'success');
+                    setTimeout(function() { location.reload(); }, 1500);
+                } else {
+                    flash(data.error || 'Failed.', 'error');
+                    embBtn.disabled = false;
+                    embBtn.textContent = 'Compute missing';
+                }
+            })
+            .catch(function(err) {
+                flash('Error: ' + err.message, 'error');
+                embBtn.disabled = false;
+                embBtn.textContent = 'Compute missing';
+            });
+        });
+    }
+
     var saveBtn = document.getElementById('saveProfileBtn');
     if (saveBtn) {
         saveBtn.addEventListener('click', function() {
-            var data = {
-                description: document.getElementById('profileDesc').value.trim(),
-            };
             fetch(P + '/api/model/update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
+                body: JSON.stringify({ description: document.getElementById('profileDesc').value.trim() }),
             })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d.success) flash('Profile saved.', 'success');
+                if (d.success) flash('Saved.', 'success');
                 else flash(d.error || 'Failed.', 'error');
             })
             .catch(function(err) { flash('Error: ' + err.message, 'error'); });
         });
     }
 
-    /* Export */
     var exportBtn = document.getElementById('exportBtn');
     if (exportBtn) {
         exportBtn.addEventListener('click', function() {
             var status = document.getElementById('exportStatus');
             status.textContent = 'Preparing...';
             exportBtn.disabled = true;
-
             fetch(P + '/api/model/export')
             .then(function(r) {
-                if (!r.ok) throw new Error('Export failed');
+                if (!r.ok) {
+                    return r.text().then(function(t) {
+                        var msg = 'Export failed';
+                        try {
+                            var d = JSON.parse(t);
+                            msg = d.detail || d.error || msg;
+                        } catch (ignored) {}
+                        throw new Error(msg);
+                    });
+                }
                 var filename = 'model.magnitu';
                 var cd = r.headers.get('Content-Disposition');
                 if (cd) {
@@ -213,24 +353,31 @@
         });
     }
 
-    /* Fork (Export as New Model) */
     var forkBtn = document.getElementById('forkBtn');
     if (forkBtn) {
         forkBtn.addEventListener('click', function() {
             var name = document.getElementById('forkName').value.trim();
             var desc = document.getElementById('forkDesc').value.trim();
             var status = document.getElementById('forkStatus');
-            if (!name) { flash('Enter a name for the new model.', 'error'); return; }
+            if (!name) { flash('Enter a name for the fork.', 'error'); return; }
             status.textContent = 'Preparing...';
             forkBtn.disabled = true;
-
             fetch(P + '/api/model/fork', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name, description: desc }),
             })
             .then(function(r) {
-                if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'Failed'); });
+                if (!r.ok) {
+                    return r.text().then(function(t) {
+                        var msg = 'Fork failed';
+                        try {
+                            var d = JSON.parse(t);
+                            msg = d.detail || d.error || msg;
+                        } catch (ignored) {}
+                        throw new Error(msg);
+                    });
+                }
                 var filename = name.replace(/\s+/g, '_').toLowerCase() + '.magnitu';
                 var cd = r.headers.get('Content-Disposition');
                 if (cd) {
@@ -251,51 +398,6 @@
             .catch(function(err) {
                 status.textContent = 'Error: ' + err.message;
                 forkBtn.disabled = false;
-            });
-        });
-    }
-
-    /* Import */
-    var importForm = document.getElementById('importForm');
-    if (importForm) {
-        importForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            var fileInput = document.getElementById('importFile');
-            if (!fileInput.files.length) { flash('Select a .magnitu file.', 'error'); return; }
-
-            var formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-
-            var status = document.getElementById('importStatus');
-            var btn = importForm.querySelector('button[type="submit"]');
-            btn.disabled = true;
-            btn.textContent = 'Importing...';
-            status.innerHTML = '<span class="message message-info" style="display:inline-block; padding:4px 10px;">Importing — this may take a moment...</span>';
-
-            fetch(P + '/api/model/import', { method: 'POST', body: formData })
-            .then(function(r) {
-                if (!r.ok) {
-                    return r.text().then(function(t) {
-                        try { var d = JSON.parse(t); throw new Error(d.detail || d.error || 'Server error ' + r.status); }
-                        catch(e) { if (e.message.indexOf('Server error') === 0) throw e; throw new Error('Server error ' + r.status); }
-                    });
-                }
-                return r.json();
-            })
-            .then(function(d) {
-                if (d.success) {
-                    status.innerHTML = '<span class="message message-success" style="display:inline-block; padding:4px 10px;">' + (d.message || 'Imported.') + '</span>';
-                    setTimeout(function() { location.reload(); }, 2000);
-                } else {
-                    status.innerHTML = '<span class="message message-error" style="display:inline-block; padding:4px 10px;">' + (d.error || 'Failed.') + '</span>';
-                    btn.disabled = false;
-                    btn.textContent = 'Import';
-                }
-            })
-            .catch(function(err) {
-                status.innerHTML = '<span class="message message-error" style="display:inline-block; padding:4px 10px;">Error: ' + err.message + '</span>';
-                btn.disabled = false;
-                btn.textContent = 'Import';
             });
         });
     }

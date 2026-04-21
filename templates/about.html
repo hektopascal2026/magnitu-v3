@@ -145,7 +145,7 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Recipe Top Keywords <em>(default 200)</em></span>
-                <span class="about-detail-value">How many words and phrases the recipe pushed to Seismo contains. <strong>More = broader coverage</strong>, but the recipe grows and low-weight terms start adding noise to Seismo's live score. <strong>Fewer = crisper, more focused recipe</strong>, but niche terminology may fall below the cutoff. Sweet spot is 150–300 for ~500 labels, 200–400 once you're past 1000 labels. Below 80 feels thin; above 600 is mostly noise. Use the <em>Learned Legal Patterns</em> panel on the Dashboard as a sanity check: if the weakest phrases still look meaningful, you can raise the cap; if they look like filler, lower it.</span>
+                <span class="about-detail-value">How many words and phrases the recipe pushed to Seismo contains. <strong>More = broader coverage</strong>, but the recipe grows and low-weight terms start adding noise to Seismo's live score. <strong>Fewer = crisper, more focused recipe</strong>, but niche terminology may fall below the cutoff. Sweet spot is 150–300 for ~500 labels, 200–400 once you're past 1000 labels. Below 80 feels thin; above 600 is mostly noise. Use the <em>Learned Legal Patterns</em> panel on the Model page as a sanity check: if the weakest phrases still look meaningful, you can raise the cap; if they look like filler, lower it.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Alert Threshold <em>(default 0.75)</em></span>
@@ -213,7 +213,7 @@
         <p>Good patterns are phrases that consistently appear in investigation-worthy legal content and <em>don't</em> appear in procedural boilerplate. A structured way to find them:</p>
         <ol>
             <li><strong>Start with Top-30 filtered to Legislation.</strong> Look at the highest-scoring lex items you agree with. Note recurring phrases — exclusion language ("Drittstaaten", "third country"), sector triggers ("Marktüberwachung", "Konformitätsbewertung"), scope markers ("EU/EWR", "Binnenmarkt").</li>
-            <li><strong>Cross-check the Dashboard's <em>Learned Legal Patterns</em>.</strong> These are phrases the model has already figured out on its own. High-ranked positive signals are strong candidates to lock in explicitly via the legal-signal list, so they survive across retrains even if the label mix shifts.</li>
+            <li><strong>Cross-check the Model page's <em>Learned Legal Patterns</em>.</strong> These are phrases the model has already figured out on its own. High-ranked positive signals are strong candidates to lock in explicitly via the legal-signal list, so they survive across retrains even if the label mix shifts.</li>
             <li><strong>Scan low-scoring legislation you think <em>should</em> score higher.</strong> What phrases are present there that the model is currently missing? Those are the gaps the signal list can fill.</li>
             <li><strong>Add 5 obvious ones first.</strong> Train, push, observe the Top-30 for a sync cycle. If the next round still looks right, add a handful more. If scoring starts skewing oddly, remove the last addition — each new pattern diverts attention from the others.</li>
             <li><strong>Avoid generic words.</strong> "Gesetz" or "Regulation" will match everything and teach the model nothing. Stick to phrases that distinguish signal from noise.</li>
@@ -493,8 +493,8 @@
     </div>
 
     <div class="about-section">
-        <h3>Dashboard Phrase Signals</h3>
-        <p>The Dashboard now shows a <strong>Learned Legal Patterns</strong> panel with positive Swiss-impact signals and procedural/noise signals from the active recipe. Use it as a quick sanity check after training and push: if the patterns look off, label a few counterexamples and retrain.</p>
+        <h3>Model page phrase signals</h3>
+        <p>The Model page shows a <strong>Learned Legal Patterns</strong> panel with positive Swiss-impact signals and procedural/noise signals from the active recipe. Use it as a quick sanity check after training and push: if the patterns look off, label a few counterexamples and retrain.</p>
     </div>
 </div>
 
@@ -550,7 +550,7 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">What you can do</span>
-                <span class="about-detail-value">Check the label distribution on the Dashboard. If one class has very few labels, focus your next labeling session on it. The smart labeling queue's "diverse" strategy also helps by surfacing underrepresented entries.</span>
+                <span class="about-detail-value">Check the label distribution on the Model page. If one class has very few labels, focus your next labeling session on it. The smart labeling queue's "diverse" strategy also helps by surfacing underrepresented entries.</span>
             </div>
         </div>
     </div>
@@ -813,7 +813,7 @@
             <strong>Don't skip the "boring" ones.</strong> Labeling Noise and Background entries is just as valuable as labeling Investigation Leads — the model needs to know what to filter out.
         </div>
         <div class="about-tip">
-            <strong>Check the Dashboard.</strong> Watch accuracy and F1 score climb across model versions. If a class has very few labels, focus your next session on it.
+            <strong>Check the Model page.</strong> Watch accuracy and F1 score climb across model versions. If a class has very few labels, focus your next session on it.
         </div>
         <div class="about-tip">
             <strong>Use the Legislation filter.</strong> In Magnitu Mini or on the main Label page, switch to "Legislation" to label only Lex items. Write reasoning notes explaining the Swiss angle — the model can't see it in the legal text alone.
