@@ -244,7 +244,19 @@
                 <div class="form-group">
                     <label>Recipe Top Keywords</label>
                     <input type="number" id="recipeKeywords" value="{{ config.recipe_top_keywords or 200 }}" min="50" max="1000">
-                    <div class="form-help">How many keywords to include in the recipe exported to Seismo</div>
+                    <div class="form-help">
+                        How many keywords to include in the recipe exported to Seismo
+                        (<strong>stored per profile</strong> once you save; new profiles inherit global defaults until changed).
+                        With <strong>{{ label_count }}</strong> labels in this profile, a reasonable heuristic is
+                        <strong>~{{ recipe_top_keywords_suggested }}</strong>
+                        (scales from 200 toward 400 as you approach ~{{ RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX }} labels).
+                        {% if recipe_top_keywords_bump_hint %}
+                        <span style="display:block; margin-top:6px; color:#664d00;">
+                            Your current value is below that suggestion — consider bumping toward
+                            <strong>{{ recipe_top_keywords_suggested }}</strong> if the weakest phrases on the Model page still look meaningful.
+                        </span>
+                        {% endif %}
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Alert Threshold (0.0 – 1.0)</label>
@@ -299,6 +311,7 @@
                     as <code>signals=…</code> so the transformer treats it as emphasized context, and the phrase is
                     boosted in the distilled recipe for <em>investigation_lead</em>.
                     Changing this list will clear all cached embeddings — next sync re-embeds.
+                    <strong>Shared across all profiles</strong> (embeddings are global).
                 </div>
             </div>
             <div class="form-actions">
@@ -329,6 +342,7 @@
 <script>
 (function() {
     var slug = '{{ profile.slug if profile else "" }}';
+    var trainingProfileId = {% if profile %}{{ profile.id }}{% else %}null{% endif %};
 
     function scrollToProfilesSection() {
         var el = document.getElementById('profiles');
@@ -580,6 +594,9 @@
             alert_threshold: parseFloat(document.getElementById('alertThreshold').value),
             discovery_lead_blend: parseFloat(document.getElementById('discoveryLeadBlend').value),
         };
+        if (trainingProfileId !== null) {
+            data.profile_id = trainingProfileId;
+        }
         fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -607,6 +624,9 @@
                 reasoning_weight_boost: parseFloat(document.getElementById('reasoningBoost').value),
                 legal_signal_patterns: patterns,
             };
+            if (trainingProfileId !== null) {
+                data.profile_id = trainingProfileId;
+            }
             fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

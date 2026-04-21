@@ -20,7 +20,7 @@ from typing import Optional
 import numpy as np
 
 import db
-from config import MODELS_DIR, get_config
+from config import MODELS_DIR, get_config  # get_config: global legal_signal_patterns only
 from pipeline import (
     load_active_model,
     get_feature_importance,
@@ -154,7 +154,7 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
 
     Returns the recipe dict, or None if no active model.
     """
-    config = get_config()
+    config = db.get_effective_config(profile_id)
     if top_n is None:
         top_n = config.get("recipe_top_keywords", 200)
 
@@ -195,7 +195,7 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
                 keywords[feature][cls] = round(float(weight), 4)
 
     # Boost keywords from user reasoning annotations
-    keywords = _boost_from_reasoning(keywords)
+    keywords = _boost_from_reasoning(keywords, profile_id=profile_id)
     # Add stable legal template phrases as prior signals for legislative text
     keywords = _boost_legal_templates(keywords)
 
@@ -394,14 +394,14 @@ def _distill_from_transformer(top_n: int, profile_id: int = 1) -> dict:
     return result
 
 
-def _boost_from_reasoning(keywords: dict) -> dict:
+def _boost_from_reasoning(keywords: dict, profile_id: int = 1) -> dict:
     """
     Extract key phrases from user reasoning annotations and boost their
     weights in the recipe.  This ensures that explicitly-stated reasons
     ('links politician X to company Y') increase the recipe's sensitivity
     to those terms.
     """
-    reasoning_labels = db.get_all_reasoning_texts(profile_id=1)  # reasoning boosts are global
+    reasoning_labels = db.get_all_reasoning_texts(profile_id=profile_id)
     if not reasoning_labels:
         return keywords
 

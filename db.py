@@ -152,6 +152,12 @@ def _migrate_db(conn: sqlite3.Connection):
     if "accent_color" not in prof_cols:
         conn.execute("ALTER TABLE profiles ADD COLUMN accent_color TEXT")
 
+    prof_cols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
+    if "training_settings" not in prof_cols:
+        conn.execute(
+            "ALTER TABLE profiles ADD COLUMN training_settings TEXT DEFAULT '{}'"
+        )
+
     conn.commit()
 
 
@@ -276,6 +282,97 @@ def get_profile_by_slug(slug: str) -> Optional[dict]:
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def _normalize_training_settings_dict(d: dict) -> None:
+    """Clamp per-profile training overrides to valid ranges (mutates in place)."""
+    if "discovery_lead_blend" in d:
+        try:
+            b = float(d.get("discovery_lead_blend", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            b = 0.0
+        d["discovery_lead_blend"] = max(0.0, min(0.25, b))
+    if "label_time_decay_days" in d:
+        try:
+            hl = int(float(d.get("label_time_decay_days", 0) or 0))
+        except (TypeError, ValueError):
+            hl = 0
+        d["label_time_decay_days"] = max(0, min(3650, hl))
+    if "label_time_decay_floor" in d:
+        try:
+            fl = float(d.get("label_time_decay_floor", 0.2) or 0.0)
+        except (TypeError, ValueError):
+            fl = 0.2
+        d["label_time_decay_floor"] = max(0.0, min(1.0, fl))
+    if "reasoning_weight_boost" in d:
+        try:
+            rb = float(d.get("reasoning_weight_boost", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            rb = 1.0
+        d["reasoning_weight_boost"] = max(0.0, min(5.0, rb))
+    if "min_labels_to_train" in d:
+        try:
+            d["min_labels_to_train"] = max(5, min(500, int(d["min_labels_to_train"])))
+        except (TypeError, ValueError):
+            d["min_labels_to_train"] = 20
+    if "recipe_top_keywords" in d:
+        try:
+            d["recipe_top_keywords"] = max(50, min(1000, int(d["recipe_top_keywords"])))
+        except (TypeError, ValueError):
+            d["recipe_top_keywords"] = 200
+    if "auto_train_after_n_labels" in d:
+        try:
+            d["auto_train_after_n_labels"] = max(1, int(d["auto_train_after_n_labels"]))
+        except (TypeError, ValueError):
+            d["auto_train_after_n_labels"] = 10
+    if "alert_threshold" in d:
+        try:
+            at = float(d.get("alert_threshold", 0.75) or 0.75)
+        except (TypeError, ValueError):
+            at = 0.75
+        d["alert_threshold"] = max(0.0, min(1.0, at))
+
+
+def get_profile_training_settings(profile_id: int) -> dict:
+    """Per-profile training overrides (merged over global config)."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT training_settings FROM profiles WHERE id = ?", (profile_id,)
+    ).fetchone()
+    conn.close()
+    if not row or row[0] is None or str(row[0]).strip() == "":
+        return {}
+    try:
+        raw = json.loads(row[0])
+        return raw if isinstance(raw, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def merge_profile_training_settings(profile_id: int, partial: dict) -> None:
+    """Merge ``partial`` into stored training_settings and persist."""
+    current = get_profile_training_settings(profile_id)
+    current.update(partial)
+    _normalize_training_settings_dict(current)
+    conn = get_db()
+    conn.execute(
+        "UPDATE profiles SET training_settings = ? WHERE id = ?",
+        (json.dumps(current, ensure_ascii=False), profile_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_effective_config(profile_id: int) -> dict:
+    """Global magnitu_config merged with this profile's training_settings."""
+    from config import get_config, PROFILE_TRAINING_SETTINGS_KEYS
+    base = get_config()
+    overrides = get_profile_training_settings(profile_id)
+    out = dict(base)
+    for k in PROFILE_TRAINING_SETTINGS_KEYS:
+        if k in overrides:
+            out[k] = overrides[k]
+    return out
 
 
 def get_default_profile() -> Optional[dict]:

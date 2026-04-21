@@ -49,6 +49,43 @@ DEFAULTS = {
     "active_profile_id": None,
 }
 
+# Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).
+RECIPE_TOP_KEYWORDS_SUGGEST_MIN = 200
+RECIPE_TOP_KEYWORDS_SUGGEST_MAX = 400
+# At this many labels (or more), the suggestion reaches RECIPE_TOP_KEYWORDS_SUGGEST_MAX.
+RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX = 2000
+
+# Stored per profile in ``profiles.training_settings`` (JSON). Merged over global
+# ``magnitu_config.json`` via ``db.get_effective_config(profile_id)``.
+# Legal-signal patterns stay global (they are baked into shared embeddings).
+PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
+    "min_labels_to_train",
+    "recipe_top_keywords",
+    "auto_train_after_n_labels",
+    "alert_threshold",
+    "discovery_lead_blend",
+    "label_time_decay_days",
+    "label_time_decay_floor",
+    "reasoning_weight_boost",
+})
+
+
+def suggested_recipe_top_keywords(label_count: int) -> int:
+    """
+    Heuristic suggestion for recipe_top_keywords (how many terms the distiller
+    exports to the Seismo recipe). Scales linearly from RECIPE_TOP_KEYWORDS_SUGGEST_MIN
+    at zero labels to RECIPE_TOP_KEYWORDS_SUGGEST_MAX at RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX
+    labels, then stays capped. Used only for UI hints.
+    """
+    n = max(0, int(label_count))
+    t = min(1.0, float(n) / float(RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX))
+    return int(
+        round(
+            RECIPE_TOP_KEYWORDS_SUGGEST_MIN
+            + (RECIPE_TOP_KEYWORDS_SUGGEST_MAX - RECIPE_TOP_KEYWORDS_SUGGEST_MIN) * t
+        )
+    )
+
 
 def load_config() -> dict:
     """Load config from JSON file, merging with defaults."""

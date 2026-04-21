@@ -433,6 +433,17 @@ except Exception as e:
     fail(repr(e))
 
 
+try:
+    t("suggested_recipe_top_keywords heuristic")
+    assert config.suggested_recipe_top_keywords(0) == 200
+    assert config.suggested_recipe_top_keywords(config.RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX) == 400
+    assert config.suggested_recipe_top_keywords(1000) == 300
+    assert config.suggested_recipe_top_keywords(700) == 270
+    ok()
+except Exception as e:
+    fail(repr(e))
+
+
 print("\n" + "=" * 50)
 print("Results: {} passed, {} failed".format(PASS, FAIL))
 if ERRORS:

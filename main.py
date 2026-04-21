@@ -38,7 +38,16 @@ import sampler
 import model_manager
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
 from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent
-from config import get_config, save_config, BASE_DIR, VERSION, MODELS_DIR
+from config import (
+    get_config,
+    save_config,
+    BASE_DIR,
+    VERSION,
+    MODELS_DIR,
+    suggested_recipe_top_keywords,
+    RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX,
+    PROFILE_TRAINING_SETTINGS_KEYS,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -437,8 +446,8 @@ def _nav_profile_styles(all_profiles):
 
 def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
     """Common context for all templates. Profile-aware when a profile is given."""
-    config = get_config()
     profile_id = profile["id"] if profile else 1
+    config = db.get_effective_config(profile_id) if profile else get_config()
     active_model = db.get_active_model(profile_id)
     profile_accent_bg = ""
     profile_accent_fg = ""
@@ -808,6 +817,14 @@ async def settings_page(request: Request, slug: str):
         {**dict(p), "label_count": db.get_label_count(p["id"])}
         for p in db.get_all_profiles()
     ]
+    cfg = ctx["config"]
+    cur_kw = int(cfg.get("recipe_top_keywords") or 200)
+    sug_kw = suggested_recipe_top_keywords(ctx["label_count"])
+    ctx["recipe_top_keywords_suggested"] = sug_kw
+    ctx["recipe_top_keywords_bump_hint"] = (
+        ctx["label_count"] >= 250 and cur_kw < sug_kw - 5
+    )
+    ctx["RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX"] = RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX
     return templates.TemplateResponse("settings.html", ctx)
 
 
@@ -1390,21 +1407,44 @@ async def stats(slug: str):
 
 @app.post("/api/settings")
 async def update_settings(request: Request):
-    """Update global configuration (architecture, mothership URL, etc.)."""
+    """Update global configuration and/or per-profile training overrides."""
     data = await request.json()
     config = get_config()
     old_transformer_name = config.get("transformer_model_name", "")
     old_use_gpu = config.get("use_gpu", True)
     old_legal_patterns = list(config.get("legal_signal_patterns") or [])
 
-    for key in ["seismo_url", "api_key", "min_labels_to_train",
-                "recipe_top_keywords", "auto_train_after_n_labels", "alert_threshold",
-                "model_architecture", "transformer_model_name", "use_gpu",
-                "discovery_lead_blend",
-                "label_time_decay_days", "label_time_decay_floor",
-                "reasoning_weight_boost", "legal_signal_patterns"]:
+    pid = None
+    if data.get("profile_id") is not None:
+        try:
+            pid = int(data["profile_id"])
+        except (TypeError, ValueError):
+            pid = None
+        if pid is not None and not db.get_profile_by_id(pid):
+            pid = None
+
+    training_in_payload = {
+        k: data[k] for k in PROFILE_TRAINING_SETTINGS_KEYS if k in data
+    }
+    profile_training_saved = False
+    if pid is not None and training_in_payload:
+        db.merge_profile_training_settings(pid, training_in_payload)
+        profile_training_saved = True
+
+    # Always-global keys
+    for key in ["seismo_url", "api_key", "model_architecture",
+                "transformer_model_name", "use_gpu"]:
         if key in data:
             config[key] = data[key]
+
+    # Training keys: update global file only when not saved on a profile in this request
+    if not profile_training_saved:
+        for key in PROFILE_TRAINING_SETTINGS_KEYS:
+            if key in data:
+                config[key] = data[key]
+
+    if "legal_signal_patterns" in data:
+        config["legal_signal_patterns"] = data["legal_signal_patterns"]
 
     try:
         b = float(config.get("discovery_lead_blend", 0.0) or 0.0)
@@ -1456,7 +1496,8 @@ async def update_settings(request: Request):
     if config.get("use_gpu", True) != old_use_gpu:
         pipeline.release_embedder()
 
-    return {"success": True, "config": config}
+    out_cfg = db.get_effective_config(pid) if pid else get_config()
+    return {"success": True, "config": out_cfg}
 
 
 @app.post("/api/embeddings/compute")

@@ -227,12 +227,16 @@ def _relevance_from_probs(probs: Dict[str, float], class_names: List[str]) -> fl
     )
 
 
-def _discovery_adjusted_relevance(composite: float, p_lead: float) -> float:
+def _discovery_adjusted_relevance(composite: float, p_lead: float,
+                                   profile_id: Optional[int] = None) -> float:
     """
     Optional blend toward investigation_lead for discovery (config:
     discovery_lead_blend in [0, 0.25]).
     """
-    cfg = get_config()
+    if profile_id is not None:
+        cfg = db.get_effective_config(profile_id)
+    else:
+        cfg = get_config()
     blend = float(cfg.get("discovery_lead_blend", 0.0) or 0.0)
     blend = max(0.0, min(0.25, blend))
     if blend <= 0.0:
@@ -714,7 +718,7 @@ class _LabelDecodingClassifier:
 
 def _train_transformer(profile_id: int = 1) -> dict:
     """Train an MLP classifier on cached transformer embeddings for a profile."""
-    config = get_config()
+    config = db.get_effective_config(profile_id)
     min_labels = config.get("min_labels_to_train", 20)
     embedding_dim = config.get("embedding_dim", 768)
 
@@ -974,7 +978,8 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
         return []
 
     clf = joblib.load(model_path)
-    config = get_config()
+    pid = int(model_info.get("profile_id") or 1)
+    config = db.get_effective_config(pid)
     embedding_dim = config.get("embedding_dim", 768)
 
     # Batch-fetch all embeddings in one query
@@ -1043,7 +1048,7 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
         probs = dict(zip(class_names, probabilities[j].tolist()))
         composite = _relevance_from_probs(probs, class_names)
         p_lead = float(probs.get("investigation_lead", 0.0))
-        relevance = _discovery_adjusted_relevance(composite, p_lead)
+        relevance = _discovery_adjusted_relevance(composite, p_lead, profile_id=pid)
         pred_idx = int(np.argmax(probabilities[j]))
         predicted_label = class_names[pred_idx]
         results.append({
@@ -1063,7 +1068,7 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
 
 def _train_tfidf(profile_id: int = 1) -> dict:
     """Train using the original TF-IDF + LogReg pipeline for a profile."""
-    config = get_config()
+    config = db.get_effective_config(profile_id)
     min_labels = config.get("min_labels_to_train", 20)
 
     labeled = db.get_all_labels(profile_id)
@@ -1227,7 +1232,8 @@ def _score_tfidf(entries: List[dict], model_info: Optional[dict] = None) -> List
         model_info = db.get_active_model()
     if not model_info:
         return []
-    model = load_active_model(profile_id=model_info.get("profile_id", 1))
+    pid = int(model_info.get("profile_id") or 1)
+    model = load_active_model(profile_id=pid)
     if model is None:
         return []
     model_path = model_info.get("model_path") or ""
@@ -1240,7 +1246,7 @@ def _score_tfidf(entries: List[dict], model_info: Optional[dict] = None) -> List
         probs = dict(zip(class_names, probabilities[i].tolist()))
         composite = _relevance_from_probs(probs, class_names)
         p_lead = float(probs.get("investigation_lead", 0.0))
-        relevance = _discovery_adjusted_relevance(composite, p_lead)
+        relevance = _discovery_adjusted_relevance(composite, p_lead, profile_id=pid)
         pred_idx = int(np.argmax(probabilities[i]))
         predicted_label = class_names[pred_idx]
         results.append({
