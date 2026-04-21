@@ -38,6 +38,7 @@ import sampler
 import model_manager
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
 from magnitu.library_catalog import list_magnitu_library, safe_package_path
+from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent
 from config import get_config, save_config, BASE_DIR, VERSION, MODELS_DIR
 import logging
 
@@ -336,6 +337,13 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
     config = get_config()
     profile_id = profile["id"] if profile else 1
     active_model = db.get_active_model(profile_id)
+    profile_accent_bg = ""
+    profile_accent_fg = ""
+    if profile:
+        h = safe_accent_for_profile(profile.get("accent_color"))
+        if h:
+            profile_accent_bg = h
+            profile_accent_fg = contrast_text_on_accent(h)
     return {
         "request":           request,
         "config":            config,
@@ -348,6 +356,8 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         "all_profiles":      db.get_all_profiles(),
         "architecture":      config.get("model_architecture", "transformer"),
         "embedding_count":   db.get_embedding_count(),
+        "profile_accent_bg": profile_accent_bg,
+        "profile_accent_fg": profile_accent_fg,
     }
 
 
@@ -1048,9 +1058,10 @@ async def sync_labels(slug: str):
 async def sync_test(slug: str):
     profile = _get_profile_or_404(slug)
     target = sync._profile_target(profile)
-    ok, msg = sync.test_connection(seismo_target=target)
+    ok, msg, status_payload = sync.test_connection(seismo_target=target)
     if not ok:
         return {"success": False, "message": msg}
+    sync.maybe_profile_accent_from_status(status_payload, profile["id"])
     label_ok, label_msg = sync.verify_seismo_endpoints(seismo_target=target)
     if not label_ok:
         return {"success": True, "message": msg, "warning": label_msg}

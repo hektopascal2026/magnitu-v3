@@ -17,6 +17,8 @@ All requests go to seismo's `index.php` with `api_key` as a query parameter (`?a
 - `GET/POST ?action=magnitu_labels` — GET returns all labels; POST upserts labels (body: `{labels: [{entry_type, entry_id, label, reasoning, labeled_at}]}`)
 - `GET ?action=magnitu_status` — check connectivity + stats
 
+Optional backward-compatible field on the JSON response: **`accent_color`** — a string `#rrggbb` or `#rgb` (satellite branding). Magnitu ignores it if absent or invalid and keeps default UI chrome.
+
 ## Entry format received from seismo
 
 Each entry has: `entry_type` (feed_item|email|lex_item), `entry_id`, `title`, `description`, `content`, `link`, `author`, `published_date`, `source_name`, `source_category`, `source_type` (rss|substack|email|lex_eu|lex_ch).

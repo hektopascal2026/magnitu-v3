@@ -175,7 +175,7 @@ TEST_RESULT=$("$INSTALL_DIR/.venv/bin/python" -c "
 import sys
 sys.path.insert(0, '$INSTALL_DIR')
 import sync
-ok, msg = sync.test_connection()
+ok, msg, _ = sync.test_connection()
 print(msg)
 if not ok:
     sys.exit(1)

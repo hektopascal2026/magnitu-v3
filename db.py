@@ -148,6 +148,10 @@ def _migrate_db(conn: sqlite3.Connection):
             "ALTER TABLE models ADD COLUMN label_distribution TEXT DEFAULT '{}'"
         )
 
+    prof_cols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
+    if "accent_color" not in prof_cols:
+        conn.execute("ALTER TABLE profiles ADD COLUMN accent_color TEXT")
+
     conn.commit()
 
 
@@ -230,6 +234,7 @@ def init_db():
             seismo_url  TEXT    DEFAULT '',
             api_key     TEXT    DEFAULT '',
             model_uuid  TEXT    DEFAULT '',
+            accent_color TEXT   DEFAULT NULL,
             is_default  INTEGER DEFAULT 0,
             created_at  TEXT    DEFAULT (datetime('now'))
         );
@@ -308,6 +313,16 @@ def create_profile(slug: str, display_name: str, description: str = "",
     row = conn.execute("SELECT * FROM profiles WHERE id = ?", (profile_id,)).fetchone()
     conn.close()
     return dict(row)
+
+
+def set_profile_accent_color(profile_id: int, accent_hex: str) -> None:
+    """Persist validated #rrggbb from Seismo magnitu_status (best-effort)."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE profiles SET accent_color=? WHERE id=?", (accent_hex, profile_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 def update_profile(profile_id: int, display_name: Optional[str] = None,

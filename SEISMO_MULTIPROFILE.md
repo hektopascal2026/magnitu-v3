@@ -88,6 +88,8 @@ The lightweight Seismo instance needs to respond to the **same endpoints** as th
 | `?action=magnitu_labels` | GET/POST | GET all labels; POST upsert labels |
 | `?action=magnitu_status` | GET | Connectivity check + stats |
 
+Satellite builds may add an optional JSON field **`accent_color`** (`#rrggbb` or `#rgb`) on the `magnitu_status` response so Magnitu can tint the profile chip; omitting it keeps Magnitu's default styling.
+
 All requests include `?api_key=...` as a query parameter — the API key is the one configured for this lightweight instance.
 
 ---

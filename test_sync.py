@@ -460,6 +460,31 @@ except Exception as e:
 
 
 # ═══════════════════════════════════════════
+#  Optional magnitu_status.accent_color (Magnitu accent_theme)
+# ═══════════════════════════════════════════
+print("\n=== 7. Accent from magnitu_status ===")
+
+t = test("parse_accent_from_magnitu_status accepts #RRGGBB and #RGB")
+try:
+    from magnitu.accent_theme import (
+        parse_accent_from_magnitu_status,
+        parse_accent_hex_string,
+        contrast_text_on_accent,
+    )
+
+    assert parse_accent_from_magnitu_status({}) is None
+    assert parse_accent_from_magnitu_status({"accent_color": "#f0a"}) == "#ff00aa"
+    assert parse_accent_from_magnitu_status({"accent_color": "#F0A1B2"}) == "#f0a1b2"
+    assert parse_accent_from_magnitu_status({"accent_color": " red "}) is None
+    assert parse_accent_hex_string("#fff") == "#ffffff"
+    assert contrast_text_on_accent("#ffffff") == "#000000"
+    assert contrast_text_on_accent("#000000") == "#ffffff"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+# ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════
 print("\n" + "=" * 50)

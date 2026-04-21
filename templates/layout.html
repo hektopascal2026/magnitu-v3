@@ -18,7 +18,7 @@
                 <span class="profile-switcher">
                     {% for p in all_profiles %}
                         {% if profile and p.id == profile.id %}
-                            <span class="profile-pill profile-pill-active">{{ p.display_name }}</span>
+                            <span class="profile-pill profile-pill-active"{% if profile_accent_bg %} style="background-color: {{ profile_accent_bg }}; color: {{ profile_accent_fg }}; border-color: {{ profile_accent_bg }};"{% endif %}>{{ p.display_name }}</span>
                         {% else %}
                             <a href="/p/{{ p.slug }}/" class="profile-pill">{{ p.display_name }}</a>
                         {% endif %}

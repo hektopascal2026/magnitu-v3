@@ -11,6 +11,7 @@ from typing import List, Dict, Optional
 
 from config import get_config
 import db
+from magnitu.accent_theme import parse_accent_from_magnitu_status
 
 logger = logging.getLogger(__name__)
 
@@ -242,18 +243,44 @@ def verify_seismo_endpoints(seismo_target: Optional[Dict] = None) -> tuple:
 
 
 def test_connection(seismo_target: Optional[Dict] = None) -> tuple:
-    """Test connection to a Seismo target. Returns (success, message)."""
+    """Test connection to a Seismo target.
+
+    Returns (success, message, status_dict). On success, ``status_dict`` is
+    the parsed magnitu_status JSON (may include optional ``accent_color``).
+    On failure, ``status_dict`` is ``{}``.
+    """
     try:
         status = get_status(seismo_target)
         if status.get("status") == "ok":
             total = status.get("entries", {}).get("total", 0)
-            return True, "Connected. Seismo has {} entries.".format(total)
-        return False, "Unexpected response: {}".format(status)
+            return (
+                True,
+                "Connected. Seismo has {} entries.".format(total),
+                status if isinstance(status, dict) else {},
+            )
+        return False, "Unexpected response: {}".format(status), {}
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
-            return False, "Authentication failed. Check your API key."
-        return False, "HTTP error {}: {}".format(e.response.status_code, e.response.text)
+            return False, "Authentication failed. Check your API key.", {}
+        return (
+            False,
+            "HTTP error {}: {}".format(e.response.status_code, e.response.text),
+            {},
+        )
     except httpx.ConnectError:
-        return False, "Connection failed. Check the Seismo URL."
+        return False, "Connection failed. Check the Seismo URL.", {}
     except Exception as e:
-        return False, "Error: {}".format(str(e))
+        return False, "Error: {}".format(str(e)), {}
+
+
+def maybe_profile_accent_from_status(status: dict, profile_id: int) -> None:
+    """If magnitu_status includes a valid accent_color, store it for the profile.
+
+    Never raises; ignores missing/invalid fields (backward compatible).
+    """
+    try:
+        hex_color = parse_accent_from_magnitu_status(status)
+        if hex_color:
+            db.set_profile_accent_color(profile_id, hex_color)
+    except Exception as ex:
+        logger.warning("Accent from magnitu_status ignored: %s", ex)
