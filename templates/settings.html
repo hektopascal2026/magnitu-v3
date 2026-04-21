@@ -14,7 +14,8 @@
         <h2>Profiles</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
             Each profile has its own labels, trained model, and push target.
-            All profiles share the same entries and embeddings (pulled once from global Mothership Connection below). Label imports during Sync use each profile's satellite credentials when set; otherwise they fall back to mothership — see Push Target warnings.
+            Use <strong>Switch</strong> next to a profile to make it the active workspace — Label / Gemini / Model / Push use <em>that</em> profile only so you don’t mix push targets by accident. The pills next to Magnitu mirror the active profile (not clickable).
+            Settings pages stay per-profile (satellite URL, keys). All profiles share entries and embeddings (global Mothership Connection below).
         </p>
 
         {% if profiles %}
@@ -32,7 +33,7 @@
             {% for p in profiles %}
                 <tr style="border-bottom: 1px solid #eee;" data-profile-id="{{ p.id }}">
                     <td style="padding: 10px 12px;">
-                        <a href="/p/{{ p.slug }}/" style="font-weight: bold; text-decoration: none;">{{ p.display_name }}</a>
+                        <strong>{{ p.display_name }}</strong>
                         {% if p.is_default %}<span style="font-size: 11px; background: #000; color: #fff; padding: 2px 6px; margin-left: 6px;">default</span>{% endif %}
                         {% if p.description %}<div style="font-size: 12px; color: #666; margin-top: 2px;">{{ p.description }}</div>{% endif %}
                     </td>
@@ -45,10 +46,19 @@
                         {% endif %}
                     </td>
                     <td style="padding: 10px 12px; font-size: 13px;">{{ p.label_count }}</td>
-                    <td style="padding: 10px 12px;">
-                        <a href="/p/{{ p.slug }}/settings" class="btn btn-sm" style="margin-right: 4px;">Open</a>
+                    <td style="padding: 10px 12px; vertical-align: top;">
+                        {% set is_act = active_profile and (p.id == active_profile.id) %}
+                        {% set pst = nav_profile_styles[p.id] if p.id in nav_profile_styles else {} %}
+                        {% if is_act %}
+                        <button type="button" class="btn btn-sm profile-active-badge {% if not pst.bg %}profile-active-badge-noaccent{% endif %}" disabled
+                                {% if pst.bg %}style="background-color: {{ pst.bg }}; color: {{ pst.fg }}; border-color: {{ pst.bg }};"{% endif %}>Active</button>
+                        {% else %}
+                        <button type="button" class="btn btn-sm profile-switch-btn" data-profile-id="{{ p.id }}">Switch</button>
+                        {% endif %}
+                        <a href="/p/{{ p.slug }}/settings#profiles" class="btn btn-sm" style="margin-top: 6px; display: inline-block;">Edit settings</a>
                         {% if not p.is_default %}
-                        <button type="button" class="btn btn-sm btn-danger profile-delete-btn" data-profile-id="{{ p.id }}" data-profile-name="{{ p.display_name|e }}">Delete</button>
+                        <button type="button" class="btn btn-sm btn-danger profile-delete-btn" style="margin-top: 6px; display: block;"
+                                data-profile-id="{{ p.id }}" data-profile-name="{{ p.display_name|e }}">Delete</button>
                         {% endif %}
                     </td>
                 </tr>
@@ -345,6 +355,35 @@
             this._edited = this.value.length > 0;
         });
     }
+
+    document.querySelectorAll('.profile-switch-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var id = parseInt(btn.getAttribute('data-profile-id'), 10);
+            if (!id) return;
+            btn.disabled = true;
+            fetch('/api/profiles/' + id + '/activate', { method: 'POST' })
+                .then(function(r) {
+                    if (!r.ok) {
+                        return r.json().then(function(j) {
+                            throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+                        });
+                    }
+                    return r.json();
+                })
+                .then(function(d) {
+                    if (d.success && d.slug) {
+                        window.location.href = '/p/' + d.slug + '/settings#profiles';
+                    } else {
+                        flash(d.error || 'Could not switch profile.', 'error');
+                        btn.disabled = false;
+                    }
+                })
+                .catch(function(err) {
+                    flash(err.message || 'Error', 'error');
+                    btn.disabled = false;
+                });
+        });
+    });
 
     function deleteProfile(id, name) {
         if (!confirm('Delete profile "' + name + '"? All its labels and model records will be removed. This cannot be undone.')) return;

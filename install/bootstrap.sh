@@ -75,8 +75,19 @@ if [ -f "$INSTALL_DIR/main.py" ]; then
     echo "         Found existing install at $INSTALL_DIR"
     if [ -d "$INSTALL_DIR/.git" ]; then
         cd "$INSTALL_DIR"
-        git pull -q origin main 2>/dev/null || true
-        echo "         Updated."
+        echo "         Fetching origin main..."
+        if ! git fetch origin main; then
+            echo "         WARNING: git fetch failed (offline?). Continuing with existing tree."
+        elif [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "main" ]; then
+            if ! git merge --ff-only origin/main; then
+                echo "         WARNING: Could not fast-forward to origin/main."
+                echo "         Run: cd \"$INSTALL_DIR\" && git status"
+            fi
+        else
+            echo "         NOTE: Branch is $(git rev-parse --abbrev-ref HEAD 2>/dev/null), not main — merge skipped."
+            echo "         Run: git checkout main && git merge --ff-only origin/main"
+        fi
+        echo "         Done."
     fi
 else
     REPO="https://github.com/hektopascal2026/magnitu-v3.git"

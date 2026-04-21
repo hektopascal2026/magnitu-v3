@@ -1,12 +1,25 @@
+# ── Secrets (never commit) ──
 .env
+
+# ── Local app data & config (per machine; paths from config.py / env) ──
 magnitu.db
 magnitu.db-shm
 magnitu.db-wal
 magnitu_config.json
+
+# ── Python bytecode ──
 *.pyc
 __pycache__/
+
+# ── Trained / exported artifacts (large; rebuild via Train or import .magnitu) ──
 models/*.joblib
 models/*.json
+
+# ── Virtual environment ──
 .venv/
+
+# ── OS / editor noise ──
 .DS_Store
+
+# ── Optional local install bundle (not source) ──
 install.zip

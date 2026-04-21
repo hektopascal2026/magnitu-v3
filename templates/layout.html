@@ -15,18 +15,31 @@
                     <a href="/">Magnitu</a>
                 </span>
                 {% if all_profiles and all_profiles|length > 1 %}
-                <span class="profile-switcher">
+                <span class="profile-switcher profile-switcher-indicator" title="Active workspace — change in Settings → Profiles">
                     {% for p in all_profiles %}
-                        {% if profile and p.id == profile.id %}
-                            <span class="profile-pill profile-pill-active"{% if profile_accent_bg %} style="background-color: {{ profile_accent_bg }}; color: {{ profile_accent_fg }}; border-color: {{ profile_accent_bg }};"{% endif %}>{{ p.display_name }}</span>
+                        {% set is_workspace = active_profile and (p.id == active_profile.id) %}
+                        {% set st = nav_profile_styles[p.id] if p.id in nav_profile_styles else {} %}
+                        {% if is_workspace %}
+                            {% if st.bg %}
+                            <span class="profile-pill profile-pill-indicator-active"
+                                  style="background-color: {{ st.bg }}; color: {{ st.fg }}; border-color: {{ st.bg }};">{{ p.display_name }}</span>
+                            {% else %}
+                            <span class="profile-pill profile-pill-indicator-active profile-pill-indicator-default">{{ p.display_name }}</span>
+                            {% endif %}
                         {% else %}
-                            <a href="/p/{{ p.slug }}/" class="profile-pill">{{ p.display_name }}</a>
+                            <span class="profile-pill profile-pill-indicator-muted">{{ p.display_name }}</span>
                         {% endif %}
                     {% endfor %}
                 </span>
                 {% elif profile %}
-                <span class="profile-switcher">
-                    <span class="profile-pill profile-pill-active"{% if profile_accent_bg %} style="background-color: {{ profile_accent_bg }}; color: {{ profile_accent_fg }}; border-color: {{ profile_accent_bg }};"{% endif %}>{{ profile.display_name }}</span>
+                <span class="profile-switcher profile-switcher-indicator" title="Active workspace">
+                    {% set st = nav_profile_styles[profile.id] if profile.id in nav_profile_styles else {} %}
+                    {% if st.bg %}
+                    <span class="profile-pill profile-pill-indicator-active"
+                          style="background-color: {{ st.bg }}; color: {{ st.fg }}; border-color: {{ st.bg }};">{{ profile.display_name }}</span>
+                    {% else %}
+                    <span class="profile-pill profile-pill-indicator-active profile-pill-indicator-default">{{ profile.display_name }}</span>
+                    {% endif %}
                 </span>
                 <span class="top-bar-subtitle" style="margin-left: 10px;">
                     {% if active_model %}v{{ active_model.version }}{% endif %} &middot; {{ label_count }} labels
@@ -58,31 +71,12 @@
 
     <script>
     function flash(msg, type) {
-        var el = document.getElementById('flash-messages');
+        var bar = document.getElementById('flash-messages');
         var div = document.createElement('div');
-        var t = type || 'info';
-        div.className = 'message message-' + t;
-
-        var body = document.createElement('div');
-        body.className = 'message-body';
-        body.textContent = msg;
-        div.appendChild(body);
-
-        if (t === 'error') {
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'message-dismiss';
-            btn.textContent = 'Dismiss';
-            btn.addEventListener('click', function() {
-                div.remove();
-            });
-            div.appendChild(btn);
-        } else {
-            setTimeout(function() {
-                if (div.parentNode) div.remove();
-            }, 5000);
-        }
-        el.appendChild(div);
+        div.className = 'flash flash-' + (type || 'info');
+        div.textContent = msg;
+        bar.appendChild(div);
+        setTimeout(function() { div.remove(); }, 5000);
     }
     </script>
     {% block scripts %}{% endblock %}

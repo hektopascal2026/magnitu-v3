@@ -44,6 +44,9 @@ DEFAULTS = {
     # When matched, the phrase is prepended to the embedded text AND the recipe
     # keyword for it is boosted toward investigation_lead.
     "legal_signal_patterns": [],
+    # Which profile is the labeling workspace (slug in URLs for Label/Gemini/etc.).
+    # None = use DB default profile until user picks one in Settings.
+    "active_profile_id": None,
 }
 
 

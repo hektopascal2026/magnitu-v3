@@ -1,7 +1,13 @@
 #!/bin/bash
 # ─────────────────────────────────────────────
 #  Magnitu — Start server
-#  Usage:  ~/magnitu/start.sh
+#  Usage:  ~/magnitu/start.sh   (or path to this repo)
+#
+#  Updates: always runs `git fetch origin main`. If your checkout is on
+#  branch `main`, fast-forwards with `git merge --ff-only origin/main`
+#  so you get exactly what is on GitHub (no silent merge commits).
+#  Fetch failures only warn (offline); merge failures on `main` abort
+#  cold start so you notice divergent history.
 # ─────────────────────────────────────────────
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,6 +15,46 @@ PORT=8000
 HOST="127.0.0.1"
 URL="http://$HOST:$PORT"
 PY="$DIR/.venv/bin/python"
+
+# Out: MAG_GIT_UPDATED=1 if HEAD moved after fast-forward
+mag_sync_github() {
+    MAG_GIT_UPDATED=0
+    if [ ! -d "$DIR/.git" ]; then
+        echo "  (No .git — not a clone; skipping GitHub sync.)"
+        return 0
+    fi
+    echo "  Syncing with GitHub (origin main)..."
+    if ! git -C "$DIR" fetch origin main; then
+        echo "  WARNING: git fetch failed (offline or no network). Using local tree as-is."
+        return 0
+    fi
+    local br
+    br=$(git -C "$DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$br" != "main" ]; then
+        echo "  NOTE: Current branch is '$br', not main — fetched origin/main but did not merge."
+        echo "        To run the same code as GitHub: git checkout main && git merge --ff-only origin/main"
+        return 0
+    fi
+    local before after merge_out merge_rc
+    before=$(git -C "$DIR" rev-parse HEAD)
+    merge_out=$(git -C "$DIR" merge --ff-only origin/main 2>&1) || merge_rc=$?
+    if [ -n "$merge_out" ]; then
+        echo "$merge_out" | sed 's/^/  /'
+    fi
+    if [ "${merge_rc:-0}" != "0" ]; then
+        echo "  ERROR: Could not fast-forward main to origin/main (local commits or conflicts)."
+        echo "        Fix: cd \"$DIR\" && git status"
+        return 1
+    fi
+    after=$(git -C "$DIR" rev-parse HEAD)
+    if [ "$before" != "$after" ]; then
+        MAG_GIT_UPDATED=1
+        echo "  Updated to: $(git -C "$DIR" log -1 --oneline)"
+    else
+        echo "  Already at origin/main: $(git -C "$DIR" log -1 --oneline)"
+    fi
+    return 0
+}
 
 clear 2>/dev/null || true
 echo ""
@@ -20,30 +66,24 @@ echo ""
 # Check setup
 cd "$DIR" || exit 1
 
-# Check if already running — always pull and restart to pick up any updates
+# Check if already running — pull and restart when new commits land
 if lsof -ti:$PORT > /dev/null 2>&1; then
     NEED_RESTART=0
 
-    if [ -d "$DIR/.git" ]; then
-        echo "  Checking for updates..."
-        BEFORE=$(git -C "$DIR" rev-parse HEAD 2>/dev/null)
-        git -C "$DIR" pull origin main 2>&1 | sed 's/^/  /'
-        AFTER=$(git -C "$DIR" rev-parse HEAD 2>/dev/null)
-        if [ "$BEFORE" != "$AFTER" ]; then
-            echo "  New version pulled — restarting server..."
+    if mag_sync_github; then
+        if [ "$MAG_GIT_UPDATED" = "1" ]; then
+            echo "  New commits pulled — restarting server..."
             NEED_RESTART=1
-        else
-            echo "  Already on latest version."
         fi
-        echo ""
+    else
+        echo "  Git fast-forward failed — not restarting; server still on port $PORT"
     fi
+    echo ""
 
     if [ "$NEED_RESTART" = "1" ]; then
-        # Kill the old server and fall through to a fresh start
         echo "  Stopping old server..."
         lsof -ti:$PORT | xargs kill 2>/dev/null
         sleep 1
-        # Force kill if still alive
         lsof -ti:$PORT | xargs kill -9 2>/dev/null 2>&1 || true
         sleep 1
     else
@@ -71,21 +111,16 @@ if [ ! -f magnitu_config.json ]; then
     exit $?
 fi
 
-# ── Auto-update ──
+# ── Auto-update (cold start) ──
 DEPS_CHANGED=0
-if [ -d "$DIR/.git" ]; then
-    echo "  Checking for updates..."
-    BEFORE=$(git -C "$DIR" rev-parse HEAD 2>/dev/null)
-    git -C "$DIR" pull -q origin main 2>/dev/null || true
-    AFTER=$(git -C "$DIR" rev-parse HEAD 2>/dev/null)
-    if [ "$BEFORE" != "$AFTER" ]; then
-        echo "  Updated to latest version."
-        DEPS_CHANGED=1
-    else
-        echo "  Already up to date."
-    fi
+if ! mag_sync_github; then
     echo ""
+    exit 1
 fi
+if [ "$MAG_GIT_UPDATED" = "1" ]; then
+    DEPS_CHANGED=1
+fi
+echo ""
 
 # ── Dependency check ──
 # Use a stamp file to skip the slow import check (~5s for torch) when

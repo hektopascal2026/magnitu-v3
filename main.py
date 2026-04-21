@@ -3,8 +3,9 @@ Magnitu — ML-powered relevance scoring for Seismo.
 FastAPI application: serves the labeling UI, model overview, and orchestrates ML pipeline.
 
 Multi-profile routing:
-  /                    → redirect to default profile
-  /p/{slug}/           → labeling page (profile-scoped)
+  /                    → redirect to active workspace profile (Settings → Profiles → Switch)
+  /p/{slug}/           → labeling (slug must match active workspace except Settings)
+  /p/{slug}/settings   → settings for that slug (switch active workspace here)
   /p/{slug}/dashboard  → redirects to model (bookmark compatibility)
   /p/{slug}/top        → top entries
   /p/{slug}/model      → model overview + profile actions
@@ -54,6 +55,49 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.middleware("http")
+async def enforce_active_workspace(request: Request, call_next):
+    """Label/Gemini/Top/Model use the persisted active profile; Settings stay per-slug."""
+    path = request.url.path
+    if not path.startswith("/p/"):
+        return await call_next(request)
+    raw = path.split("?", 1)[0].rstrip("/")
+    segments = [s for s in raw.split("/") if s]
+    if len(segments) < 2 or segments[0] != "p":
+        return await call_next(request)
+    slug = segments[1]
+    if not slug:
+        return await call_next(request)
+    prof = db.get_profile_by_slug(slug)
+    if not prof:
+        return await call_next(request)
+    active = db.get_active_profile()
+    if not active:
+        return await call_next(request)
+    if prof["id"] == active["id"]:
+        return await call_next(request)
+    rest_segments = segments[2:]
+    rest_path = "/" + "/".join(rest_segments) if rest_segments else "/"
+    if "/settings" in rest_path or rest_path.startswith("/settings"):
+        return await call_next(request)
+    if rest_path.startswith("/api/") or "/api/" in rest_path:
+        return JSONResponse(
+            {
+                "detail": (
+                    "This profile is not the active workspace. "
+                    "Choose “Switch” next to the profile in Settings → Profiles."
+                ),
+                "code": "wrong_workspace",
+            },
+            status_code=403,
+        )
+    new_url = "/p/" + active["slug"] + (rest_path if rest_path != "/" else "/")
+    q = request.url.query
+    if q:
+        new_url = new_url + "?" + q
+    return RedirectResponse(url=new_url, status_code=302)
 
 _JOB_LOCK = threading.Lock()
 _JOBS = {}
@@ -366,6 +410,17 @@ def _get_profile_or_404(slug: str) -> dict:
     return profile
 
 
+def _nav_profile_styles(all_profiles):
+    styles = {}
+    for p in all_profiles:
+        h = safe_accent_for_profile(p.get("accent_color"))
+        if h:
+            styles[p["id"]] = {"bg": h, "fg": contrast_text_on_accent(h)}
+        else:
+            styles[p["id"]] = {"bg": "", "fg": ""}
+    return styles
+
+
 def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
     """Common context for all templates. Profile-aware when a profile is given."""
     config = get_config()
@@ -378,6 +433,8 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         if h:
             profile_accent_bg = h
             profile_accent_fg = contrast_text_on_accent(h)
+    ap = db.get_active_profile()
+    profs = db.get_all_profiles()
     return {
         "request":           request,
         "config":            config,
@@ -387,7 +444,9 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         "active_model":      active_model,
         "label_distribution": db.get_label_distribution(profile_id),
         "profile":           profile,
-        "all_profiles":      db.get_all_profiles(),
+        "active_profile":    ap,
+        "all_profiles":      profs,
+        "nav_profile_styles": _nav_profile_styles(profs),
         "architecture":      config.get("model_architecture", "transformer"),
         "embedding_count":   db.get_embedding_count(),
         "profile_accent_bg": profile_accent_bg,
@@ -459,9 +518,9 @@ async def root(request: Request):
     """Redirect to default profile, or setup if no profiles exist."""
     if not db.has_any_profile():
         return RedirectResponse("/setup", status_code=302)
-    default = db.get_default_profile()
-    if default:
-        return RedirectResponse("/p/{}/".format(default["slug"]), status_code=302)
+    active = db.get_active_profile()
+    if active:
+        return RedirectResponse("/p/{}/".format(active["slug"]), status_code=302)
     return RedirectResponse("/setup", status_code=302)
 
 
@@ -475,9 +534,9 @@ async def about_page(request: Request):
 async def setup_page(request: Request):
     """First-run setup: create the initial profile."""
     if db.has_any_profile():
-        default = db.get_default_profile()
-        if default:
-            return RedirectResponse("/p/{}/model".format(default["slug"]), status_code=302)
+        active = db.get_active_profile()
+        if active:
+            return RedirectResponse("/p/{}/model".format(active["slug"]), status_code=302)
     ctx = _base_context(request)
     return templates.TemplateResponse("setup.html", ctx)
 
@@ -485,7 +544,7 @@ async def setup_page(request: Request):
 @app.get("/profiles")
 async def profiles_page_redirect():
     """Legacy URL — profile management lives under Settings."""
-    p = db.get_default_profile()
+    p = db.get_active_profile()
     if not p:
         profs = db.get_all_profiles()
         p = profs[0] if profs else None
@@ -761,6 +820,8 @@ async def create_profile_api(request: Request):
     api_key    = (data.get("api_key") or "").strip()
     description = (data.get("description") or "").strip()
     profile = db.create_profile(slug, display_name, description, seismo_url, api_key)
+    if len(db.get_all_profiles()) == 1:
+        db.set_active_profile_id(profile["id"])
     return {"success": True, "profile": profile}
 
 
@@ -796,6 +857,19 @@ async def update_profile_api(profile_id: int, request: Request):
     return {"success": True, "profile": db.get_profile_by_id(profile_id)}
 
 
+@app.post("/api/profiles/{profile_id}/activate")
+async def activate_profile_api(profile_id: int):
+    """Set the persistent labeling workspace (Label / Gemini / Push target context)."""
+    prof = db.get_profile_by_id(profile_id)
+    if not prof:
+        raise HTTPException(404, "Profile not found")
+    try:
+        db.set_active_profile_id(profile_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"success": True, "slug": prof["slug"]}
+
+
 @app.delete("/api/profiles/{profile_id}")
 async def delete_profile_api(profile_id: int):
     existing = db.get_profile_by_id(profile_id)
@@ -805,6 +879,7 @@ async def delete_profile_api(profile_id: int):
         return JSONResponse({"success": False,
                              "error": "Cannot delete the default profile."}, 400)
     db.delete_profile(profile_id)
+    db.clear_active_profile_if_deleted(profile_id)
     # Client was on /p/{slug}/settings; reload would 404. Send a surviving profile slug.
     fallback = db.get_default_profile()
     if not fallback:
@@ -827,6 +902,7 @@ async def create_model(request: Request):
     if db.has_any_profile():
         return JSONResponse({"success": False, "error": "A profile already exists. Use /api/profiles to add more."}, 400)
     profile = model_manager.create_profile(name, description)
+    db.set_active_profile_id(profile["id"])
     return {"success": True, "profile": profile}
 
 
@@ -847,7 +923,11 @@ async def import_model_setup(request: Request):
         result = await loop.run_in_executor(
             None, lambda: model_manager.import_model(tmp_path, profile_id=None)
         )
-        slug = db.get_profile_by_id(result["profile_id"])["slug"] if result.get("profile_id") else ""
+        slug = ""
+        if result.get("profile_id"):
+            db.set_active_profile_id(result["profile_id"])
+            row = db.get_profile_by_id(result["profile_id"])
+            slug = row["slug"] if row else ""
         return {"success": True, "slug": slug, **result}
     except Exception as e:
         import traceback; traceback.print_exc()

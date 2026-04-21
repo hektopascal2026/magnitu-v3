@@ -156,6 +156,48 @@ body {
     box-shadow: 2px 2px 0px #000000;
 }
 
+.btn-danger {
+    border: 2px solid #FF2C2C !important;
+    color: #FF2C2C !important;
+    background: #ffffff !important;
+}
+.btn-danger:hover {
+    background: #fff0f0 !important;
+}
+
+/* Header profile pills — indicators only (active workspace set in Settings) */
+.profile-switcher-indicator {
+    cursor: default;
+}
+.profile-pill-indicator-muted {
+    display: inline-block;
+    padding: 4px 10px;
+    margin-right: 6px;
+    border: 2px solid #000000;
+    background: #ffffff;
+    color: #000000;
+    font-size: 13px;
+    opacity: 0.55;
+}
+.profile-pill-indicator-active {
+    display: inline-block;
+    padding: 4px 10px;
+    margin-right: 6px;
+    border: 2px solid #000000;
+    font-size: 13px;
+}
+.profile-pill-indicator-default {
+    background: #000000 !important;
+    color: #ffffff !important;
+    border-color: #000000 !important;
+}
+
+.profile-active-badge-noaccent {
+    background: #000000 !important;
+    color: #ffffff !important;
+    border-color: #000000 !important;
+}
+
 /* ═══ Messages ═══ */
 .message {
     padding: 10px 14px;

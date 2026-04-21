@@ -17,6 +17,30 @@ import distiller
 
 # ─── Helpers ───
 
+def _normalize_entry_key(entry_type, entry_id):
+    """Stable identity for deduping (avoids int/str entry_id mismatches)."""
+    try:
+        eid = int(entry_id)
+    except (TypeError, ValueError):
+        eid = entry_id
+    return (str(entry_type or ""), eid)
+
+
+def _normalize_entry_dict_key(entry: dict):
+    return _normalize_entry_key(entry.get("entry_type"), entry.get("entry_id"))
+
+
+def _dedupe_entries_preserve_order(entries: List[dict]) -> List[dict]:
+    seen = set()
+    out = []
+    for e in entries:
+        k = _normalize_entry_dict_key(e)
+        if k not in seen:
+            seen.add(k)
+            out.append(e)
+    return out
+
+
 def _entropy(probs: Dict[str, float]) -> float:
     """Shannon entropy of a probability distribution. Higher = more uncertain."""
     return -sum(p * math.log2(p) for p in probs.values() if p > 0)
@@ -66,10 +90,14 @@ def _get_uncertain(unlabeled: List[dict], scores: List[dict], limit: int = 10) -
     confused about — labeling them teaches the model the most.
     """
     scored_with_entropy = []
-    score_map = {(s["entry_type"], s["entry_id"]): s for s in scores}
+    score_map = {}
+    for s in scores:
+        k = _normalize_entry_key(s["entry_type"], s["entry_id"])
+        if k not in score_map:
+            score_map[k] = s
 
     for entry in unlabeled:
-        key = (entry["entry_type"], entry["entry_id"])
+        key = _normalize_entry_dict_key(entry)
         s = score_map.get(key)
         if not s or "probabilities" not in s:
             continue
@@ -88,14 +116,15 @@ def _get_uncertain(unlabeled: List[dict], scores: List[dict], limit: int = 10) -
     return results
 
 
-def _get_conflicts(unlabeled: List[dict], scores: List[dict], limit: int = 5) -> List[dict]:
+def _get_conflicts(unlabeled: List[dict], scores: List[dict], limit: int = 5,
+                   profile_id: int = 1) -> List[dict]:
     """
     Conflict analysis: entries where the ML model and the recipe disagree
     on the predicted label. These are high-value training samples because
     they reveal where the lightweight recipe diverges from the full model.
     """
     # Load the latest recipe
-    model_info = db.get_active_model()
+    model_info = db.get_active_model(profile_id=profile_id)
     if not model_info or not model_info.get("recipe_path"):
         return []
 
@@ -108,11 +137,15 @@ def _get_conflicts(unlabeled: List[dict], scores: List[dict], limit: int = 5) ->
     if not recipe.get("keywords"):
         return []
 
-    score_map = {(s["entry_type"], s["entry_id"]): s for s in scores}
+    score_map = {}
+    for s in scores:
+        k = _normalize_entry_key(s["entry_type"], s["entry_id"])
+        if k not in score_map:
+            score_map[k] = s
     conflicts = []
 
     for entry in unlabeled:
-        key = (entry["entry_type"], entry["entry_id"])
+        key = _normalize_entry_dict_key(entry)
         s = score_map.get(key)
         if not s:
             continue
@@ -178,7 +211,9 @@ def _get_diverse(unlabeled: List[dict], limit: int = 5,
         entry = dict(entries[0])  # Pick the first (newest) entry from this category
         entry["_sampling_reason"] = "diverse"
         labeled_count = labeled_counts.get(cat, 0)
-        entry["_sampling_detail"] = f"{cat} ({labeled_count} labeled)"
+        entry["_sampling_detail"] = (
+            f"{cat} · {labeled_count} label(s) in training from this category"
+        )
         results.append(entry)
 
     return results
@@ -212,6 +247,7 @@ def get_smart_entries(limit: int = 30, entry_type: str = None,
     """
     unlabeled = db.get_unlabeled_entries(limit=200, entry_type=entry_type,
                                          profile_id=profile_id)
+    unlabeled = _dedupe_entries_preserve_order(unlabeled)
 
     if not unlabeled:
         return []
@@ -234,7 +270,7 @@ def get_smart_entries(limit: int = 30, entry_type: str = None,
 
     # Collect from each strategy
     uncertain = _get_uncertain(unlabeled, scores, limit=10)
-    conflicts = _get_conflicts(unlabeled, scores, limit=5)
+    conflicts = _get_conflicts(unlabeled, scores, limit=5, profile_id=profile_id)
     diverse = _get_diverse(unlabeled, limit=5, profile_id=profile_id)
     chronological = _get_chronological(unlabeled, limit=15)
 
@@ -244,7 +280,7 @@ def get_smart_entries(limit: int = 30, entry_type: str = None,
 
     for pool in [uncertain, conflicts, diverse, chronological]:
         for entry in pool:
-            key = (entry["entry_type"], entry["entry_id"])
+            key = _normalize_entry_dict_key(entry)
             if key not in seen:
                 seen.add(key)
                 result.append(entry)

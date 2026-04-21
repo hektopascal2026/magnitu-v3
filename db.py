@@ -10,7 +10,7 @@ import sqlite3
 import json
 from typing import Optional, List
 from datetime import datetime
-from config import DB_PATH
+from config import DB_PATH, load_config, save_config
 
 
 def get_db() -> sqlite3.Connection:
@@ -368,6 +368,44 @@ def set_profile_as_default(profile_id: int) -> None:
     conn.close()
 
 
+def get_active_profile() -> Optional[dict]:
+    """Workspace profile for Label / Gemini / Push (persisted in magnitu_config.json)."""
+    cfg = load_config()
+    raw = cfg.get("active_profile_id")
+    if raw is not None:
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            pid = None
+        if pid is not None:
+            row = get_profile_by_id(pid)
+            if row:
+                return row
+    return get_default_profile()
+
+
+def set_active_profile_id(profile_id: int) -> None:
+    """Persist which profile is active for the labeling workspace."""
+    row = get_profile_by_id(profile_id)
+    if not row:
+        raise ValueError("Profile not found")
+    cfg = load_config()
+    cfg["active_profile_id"] = profile_id
+    save_config(cfg)
+
+
+def clear_active_profile_if_deleted(deleted_profile_id: int) -> None:
+    """After deleting a profile, unset active_profile_id if it pointed there."""
+    cfg = load_config()
+    try:
+        cur = int(cfg.get("active_profile_id"))
+    except (TypeError, ValueError):
+        return
+    if cur == deleted_profile_id:
+        cfg["active_profile_id"] = None
+        save_config(cfg)
+
+
 # ─── Entry operations ────────────────────────────────────────────────────────
 
 def upsert_entry(entry: dict):
@@ -447,7 +485,21 @@ def get_unlabeled_entries(limit: int = 30, entry_type: Optional[str] = None,
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    # One row per (entry_type, entry_id); tolerate type drift (int vs str id) from legacy/sync.
+    out = []
+    seen = set()
+    for r in rows:
+        d = dict(r)
+        try:
+            eid = int(d["entry_id"])
+        except (TypeError, ValueError, KeyError):
+            eid = d.get("entry_id")
+        k = (str(d.get("entry_type") or ""), eid)
+        if k not in seen:
+            seen.add(k)
+            d["entry_id"] = eid
+            out.append(d)
+    return out
 
 
 def get_all_entries() -> List[dict]:
