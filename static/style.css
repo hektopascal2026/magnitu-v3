@@ -1416,6 +1416,7 @@ kbd {
 }
 .log-lead { color: #ff6b6b; font-weight: 700; }
 .log-noise { color: #888; }
+.log-error { color: #ff2c2c; font-weight: 700; background: rgba(255, 44, 44, 0.1); padding: 2px 4px; }
 
 /* ═══ Responsive ═══ */
 @media (max-width: 768px) {

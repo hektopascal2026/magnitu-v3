@@ -170,8 +170,8 @@
 
         btn.disabled = true;
         resultEl.style.display = 'none';
-        logEl.style.display = 'none';
-        logContentEl.innerHTML = '';
+        logEl.style.display = 'block';
+        logContentEl.innerHTML = '<div class="log-line">Initializing job...</div>';
         seenLogCount = 0;
         setProgress(true, 'Starting Gemini job...', 1, '1%');
 
@@ -199,6 +199,12 @@
                         setTimeout(function() { setProgress(false); }, 2000);
                     },
                     function(errMsg) {
+                        var errLine = document.createElement('div');
+                        errLine.className = 'log-line log-error';
+                        errLine.textContent = 'FATAL ERROR: ' + errMsg;
+                        logContentEl.appendChild(errLine);
+                        logContentEl.scrollTop = logContentEl.scrollHeight;
+
                         flash('Gemini batch failed: ' + errMsg, 'error');
                         btn.disabled = false;
                         setProgress(false);
@@ -206,6 +212,12 @@
                 );
             })
             .catch(function(err) {
+                var errLine = document.createElement('div');
+                errLine.className = 'log-line log-error';
+                errLine.textContent = 'FATAL ERROR: ' + err.message;
+                logContentEl.appendChild(errLine);
+                logContentEl.scrollTop = logContentEl.scrollHeight;
+
                 flash('Error: ' + err.message, 'error');
                 btn.disabled = false;
                 setProgress(false);

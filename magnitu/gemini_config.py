@@ -61,9 +61,19 @@ class GeminiConfig:
 
     @classmethod
     def from_env(cls) -> GeminiConfig:
+        # Check global app config (magnitu_config.json) first
+        try:
+            from config import get_config
+            app_cfg = get_config()
+        except ImportError:
+            app_cfg = {}
+
+        api_key = app_cfg.get("gemini_api_key") or _env("GEMINI_API_KEY")
+        model = app_cfg.get("gemini_model") or _env("GEMINI_MODEL", "models/gemini-2.5-flash")
+
         return cls(
-            api_key=_env("GEMINI_API_KEY"),
-            model=_env("GEMINI_MODEL", "models/gemini-2.5-flash"),
+            api_key=api_key,
+            model=model,
             chunk_model=_env("GEMINI_CHUNK_MODEL", ""),
             temperature=_env_float("GEMINI_TEMPERATURE", 0.0),
             max_output_tokens=_env_int("GEMINI_MAX_OUTPUT_TOKENS", 8192, min_value=256),

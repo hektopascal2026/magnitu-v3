@@ -285,6 +285,32 @@
         </div>
     </div>
 
+    <!-- Gemini Settings -->
+    <div class="dashboard-section">
+        <h2>Gemini API Settings</h2>
+        <div class="settings-form" id="geminiSettingsForm">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Gemini API Key</label>
+                    <input type="password" id="geminiApiKey" value="{{ config.gemini_api_key or '' }}"
+                           placeholder="Enter your Google Gemini API key"
+                           style="font-family: monospace;">
+                    <div class="form-help">Get your key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.</div>
+                </div>
+                <div class="form-group">
+                    <label>Gemini Model</label>
+                    <input type="text" id="geminiModel" value="{{ config.gemini_model or 'models/gemini-2.5-flash' }}"
+                           placeholder="e.g. models/gemini-2.5-flash"
+                           style="font-family: monospace;">
+                    <div class="form-help">Default: <code>models/gemini-2.5-flash</code>.</div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveGeminiBtn">Save Gemini Settings</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Advanced training knobs -->
     <div class="dashboard-section">
         <h2>Advanced training</h2>
@@ -675,6 +701,25 @@
             .catch(function(err) { flash('Error: ' + err.message, 'error'); });
         });
     }
+
+    // Save Gemini settings
+    document.getElementById('saveGeminiBtn').addEventListener('click', function() {
+        var data = {
+            gemini_api_key: document.getElementById('geminiApiKey').value.trim(),
+            gemini_model: document.getElementById('geminiModel').value.trim(),
+        };
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success) flash('Gemini settings saved.', 'success');
+            else flash('Failed to save Gemini settings.', 'error');
+        })
+        .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+    });
 
     // Import .magnitu into current profile (Settings → Import package)
     var impBtn = document.getElementById('importMagnituBtn');

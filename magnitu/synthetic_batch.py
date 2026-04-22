@@ -65,9 +65,10 @@ def run_gemini_synthetic_batch_job(
     
     cfg = GeminiConfig.from_env()
     if not (cfg.api_key or "").strip():
-        raise ValueError(
-            "GEMINI_API_KEY is not set. Copy .env.example to .env and add your key."
-        )
+        msg = "GEMINI_API_KEY is not set. Go to Settings and add your key."
+        if progress_cb:
+            progress_cb(0, "Error", "FATAL: " + msg)
+        raise ValueError(msg)
 
     candidates = sampler.get_gemini_synthetic_batch_entries(
         limit=batch_limit, entry_type=entry_type, profile_id=profile_id

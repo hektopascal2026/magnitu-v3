@@ -47,6 +47,9 @@ DEFAULTS = {
     # Which profile is the labeling workspace (slug in URLs for Label/Gemini/etc.).
     # None = use DB default profile until user picks one in Settings.
     "active_profile_id": None,
+    # Gemini synthetic labeling settings
+    "gemini_api_key": "",
+    "gemini_model": "models/gemini-2.5-flash",
 }
 
 # Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).
