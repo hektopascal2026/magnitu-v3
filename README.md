@@ -119,6 +119,8 @@ Open **`http://127.0.0.1:8000`**. The first visit sends you to **`/setup`** to n
 
 **Optional — desktop window:** same app in a **native window** (WebView) instead of using your default browser. After bootstrap, run `pip install -r requirements-desktop.txt` once, then **`./start_desktop.sh`** (or **`python desktop.py`** with the venv). If something is already listening on port 8000, only the window opens; otherwise a server is started and stopped when you close the window.
 
+**macOS — `Magnitu.app`:** with the clone at **`~/Applications/magnitu3`**, **`install/bootstrap.sh`** also adds **Magnitu** to **`~/Applications`** and the **Desktop** (symlinks to `install/Magnitu.app` in the repo). Each launch runs a **git fetch / fast-forward on `main`** (same idea as `start.sh`), then the desktop window.
+
 **Data on disk (default):** with no `MAGNITU_DATA_DIR` override, the database (`magnitu.db`), config (`magnitu_config.json`), and `models/` live **next to `main.py`** in the same directory you cloned (see `config.py`).
 
 **Optional — Gemini synthetic labeling:** copy **`.env.example`** to **`.env`**, set **`GEMINI_API_KEY`**, and optionally **`GEMINI_MODEL`**. Do not commit `.env`.

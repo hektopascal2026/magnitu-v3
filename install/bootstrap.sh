@@ -252,6 +252,15 @@ print(result.get('message', 'Imported.'))
 fi
 echo ""
 
+# ── macOS: Magnitu.app on Desktop and in Applications (canonical path only) ──
+if [[ "$OSTYPE" == darwin* ]] && [ -f "$INSTALL_DIR/install/post_bootstrap_mac_app.sh" ]; then
+    if bash "$INSTALL_DIR/install/post_bootstrap_mac_app.sh" "$INSTALL_DIR"; then
+        :
+    else
+        echo "  (Optional Mac app links skipped or failed; you can run install/post_bootstrap_mac_app.sh later.)"
+    fi
+fi
+
 # ── Done ──
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "   Setup complete!"
@@ -262,4 +271,5 @@ echo ""
 echo "    $INSTALL_DIR/start.sh"
 echo ""
 echo "  It will open automatically in your browser."
+echo "  (On macOS, if the repo is at ~/Applications/magnitu3, you also get Magnitu on the Desktop and in Applications.)"
 echo ""

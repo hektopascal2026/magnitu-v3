@@ -1,0 +1,14 @@
+#!/bin/bash
+# Thin stub: the real script lives in the git repo so it updates on pull.
+REPO="${MAGNITU_HOME:-$HOME/Applications/magnitu3}"
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
+
+if [ ! -x "$REPO/install/mac_open_desktop.sh" ]; then
+	if command -v osascript &>/dev/null; then
+		osascript -e 'display alert "Magnitu" message "Put the repo at ~/Applications/magnitu3 and run bash install/bootstrap.sh."'
+	else
+		echo "Expected Magnitu at $REPO" >&2
+	fi
+	exit 1
+fi
+exec /bin/bash "$REPO/install/mac_open_desktop.sh"

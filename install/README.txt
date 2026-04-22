@@ -10,8 +10,14 @@ Requirements:
 
 Install (from the project README):
 
-  git clone https://github.com/hektopascal2026/magnitu-v3.git
-  cd magnitu-v3
+  Recommended path (macOS double-click app, see below):
+    git clone https://github.com/hektopascal2026/magnitu-v3.git ~/Applications/magnitu3
+    cd ~/Applications/magnitu3
+
+  Or any directory name (browser / Terminal only):
+    git clone https://github.com/hektopascal2026/magnitu-v3.git
+    cd magnitu-v3
+
   bash install/bootstrap.sh
   ./start.sh
 
@@ -27,6 +33,18 @@ Start: ./start.sh in your clone  →  http://127.0.0.1:8000
 
   If you used the remote bootstrap that clones to ~/magnitu, use:
   ~/magnitu/start.sh
+
+  macOS — Magnitu.app (desktop window, git pull on each launch)
+  - Put the clone at:  ~/Applications/magnitu3
+  - Run:  bash install/bootstrap.sh
+  - Bootstrap places symlinks:  ~/Applications/Magnitu.app  and  ~/Desktop/Magnitu.app
+    (both point at install/Magnitu.app inside the repo; updates come from git pull.)
+  - Double-click Magnitu: fetches and fast-forwards main, then opens the app in a
+    native window (same as start_desktop.sh / desktop.py).
+  - If macOS says the app is from an unidentified developer, right-click Magnitu.app
+    → Open once, or allow in System Settings → Privacy & Security.
+  - If the clone lives elsewhere, run manually:  bash install/post_bootstrap_mac_app.sh
+    only after moving the repo to ~/Applications/magnitu3, or use Terminal only.
 
 Update:
 
