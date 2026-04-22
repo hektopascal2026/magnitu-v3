@@ -560,7 +560,8 @@ async def root(request: Request):
 
 @app.get("/about", response_class=HTMLResponse)
 async def about_page(request: Request):
-    ctx = _base_context(request)
+    ap = db.get_active_profile()
+    ctx = _base_context(request, profile=ap)
     return templates.TemplateResponse("about.html", ctx)
 
 
