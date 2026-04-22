@@ -453,6 +453,7 @@ def update_profile(profile_id: int, display_name: Optional[str] = None,
                    description: Optional[str] = None,
                    seismo_url: Optional[str] = None,
                    api_key: Optional[str] = None,
+                   accent_color: Optional[str] = None,
                    is_default: Optional[int] = None) -> None:
     conn = get_db()
     if is_default == 1:
@@ -461,6 +462,7 @@ def update_profile(profile_id: int, display_name: Optional[str] = None,
     vals: list = []
     for col, val in [("display_name", display_name), ("description", description),
                      ("seismo_url", seismo_url), ("api_key", api_key),
+                     ("accent_color", accent_color),
                      ("is_default", is_default)]:
         if val is not None:
             fields.append(f"{col} = ?")
