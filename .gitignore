@@ -18,6 +18,9 @@ models/*.json
 # ── Virtual environment ──
 .venv/
 
+# ── Desktop launcher debug (macOS / mac_open_desktop.sh) ──
+.magnitu_desktop_last.log
+
 # ── OS / editor noise ──
 .DS_Store
 

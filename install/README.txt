@@ -43,6 +43,9 @@ Start: ./start.sh in your clone  →  http://127.0.0.1:8000
     native window (same as start_desktop.sh / desktop.py).
   - If macOS says the app is from an unidentified developer, right-click Magnitu.app
     → Open once, or allow in System Settings → Privacy & Security.
+  - If something goes wrong, an alert may appear and the last run log can open in TextEdit.
+    Log file:  ~/Applications/magnitu3/.magnitu_desktop_last.log
+    (or, before the clone exists:  ~/Library/Logs/Magnitu/magnitu_desktop_last.log)
   - If the clone lives elsewhere, run manually:  bash install/post_bootstrap_mac_app.sh
     only after moving the repo to ~/Applications/magnitu3, or use Terminal only.
 
