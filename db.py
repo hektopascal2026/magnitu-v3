@@ -29,6 +29,70 @@ def slugify(name: str) -> str:
     return s.strip("-") or "default"
 
 
+def derive_profile_identity_from_push_url(seismo_url: str):
+    """Derive display_name and URL slug from a satellite / Seismo push URL.
+
+    Uses the last meaningful path segment, stripping a leading ``seismo-`` prefix
+    when present (e.g. ``.../seismo-example`` → slug ``example``). Falls back to
+    the hostname when the path is empty.
+    """
+    from urllib.parse import urlparse
+
+    raw = (seismo_url or "").strip()
+    if not raw:
+        return "Workspace", "workspace"
+
+    u = raw
+    if not re.match(r"^https?://", u, flags=re.I):
+        u = "https://" + u
+    try:
+        parsed = urlparse(u)
+    except Exception:
+        return "Satellite", "satellite"
+
+    path = (parsed.path or "").rstrip("/")
+    low_path = path.lower()
+    if low_path.endswith("/index.php"):
+        path = path[: -len("/index.php")].rstrip("/")
+    elif low_path.endswith("index.php"):
+        path = path[: -len("index.php")].rstrip("/")
+
+    parts = [p for p in path.split("/") if p]
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    base = ""
+    if parts:
+        last = parts[-1]
+        low_last = last.lower()
+        if low_last == "index.php" and len(parts) >= 2:
+            last = parts[-2]
+            low_last = last.lower()
+        if low_last.startswith("seismo-") and len(last) > 7:
+            base = last[7:]
+        elif low_last == "seismo" and len(parts) >= 2:
+            base = parts[-2]
+        else:
+            base = last
+    if not base and host:
+        first = host.split(".")[0]
+        if first.startswith("seismo-") and len(first) > 7:
+            base = first[7:]
+        else:
+            base = first
+    if not base:
+        base = "satellite"
+
+    slug = slugify(base)
+    disp = re.sub(r"[-_]+", " ", base).strip()
+    if disp:
+        display_name = disp[0].upper() + disp[1:] if len(disp) > 1 else disp.upper()
+    else:
+        display_name = slug.replace("-", " ").title() if slug else "Satellite"
+    return display_name, slug
+
+
 def _migrate_db(conn: sqlite3.Connection):
     """Run all schema migrations. Idempotent."""
     # ── Legacy column additions ──────────────────────────────────────────────

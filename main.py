@@ -883,23 +883,33 @@ async def list_profiles():
 @app.post("/api/profiles")
 async def create_profile_api(request: Request):
     data = await request.json()
-    display_name = (data.get("display_name") or data.get("name") or "").strip()
-    if not display_name:
-        return JSONResponse({"success": False, "error": "Profile name is required."}, 400)
-    slug = data.get("slug", "").strip() or db.slugify(display_name)
-    if db.get_profile_by_slug(slug):
-        base, n = slug, 1
-        while db.get_profile_by_slug(slug):
-            slug = "{}-{}".format(base, n)
-            n += 1
     seismo_url = (data.get("seismo_url") or "").strip()
-    api_key    = (data.get("api_key") or "").strip()
-    description = (data.get("description") or "").strip()
+    api_key = (data.get("api_key") or "").strip()
     if sync.profile_satellite_incomplete({"seismo_url": seismo_url, "api_key": api_key}):
         return JSONResponse(
             {"success": False, "error": sync.INCOMPLETE_SATELLITE_CREDENTIALS_MSG},
             status_code=400,
         )
+
+    display_name = (data.get("display_name") or data.get("name") or "").strip()
+    slug = (data.get("slug") or "").strip()
+    if not display_name:
+        if seismo_url:
+            display_name, derived_slug = db.derive_profile_identity_from_push_url(seismo_url)
+            if not slug:
+                slug = derived_slug
+        else:
+            display_name = "Workspace"
+            if not slug:
+                slug = db.slugify(display_name)
+    if not slug:
+        slug = db.slugify(display_name)
+    if db.get_profile_by_slug(slug):
+        base, n = slug, 1
+        while db.get_profile_by_slug(slug):
+            slug = "{}-{}".format(base, n)
+            n += 1
+    description = (data.get("description") or "").strip()
     profile = db.create_profile(slug, display_name, description, seismo_url, api_key)
     if len(db.get_all_profiles()) == 1:
         db.set_active_profile_id(profile["id"])
