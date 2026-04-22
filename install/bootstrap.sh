@@ -11,6 +11,14 @@
 
 set -e
 
+# Apple Silicon + Rosetta: re-exec natively so venv + pip wheels are arm64.
+if [ "$(uname -m)" = "arm64" ]; then
+    _translated=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+    if [ "$_translated" = "1" ]; then
+        exec arch -arm64 /bin/bash "$0" "$@"
+    fi
+fi
+
 DEFAULT_URL="https://www.hektopascal.org/seismo/index.php"
 
 # Determine install dir: if we're already inside the repo, use that

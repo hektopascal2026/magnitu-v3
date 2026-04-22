@@ -7,6 +7,14 @@
 #  (Or this script will offer to install pywebview if missing.)
 # ─────────────────────────────────────────────
 
+# Apple Silicon + Rosetta: re-exec natively so .venv matches arm64 wheels.
+if [ "$(uname -m)" = "arm64" ]; then
+    _translated=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+    if [ "$_translated" = "1" ]; then
+        exec arch -arm64 /bin/bash "$0" "$@"
+    fi
+fi
+
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PY="$DIR/.venv/bin/python"
 REQ="$DIR/requirements-desktop.txt"

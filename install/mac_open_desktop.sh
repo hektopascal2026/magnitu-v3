@@ -7,6 +7,15 @@
 # for easy remote debugging. See LOG_FILE below.
 set -e
 
+# Apple Silicon: if this shell is Rosetta-translated, re-exec natively so
+# .venv Python matches arm64 extension modules (avoids pydantic_core arch mismatch).
+if [ "$(uname -m)" = "arm64" ]; then
+    _translated=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+    if [ "$_translated" = "1" ]; then
+        exec arch -arm64 /bin/bash "$0" "$@"
+    fi
+fi
+
 REPO="${MAGNITU_HOME:-$HOME/Applications/magnitu3}"
 INSTALL_LOG_DIR="${HOME}/Library/Logs/Magnitu"
 mkdir -p "$INSTALL_LOG_DIR" 2>/dev/null || true
