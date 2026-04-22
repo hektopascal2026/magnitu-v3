@@ -118,7 +118,14 @@ echo ""
 echo "  [4/6] Configuration"
 echo ""
 
-CONFIG_FILE="$INSTALL_DIR/magnitu_config.json"
+# Config and DB live in the user data dir (outside the repo) unless MAGNITU_DATA_DIR is set.
+export PYTHONPATH="$INSTALL_DIR"
+CONFIG_FILE=$("$INSTALL_DIR/.venv/bin/python" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,os.environ['PYTHONPATH']); import config; print(config.CONFIG_PATH)")
+DB_FILE=$("$INSTALL_DIR/.venv/bin/python" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,os.environ['PYTHONPATH']); import config; print(config.DB_PATH)")
+if [ -z "$CONFIG_FILE" ] || [ -z "$DB_FILE" ]; then
+    echo "  ERROR: Could not resolve config/database paths (Python / venv issue)."
+    exit 1
+fi
 SKIP_CONFIG=""
 
 # Check if already configured
@@ -169,7 +176,6 @@ CONF
 fi
 
 # Reset database if it exists (from a previous install or copy)
-DB_FILE="$INSTALL_DIR/magnitu.db"
 if [ -f "$DB_FILE" ]; then
     echo ""
     read -r -p "         Reset database for fresh start? (y/N): " RESET_DB

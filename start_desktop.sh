@@ -18,8 +18,9 @@ if [ ! -f "$PY" ]; then
     exit 1
 fi
 
-if [ ! -f magnitu_config.json ]; then
-    echo "  No magnitu_config.json found. Run install/bootstrap.sh or start.sh once for first-time setup."
+CONFIG_FILE=$("$PY" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$DIR'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
+if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
+    echo "  No magnitu_config.json found (expected under your Magnitu data directory). Run install/bootstrap.sh or start.sh once for first-time setup."
     exit 1
 fi
 

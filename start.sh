@@ -67,7 +67,8 @@ if [ ! -f "$PY" ]; then
     exit $?
 fi
 
-if [ ! -f magnitu_config.json ]; then
+CONFIG_FILE=$("$PY" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$DIR'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
+if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
     echo "  No config found. Running installer..."
     echo ""
     /bin/bash "$DIR/install/bootstrap.sh"

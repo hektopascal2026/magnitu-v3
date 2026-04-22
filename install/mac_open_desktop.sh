@@ -62,12 +62,13 @@ if [ ! -d "$REPO" ] || [ ! -f "$REPO/main.py" ]; then
 fi
 cd "$REPO"
 
-if [ ! -f "$REPO/.venv/bin/python" ] || [ ! -f "$REPO/magnitu_config.json" ]; then
+PY="$REPO/.venv/bin/python"
+CONFIG_FILE=$("$PY" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$REPO'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
+if [ ! -x "$PY" ] || [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
     msg_alert "Magnitu" "Run the installer first: bash install/bootstrap.sh in your magnitu3 folder in Terminal."
     exit 1
 fi
 
-PY="$REPO/.venv/bin/python"
 STAMP="$REPO/.venv/.deps_ok"
 STAMP_DESKTOP="$REPO/.venv/.deps_desktop_ok"
 REQ="$REPO/requirements.txt"

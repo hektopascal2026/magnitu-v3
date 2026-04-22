@@ -2,15 +2,73 @@
 Magnitu configuration.
 Loaded from environment variables or magnitu_config.json.
 """
-import os
 import json
+import os
+import shutil
+import sys
 from pathlib import Path
 
 VERSION = "3.0.0"
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.resolve()
 
-DATA_DIR = Path(os.getenv("MAGNITU_DATA_DIR", str(BASE_DIR)))
+
+def _default_user_data_dir() -> Path:
+    """Per-user directory outside the git clone (config, DB, models)."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Magnitu"
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return Path(local) / "Magnitu"
+        return Path.home() / "AppData" / "Local" / "Magnitu"
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg).expanduser().resolve() / "magnitu"
+    return Path.home() / ".local" / "share" / "magnitu"
+
+
+def _migrate_legacy_repo_data_if_needed(target: Path) -> None:
+    """Move DB/config/models from repo root into ``target`` (one-time).
+
+    Older versions stored ``magnitu_config.json`` and ``magnitu.db`` next to
+    ``main.py``. New installs keep secrets and databases out of the working tree.
+    """
+    if target.resolve() == BASE_DIR:
+        return
+    if (target / "magnitu.db").exists() or (target / "magnitu_config.json").exists():
+        return
+    legacy_cfg = BASE_DIR / "magnitu_config.json"
+    legacy_db = BASE_DIR / "magnitu.db"
+    if not legacy_cfg.exists() and not legacy_db.exists():
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("magnitu_config.json", "magnitu.db", "magnitu.db-shm", "magnitu.db-wal"):
+        src = BASE_DIR / name
+        if src.exists():
+            shutil.move(str(src), str(target / name))
+    legacy_models = BASE_DIR / "models"
+    dest_models = target / "models"
+    if legacy_models.exists() and not dest_models.exists():
+        try:
+            shutil.move(str(legacy_models), str(dest_models))
+        except (OSError, shutil.Error):
+            pass
+
+
+_env_data = os.getenv("MAGNITU_DATA_DIR")
+if _env_data:
+    DATA_DIR = Path(_env_data).expanduser().resolve()
+else:
+    if os.environ.get("MAGNITU_TEST") == "1":
+        DATA_DIR = BASE_DIR
+    else:
+        DATA_DIR = _default_user_data_dir()
+        try:
+            _migrate_legacy_repo_data_if_needed(DATA_DIR)
+        except (OSError, shutil.Error):
+            pass
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CONFIG_PATH = DATA_DIR / "magnitu_config.json"

@@ -121,7 +121,7 @@ Open **`http://127.0.0.1:8000`**. The first visit sends you to **`/setup`** to n
 
 **macOS — `Magnitu.app`:** with the clone at **`~/Applications/magnitu3`**, **`install/bootstrap.sh`** also adds **Magnitu** to **`~/Applications`** and the **Desktop** (symlinks to `install/Magnitu.app` in the repo). Each launch runs a **git fetch / fast-forward on `main`** (same idea as `start.sh`), then the desktop window. If launch fails, you get an **alert** and a **log** (usually **`magnitu3/.magnitu_desktop_last.log`**) to send for debugging.
 
-**Data on disk (default):** with no `MAGNITU_DATA_DIR` override, the database (`magnitu.db`), config (`magnitu_config.json`), and `models/` live **next to `main.py`** in the same directory you cloned (see `config.py`).
+**Data on disk (default):** with no `MAGNITU_DATA_DIR` override, the database (`magnitu.db`), config (`magnitu_config.json`), and `models/` live in a **per-user data directory outside the git clone** — macOS: `~/Library/Application Support/Magnitu`, Linux: `~/.local/share/magnitu` (or `$XDG_DATA_HOME/magnitu`), Windows: `%LOCALAPPDATA%\\Magnitu`. This keeps secrets and local state out of the repository working tree. Override with env **`MAGNITU_DATA_DIR`**. On first start after an upgrade, if those files still sit next to `main.py`, Magnitu **moves** them into the new location automatically.
 
 **Optional — Gemini synthetic labeling:** copy **`.env.example`** to **`.env`**, set **`GEMINI_API_KEY`**, and optionally **`GEMINI_MODEL`**. Do not commit `.env`.
 

@@ -1,7 +1,7 @@
 # ── Secrets (never commit) ──
 .env
 
-# ── Local app data & config (per machine; paths from config.py / env) ──
+# ── Local app data & config (default is outside the repo; legacy paths here) ──
 magnitu.db
 magnitu.db-shm
 magnitu.db-wal

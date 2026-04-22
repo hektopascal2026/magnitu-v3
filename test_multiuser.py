@@ -20,6 +20,8 @@ _bob_dir = os.path.join(_test_dir, "bob")
 os.makedirs(_alice_dir)
 os.makedirs(_bob_dir)
 
+os.environ["MAGNITU_TEST"] = "1"
+
 # We'll import db twice (by patching DB_PATH) to simulate two users.
 # Since Python caches modules, we'll manually swap DB_PATH between calls.
 
