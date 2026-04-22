@@ -934,7 +934,6 @@ async def update_profile_api(profile_id: int, request: Request):
         description=data.get("description"),
         seismo_url=data.get("seismo_url"),
         api_key=data.get("api_key"),
-        accent_color=data.get("accent_color"),
         is_default=1 if data.get("is_default") else None,
     )
     if new_slug:

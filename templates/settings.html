@@ -149,15 +149,8 @@
                        placeholder="API key for this Seismo instance"
                        style="font-family: monospace;">
             </div>
-            <div class="form-group">
-                <label>Accent color (Hex override)</label>
-                <input type="text" id="profileAccentColor" value="{{ profile.accent_color or '' }}"
-                       placeholder="#rrggbb"
-                       style="font-family: monospace;">
-                <div class="form-help">If Seismo doesn't send a color, enter it here (e.g. <code>#FFA94D</code>).</div>
-            </div>
             <div class="form-actions">
-                <button class="btn btn-primary" id="saveProfileBtn">Save settings</button>
+                <button class="btn btn-primary" id="saveProfileBtn">Save push target</button>
                 <button class="btn" id="testProfileBtn" type="button">Test push target</button>
                 <span id="profileStatus"></span>
             </div>
@@ -553,7 +546,6 @@
             var data = {
                 seismo_url: document.getElementById('profileSeismoUrl').value.trim(),
                 api_key: document.getElementById('profileApiKey').value.trim(),
-                accent_color: document.getElementById('profileAccentColor').value.trim(),
             };
             fetch('/api/profiles/' + profileId, {
                 method: 'PUT',
