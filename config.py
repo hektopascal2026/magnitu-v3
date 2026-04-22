@@ -50,6 +50,7 @@ DEFAULTS = {
     # Gemini synthetic labeling settings
     "gemini_api_key": "",
     "gemini_model": "models/gemini-2.5-flash",
+    "gemini_mode": "single",  # "single" or "batch"
 }
 
 # Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).
@@ -70,6 +71,7 @@ PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
     "label_time_decay_days",
     "label_time_decay_floor",
     "reasoning_weight_boost",
+    "gemini_mode",
 })
 
 

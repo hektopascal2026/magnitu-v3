@@ -8,7 +8,10 @@ import db
 import sampler
 from magnitu.gemini import GeminiClient
 from magnitu.gemini_config import GeminiConfig
-from magnitu.synthetic_scorer import call_gemini_for_synthetic_label
+from magnitu.synthetic_scorer import (
+    call_gemini_for_synthetic_label,
+    call_gemini_for_synthetic_label_batch
+)
 
 SOURCE_GEMINI = "Gemini"
 
@@ -54,6 +57,7 @@ def run_gemini_synthetic_batch_job(
     entry_type: Optional[str] = None,
     replace_gemini: bool = False,
     system_instruction: Optional[str] = None,
+    mode: str = "single",
     progress_cb: Optional[Callable[[int, str, Optional[str]], None]] = None,
 ) -> Dict[str, Any]:
     """Process up to ``batch_limit`` smart-queue entries with Gemini; persist via ``db.set_label``.
@@ -104,48 +108,110 @@ def run_gemini_synthetic_batch_job(
     labeled = 0
 
     with GeminiClient(cfg) as client:
-        for i, entry in enumerate(to_process):
-            et, eid = entry["entry_type"], int(entry["entry_id"])
-            if progress_cb:
-                pct = 5 + int(90 * i / max(total, 1))
-                progress_cb(
-                    min(pct, 94),
-                    "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
-                    "Processing %s #%s: %s" % (et, eid, entry.get("title") or "No title")
-                )
-            ok, _skip = _eligible_for_gemini(et, eid, profile_id, replace_gemini)
-            if not ok:
-                skipped_mid += 1
-                continue
-            try:
-                label, reasoning = call_gemini_for_synthetic_label(
-                    client, 
-                    system_instruction=system_instruction,
-                    **_entry_fields_for_prompt(entry)
-                )
-                db.set_label(
-                    et,
-                    eid,
-                    label,
-                    reasoning=reasoning,
-                    profile_id=profile_id,
-                    label_source=SOURCE_GEMINI,
-                )
-                labeled += 1
+        if mode == "batch":
+            # Process in chunks of 10
+            chunk_size = 10
+            for i in range(0, len(to_process), chunk_size):
+                chunk = to_process[i : i + chunk_size]
                 if progress_cb:
+                    pct = 5 + int(90 * i / max(total, 1))
+                    progress_cb(
+                        min(pct, 94),
+                        "Gemini Batch %d-%d/%d" % (i + 1, min(i + chunk_size, total), total),
+                        "Sending batch of %d entries to Gemini..." % len(chunk)
+                    )
+                
+                try:
+                    results = call_gemini_for_synthetic_label_batch(
+                        client,
+                        chunk,
+                        system_instruction=system_instruction
+                    )
+                    # Match by (entry_type, entry_id) — IDs can repeat across types.
+                    results_by_key = {}
+                    for r in results:
+                        if not isinstance(r, dict):
+                            continue
+                        try:
+                            rid = int(r.get("entry_id", 0))
+                        except (TypeError, ValueError):
+                            continue
+                        rt = str(r.get("entry_type") or "").strip()
+                        if rt and rid:
+                            results_by_key[(rt, rid)] = r
+                    for entry in chunk:
+                        et, eid = entry["entry_type"], int(entry["entry_id"])
+                        et_s = str(et)
+                        res = results_by_key.get((et_s, eid))
+                        if res:
+                            label = res.get("label")
+                            reasoning = res.get("reasoning", "")
+                            if label in sampler.MAGNITU_LABELS and reasoning:
+                                db.set_label(
+                                    et, eid, label, 
+                                    reasoning=reasoning, 
+                                    profile_id=profile_id,
+                                    label_source=SOURCE_GEMINI
+                                )
+                                labeled += 1
+                                if progress_cb:
+                                    progress_cb(
+                                        min(pct, 94),
+                                        "Gemini Batch %d-%d/%d" % (i + 1, min(i + chunk_size, total), total),
+                                        "  -> %s #%s: %s" % (et, eid, label)
+                                    )
+                            else:
+                                failed.append({"entry_type": et, "entry_id": eid, "error": "Invalid label or empty reasoning in batch response"})
+                        else:
+                            failed.append({"entry_type": et, "entry_id": eid, "error": "Entry missing in Gemini batch response"})
+                except Exception as ex:
+                    for entry in chunk:
+                        failed.append({"entry_type": entry["entry_type"], "entry_id": entry["entry_id"], "error": str(ex)[:500]})
+        
+        else:
+            # Original single-entry mode
+            for i, entry in enumerate(to_process):
+                et, eid = entry["entry_type"], int(entry["entry_id"])
+                if progress_cb:
+                    pct = 5 + int(90 * i / max(total, 1))
                     progress_cb(
                         min(pct, 94),
                         "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
-                        "  -> Label: %s\n  -> Reasoning: %s" % (label, reasoning)
+                        "Processing %s #%s: %s" % (et, eid, entry.get("title") or "No title")
                     )
-            except Exception as ex:
-                failed.append(
-                    {
-                        "entry_type": et,
-                        "entry_id": eid,
-                        "error": str(ex)[:500],
-                    }
-                )
+                ok, _skip = _eligible_for_gemini(et, eid, profile_id, replace_gemini)
+                if not ok:
+                    skipped_mid += 1
+                    continue
+                try:
+                    label, reasoning = call_gemini_for_synthetic_label(
+                        client, 
+                        system_instruction=system_instruction,
+                        **_entry_fields_for_prompt(entry)
+                    )
+                    db.set_label(
+                        et,
+                        eid,
+                        label,
+                        reasoning=reasoning,
+                        profile_id=profile_id,
+                        label_source=SOURCE_GEMINI,
+                    )
+                    labeled += 1
+                    if progress_cb:
+                        progress_cb(
+                            min(pct, 94),
+                            "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
+                            "  -> Label: %s\n  -> Reasoning: %s" % (label, reasoning)
+                        )
+                except Exception as ex:
+                    failed.append(
+                        {
+                            "entry_type": et,
+                            "entry_id": eid,
+                            "error": str(ex)[:500],
+                        }
+                    )
 
     if progress_cb:
         progress_cb(100, "Gemini batch finished.")

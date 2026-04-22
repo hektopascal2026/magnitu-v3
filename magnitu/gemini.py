@@ -181,7 +181,9 @@ class GeminiClient:
         backoff_s = max(0.5, self.cfg.retry_backoff_s)
 
         total_attempts = max_retries + json_retries + 1
-        use_schema = bool(self.cfg.strict_schema and response_schema)
+        # Request structured output whenever the caller supplies a schema (synthetic
+        # single + batch). If the API rejects responseSchema, we fall back to JSON MIME only.
+        use_schema = bool(response_schema)
 
         for attempt in range(total_attempts):
             strict_note = ""

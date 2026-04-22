@@ -697,6 +697,10 @@ async def gemini_batch_start(slug: str, request: Request):
         entry_type = "lex_item"
     elif source == "news":
         entry_type = "feed_item"
+    mode = str(body.get("mode", "single")).strip().lower()
+    if mode not in ("single", "batch"):
+        mode = "single"
+    db.merge_profile_training_settings(profile_id, {"gemini_mode": mode})
 
     job_id = _create_job("gemini_synthetic_batch")
     t = threading.Thread(
@@ -707,6 +711,7 @@ async def gemini_batch_start(slug: str, request: Request):
                 batch_limit=batch_limit,
                 entry_type=entry_type,
                 replace_gemini=replace_gemini,
+                mode=mode,
                 progress_cb=cb,
             ),
         ),

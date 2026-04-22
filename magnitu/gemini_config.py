@@ -57,6 +57,8 @@ class GeminiConfig:
     max_retries: int = 4
     retry_backoff_s: float = 8.0
     json_retries: int = 3
+    # Unused for gating: callers pass response_schema; GeminiClient always requests it
+    # when set, with HTTP-400 fallback to JSON MIME only.
     strict_schema: bool = False
 
     @classmethod

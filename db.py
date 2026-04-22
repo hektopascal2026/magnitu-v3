@@ -338,6 +338,9 @@ def _normalize_training_settings_dict(d: dict) -> None:
         except (TypeError, ValueError):
             at = 0.75
         d["alert_threshold"] = max(0.0, min(1.0, at))
+    if "gemini_mode" in d:
+        m = str(d.get("gemini_mode", "single")).lower().strip()
+        d["gemini_mode"] = m if m in ("single", "batch") else "single"
 
 
 def get_profile_training_settings(profile_id: int) -> dict:

@@ -36,6 +36,16 @@
             Re-label entries previously labeled by Gemini (retry failed rows)
         </label>
 
+        <label class="field-label">Processing mode</label>
+        <select id="geminiMode" class="field-input">
+            <option value="single" {% if config.gemini_mode == 'single' %}selected{% endif %}>One by one (Progressive log)</option>
+            <option value="batch" {% if config.gemini_mode == 'batch' %}selected{% endif %}>Prompt batching (10x faster, cheaper)</option>
+        </select>
+
+        <p class="help-text subtle">
+            <strong>Prompt batching</strong> sends 10 articles in a single LLM request. It is significantly cheaper and faster, but log updates arrive in chunks.
+        </p>
+
         <p class="help-text subtle">
             Labels are saved locally with reasoning and <code>source: Gemini</code> in exports.
             Seismo is not updated per row; use <strong>Push to {{ profile.display_name }}</strong> on the Label page when ready.
@@ -167,6 +177,7 @@
         limit = Math.max(1, Math.min(100, limit));
         var source = document.getElementById('geminiSource').value;
         var replaceGemini = document.getElementById('geminiReplace').checked;
+        var mode = document.getElementById('geminiMode').value;
 
         btn.disabled = true;
         resultEl.style.display = 'none';
@@ -181,7 +192,8 @@
             body: JSON.stringify({
                 limit: limit,
                 source: source,
-                replace_gemini: replaceGemini
+                replace_gemini: replaceGemini,
+                mode: mode
             })
         })
             .then(function(r) { return r.json(); })

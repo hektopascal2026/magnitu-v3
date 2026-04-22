@@ -54,6 +54,26 @@ SCHEMA_SYNTHETIC_LABEL: Dict[str, Any] = {
     "required": ["label", "reasoning"],
 }
 
+SCHEMA_SYNTHETIC_LABEL_BATCH: Dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "labels": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "entry_id": {"type": "INTEGER"},
+                    "entry_type": {"type": "STRING"},
+                    "label": {"type": "STRING"},
+                    "reasoning": {"type": "STRING"},
+                },
+                "required": ["entry_id", "entry_type", "label", "reasoning"],
+            }
+        }
+    },
+    "required": ["labels"],
+}
+
 # Appended to the user prompt on the single retry when label is investigation_lead
 # but reasoning was empty (workspace rule: never persist that combination).
 INVESTIGATION_LEAD_REASONING_RETRY_SUFFIX = (
@@ -63,6 +83,41 @@ INVESTIGATION_LEAD_REASONING_RETRY_SUFFIX = (
     "The reasoning must explain the lead, including any EU/EEA-only, third-country, "
     "or exclusion angle if the text supports it. No markdown fences."
 )
+
+
+def build_synthetic_label_batch_prompt(
+    entries: List[Dict[str, Any]],
+) -> str:
+    """Build the user message for multiple entries (JSON response: list of objects)."""
+    label_line = ", ".join(
+        "%s (%s)" % (LABEL_DISPLAY[k], k) for k in MAGNITU_LABELS
+    )
+    parts = [
+        "Classify the following %d entries into exactly one label each." % len(entries),
+        "Allowed labels: %s." % label_line,
+        'Return ONLY valid JSON: {"labels": [{"entry_id": <int>, "entry_type": "<string>", "label": "<enum>", "reasoning": "<string>"}, ...]}',
+        "Use the enum strings exactly: investigation_lead, important, background, noise.",
+        "reasoning must be concise (1-3 sentences).",
+        "",
+        "ENTRIES TO CLASSIFY",
+        "-------------------",
+    ]
+    for idx, e in enumerate(entries):
+        parts.append("ITEM #%d" % (idx + 1))
+        parts.append("entry_id: %s" % e.get("entry_id"))
+        parts.append("entry_type: %s" % e.get("entry_type"))
+        parts.append("title: %s" % str(e.get("title") or "").strip())
+        desc = str(e.get("description") or "").strip()
+        if desc:
+            parts.append("description: %s" % desc)
+        source = str(e.get("source_name") or "").strip()
+        if source:
+            parts.append("source: %s" % source)
+        parts.append("---")
+    
+    parts.append("")
+    parts.append("No markdown fences. No trailing commas.")
+    return "\n".join(parts)
 
 
 def build_synthetic_label_user_prompt(
