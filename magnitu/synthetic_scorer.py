@@ -27,11 +27,15 @@ def call_gemini_for_synthetic_label(
     source_category: str = "",
     source_type: str = "",
     published_date: str = "",
+    system_instruction: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Call Gemini once; retry at most once if investigation_lead has empty reasoning.
 
     Returns (label, reasoning). Raises ValueError if validation fails after retry.
     """
+    if system_instruction is None:
+        system_instruction = SYSTEM_SWISS_TRADE_ANALYST
+    
     fields: dict[str, Any] = {
         "title": title,
         "description": description,
@@ -48,7 +52,7 @@ def call_gemini_for_synthetic_label(
         user,
         label="synthetic_label",
         response_schema=SCHEMA_SYNTHETIC_LABEL,
-        system_instruction=SYSTEM_SWISS_TRADE_ANALYST,
+        system_instruction=system_instruction,
     )
     if should_retry_investigation_lead_empty_reasoning(raw):
         user_retry = user + "\n\n" + INVESTIGATION_LEAD_REASONING_RETRY_SUFFIX
@@ -56,6 +60,6 @@ def call_gemini_for_synthetic_label(
             user_retry,
             label="synthetic_label_retry",
             response_schema=SCHEMA_SYNTHETIC_LABEL,
-            system_instruction=SYSTEM_SWISS_TRADE_ANALYST,
+            system_instruction=system_instruction,
         )
     return validate_synthetic_label_output(raw)

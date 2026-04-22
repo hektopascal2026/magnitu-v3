@@ -18,11 +18,11 @@
     <ol style="max-width: 720px; line-height: 1.6; padding-left: 1.25rem;">
         <li style="margin-bottom: 12px;"><strong>In Seismo</strong> — Create the satellite (name, slug, accent colour). Download the JSON / bundle Seismo gives you.</li>
         <li style="margin-bottom: 12px;"><strong>On the server</strong> — Deploy the satellite files and database so that URL is a live Seismo instance. Entries still come from the mothership-side feed setup; the satellite holds its own scores and Magnitu-facing state.</li>
-        <li style="margin-bottom: 12px;"><strong>In Magnitu</strong> — Add a <strong>profile</strong> and enter that satellite’s URL and API key under Settings → <em>Satellite</em> for that profile. Label entries, hit <strong>Train</strong> — that trains <em>this profile’s</em> model on your labels (stored locally).</li>
+        <li style="margin-bottom: 12px;"><strong>In Magnitu</strong> — Add a <strong>profile</strong> and enter that satellite’s URL and API key under Settings → <em>Per-profile push target</em> for that profile. Label entries, hit <strong>Train</strong> — that trains <em>this profile’s</em> model on your labels (stored locally).</li>
         <li style="margin-bottom: 12px;"><strong>Sync</strong> pulls <strong>articles</strong> using the global <strong>Mothership Connection</strong> (everyone shares one entry pool). It merges <strong>labels</strong> from the satellite’s <code>magnitu_labels</code> when your profile has satellite credentials; if both fields are blank, Magnitu warns you that label import falls back to mothership.</li>
         <li><strong>Push</strong> sends relevance scores, the distilled recipe, and labels <strong>to that satellite</strong>, so Seismo can rank feeds for that audience.</li>
     </ol>
-    <p style="max-width: 720px; margin-top: 14px;">Satellite branding colour in the Magnitu tab may appear when Seismo returns <code>accent_color</code> on <code>magnitu_status</code> — use <strong>Test satellite</strong> or run <strong>Push</strong> after deploying.</p>
+    <p style="max-width: 720px; margin-top: 14px;">Satellite branding colour in the Magnitu tab may appear when Seismo returns <code>accent_color</code> on <code>magnitu_status</code> — use <strong>Test push target</strong> or run <strong>Push</strong> after deploying.</p>
 </div>
 
 <!-- 2. The Four Labels -->
@@ -138,6 +138,7 @@
     <div class="about-section">
         <h3>Training Settings — What Each Knob Does</h3>
         <p>The <strong>Settings → Training Settings</strong> panel has four knobs that control how the model learns and what it exports to Seismo. None of them needs to be touched for Magnitu to work; the defaults are picked so a fresh install behaves sensibly.</p>
+        <p><strong>Per profile:</strong> these four knobs (and the decay / reasoning options under Advanced training) are <strong>saved separately for each workspace profile</strong>. Switching profiles in the header does not carry the numbers over — each profile has its own stored values, falling back to the global defaults in <code>magnitu_config.json</code> until you save something on that profile. <strong>Legal-signal patterns</strong> are the exception: one global list for all profiles, because matches are woven into shared entry embeddings.</p>
         <div class="about-detail-grid">
             <div class="about-detail">
                 <span class="about-detail-label">Minimum Labels to Train <em>(default 20)</em></span>
@@ -145,7 +146,7 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Recipe Top Keywords <em>(default 200)</em></span>
-                <span class="about-detail-value">How many words and phrases the recipe pushed to Seismo contains. <strong>More = broader coverage</strong>, but the recipe grows and low-weight terms start adding noise to Seismo's live score. <strong>Fewer = crisper, more focused recipe</strong>, but niche terminology may fall below the cutoff. Sweet spot is 150–300 for ~500 labels, 200–400 once you're past 1000 labels. Below 80 feels thin; above 600 is mostly noise. Use the <em>Learned Legal Patterns</em> panel on the Model page as a sanity check: if the weakest phrases still look meaningful, you can raise the cap; if they look like filler, lower it.</span>
+                <span class="about-detail-value">How many words and phrases the recipe pushed to Seismo contains — <strong>per profile</strong>. <strong>More = broader coverage</strong>, but the recipe grows and low-weight terms start adding noise to Seismo's live score. <strong>Fewer = crisper, more focused recipe</strong>, but niche terminology may fall below the cutoff. Sweet spot is 150–300 for ~500 labels, 200–400 once you're past 1000 labels. Below 80 feels thin; above 600 is mostly noise. The Settings page shows a <strong>heuristic suggestion</strong> (about 200 scaling toward 400 as your label count approaches ~2000) when your value is clearly below that curve — optional guidance; use the <em>Learned Legal Patterns</em> panel on the Model page as the real sanity check.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Alert Threshold <em>(default 0.75)</em></span>
@@ -161,6 +162,7 @@
     <div class="about-section">
         <h3>Advanced Training Knobs</h3>
         <p>Under <strong>Settings → Advanced training</strong> there are three additional levers that change how your labels get weighted during the next training run. All default to <em>off</em> (no behavioural change). They only affect the <strong>next</strong> train — nothing already trained is re-weighted.</p>
+        <p><strong>Time-decay</strong> and <strong>reasoning boost</strong> are stored <strong>per profile</strong> like the Training panel. <strong>Legal-signal patterns</strong> are <strong>global</strong> — one list shared by every profile because pattern matches are baked into the same cached embeddings for each entry.</p>
 
         <h4 style="margin-top: 18px;">Label time-decay <em>(default: off)</em></h4>
         <p>Older labels count less during training. You set a <strong>half-life in days</strong>: at <code>120</code>, a label from 4 months ago weighs half as much as a label from today. A <strong>decay floor</strong> (default <code>0.2</code>) sets the minimum weight so ancient labels never fully vanish.</p>
@@ -192,8 +194,8 @@
             </div>
         </div>
 
-        <h4 style="margin-top: 18px;">Legal-signal patterns <em>(default: empty)</em></h4>
-        <p>User-configured phrases (or regex) that flag legislative signal in an entry. When a match is found, Magnitu does <strong>two</strong> things:</p>
+        <h4 style="margin-top: 18px;">Legal-signal patterns <em>(default: empty, global)</em></h4>
+        <p>User-configured phrases (or regex) that flag legislative signal in an entry. This list is <strong>shared across all profiles</strong>. When a match is found, Magnitu does <strong>two</strong> things:</p>
         <ol>
             <li>Prepends the matched phrase(s) to the embedded text as <code>signals=…</code>, so the transformer treats them as emphasized context.</li>
             <li>Boosts the same phrases in the distilled recipe pushed to Seismo (positive weight toward <code>investigation_lead</code> and <code>important</code>).</li>

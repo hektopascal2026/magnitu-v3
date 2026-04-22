@@ -55,7 +55,6 @@
                         {% else %}
                         <button type="button" class="btn btn-sm profile-switch-btn" data-profile-id="{{ p.id }}">Switch</button>
                         {% endif %}
-                        <a href="/p/{{ p.slug }}/settings#profiles" class="btn btn-sm" style="margin-top: 6px; display: inline-block;">Edit settings</a>
                         {% if not p.is_default %}
                         <button type="button" class="btn btn-sm btn-danger profile-delete-btn" style="margin-top: 6px; display: block;"
                                 data-profile-id="{{ p.id }}" data-profile-name="{{ p.display_name|e }}">Delete</button>
@@ -113,35 +112,46 @@
     <!-- Per-Profile Push Target -->
     {% if profile %}
     <div class="dashboard-section">
-        <h2>Satellite — {{ profile.display_name }}</h2>
+        <h2>Per-profile push target — {{ profile.display_name }}</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
-            This is the lightweight Seismo that <strong>receives</strong> scores, recipes, and labels you push from this profile.
-            Sync imports labels <strong>from here</strong> when URL and key are set (entries always come from mothership).
-            When <strong>Test satellite</strong> succeeds and Seismo returns <code>accent_color</code>, Magnitu uses it for the header tab colour (optional).
+            <strong>{{ profile.display_name }}</strong> is a Magnitu <em>profile</em> (model + labels), not a Seismo instance.
+            Here you optionally point this profile at a <strong>lightweight Seismo</strong> (often called a satellite) that <strong>receives</strong> scores, recipes, and pushed labels.
+            Sync imports labels <strong>from that URL</strong> when URL and key are set (entries always come from mothership).
+            When <strong>Test push target</strong> succeeds and Seismo returns <code>accent_color</code>, Magnitu uses it for the header tab colour (optional).
         </p>
-        {% if not profile.seismo_url and not profile.api_key %}
+        {% if profile_push_blank %}
         <div id="satelliteFallbackBanner" style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #cc8800; background: #fffbf0; font-size: 13px;">
-            <strong>No satellite configured.</strong>
-            Push and Sync label-pull fall back to <strong>global mothership</strong> (same URL as Mothership Connection below).
-            To keep satellite-only labels, set URL + API key here before syncing.
+            <strong>No separate Seismo for this profile.</strong>
+            Push and Sync label-pull use <strong>global mothership</strong> (same URL as Mothership Connection below).
+            To push to / pull labels from a dedicated lightweight Seismo instead, set URL + API key here before syncing.
+        </div>
+        {% elif profile_push_incomplete %}
+        <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #c60; background: #fff8f0; font-size: 13px;">
+            <strong>Incomplete push target.</strong>
+            Set <strong>both</strong> Seismo URL and API key for this profile, or clear both to use mothership only.
+        </div>
+        {% else %}
+        <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #080; background: #f0fff4; font-size: 13px;">
+            <strong>This profile has its own Seismo URL and API key.</strong>
+            Push, recipe upload, and label pull for <strong>{{ profile.display_name }}</strong> use this target (not mothership-only).
         </div>
         {% endif %}
         <div class="settings-form" id="profileForm">
             <div class="form-group">
-                <label>Satellite Seismo URL</label>
+                <label>Push target Seismo URL</label>
                 <input type="url" id="profileSeismoUrl" value="{{ profile.seismo_url or '' }}"
-                       placeholder="Satellite index.php URL">
+                       placeholder="Lightweight Seismo index.php URL">
                 <div class="form-help">Must mirror mothership entries. If blank with blank key, mothership is used.</div>
             </div>
             <div class="form-group">
-                <label>Satellite API key</label>
+                <label>Push target API key</label>
                 <input type="text" id="profileApiKey" value="{{ profile.api_key or '' }}"
-                       placeholder="API key for this satellite"
+                       placeholder="API key for this Seismo instance"
                        style="font-family: monospace;">
             </div>
             <div class="form-actions">
-                <button class="btn btn-primary" id="saveProfileBtn">Save Satellite</button>
-                <button class="btn" id="testProfileBtn" type="button">Test satellite</button>
+                <button class="btn btn-primary" id="saveProfileBtn">Save push target</button>
+                <button class="btn" id="testProfileBtn" type="button">Test push target</button>
                 <span id="profileStatus"></span>
             </div>
         </div>
@@ -399,8 +409,18 @@
         });
     });
 
-    function deleteProfile(id, name) {
-        if (!confirm('Delete profile "' + name + '"? All its labels and model records will be removed. This cannot be undone.')) return;
+    function resetProfileDeleteArmed() {
+        if (window._profileDeleteArmedTimer) {
+            clearTimeout(window._profileDeleteArmedTimer);
+            window._profileDeleteArmedTimer = null;
+        }
+        document.querySelectorAll('.profile-delete-btn.profile-delete-armed').forEach(function(b) {
+            b.classList.remove('profile-delete-armed');
+            b.textContent = 'Delete';
+        });
+    }
+
+    function deleteProfile(id) {
         fetch('/api/profiles/' + id, { method: 'DELETE' })
             .then(function(r) { return r.json(); })
             .then(function(d) {
@@ -411,10 +431,14 @@
                         window.location.href = '/';
                     }
                 } else {
+                    resetProfileDeleteArmed();
                     flash(d.error || 'Failed to delete profile.', 'error');
                 }
             })
-            .catch(function(err) { flash('Error: ' + err.message, 'error'); });
+            .catch(function(err) {
+                resetProfileDeleteArmed();
+                flash('Error: ' + err.message, 'error');
+            });
     }
 
     var createBtn = document.getElementById('createProfileBtn');
@@ -454,9 +478,17 @@
     }
     document.querySelectorAll('.profile-delete-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
-            var id = parseInt(btn.getAttribute('data-profile-id'), 10);
-            var name = btn.getAttribute('data-profile-name') || '';
-            deleteProfile(id, name);
+            if (btn.classList.contains('profile-delete-armed')) {
+                var id = parseInt(btn.getAttribute('data-profile-id'), 10);
+                deleteProfile(id);
+                return;
+            }
+            resetProfileDeleteArmed();
+            btn.classList.add('profile-delete-armed');
+            btn.textContent = 'Sure?';
+            window._profileDeleteArmedTimer = setTimeout(function() {
+                resetProfileDeleteArmed();
+            }, 8000);
         });
     });
 

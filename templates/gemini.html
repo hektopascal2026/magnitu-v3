@@ -44,6 +44,18 @@
         <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
     </div>
 
+    <div class="gemini-form persona-card">
+        <div class="persona-header">
+            <h3 class="section-title">Persona & Instructions</h3>
+            <p class="help-text subtle">Define how Gemini should think when labeling entries for this profile.</p>
+        </div>
+        <textarea id="geminiPersona" class="field-input persona-textarea" rows="10">{{ gemini_persona }}</textarea>
+        <div class="persona-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="geminiPersonaResetBtn">Reset to Default</button>
+            <button type="button" class="btn btn-primary btn-sm" id="geminiPersonaSaveBtn">Save Persona</button>
+        </div>
+    </div>
+
     <div class="task-progress" id="taskProgress" style="display:none;">
         <div class="task-progress-label" id="taskProgressLabel">Working...</div>
         <div class="task-progress-track">
@@ -171,6 +183,37 @@
                 btn.disabled = false;
                 setProgress(false);
             });
+    });
+
+    document.getElementById('geminiPersonaSaveBtn').addEventListener('click', function() {
+        var btn = this;
+        var persona = document.getElementById('geminiPersona').value;
+        btn.disabled = true;
+        fetch(P + '/api/gemini/persona', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ persona: persona })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            flash('Persona saved successfully.', 'success');
+        })
+        .catch(function(err) { flash('Error saving persona: ' + err.message, 'error'); })
+        .finally(function() { btn.disabled = false; });
+    });
+
+    document.getElementById('geminiPersonaResetBtn').addEventListener('click', function() {
+        if (!confirm('Reset persona to system default? Current changes will be lost.')) return;
+        var btn = this;
+        btn.disabled = true;
+        fetch(P + '/api/gemini/persona/reset', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            document.getElementById('geminiPersona').value = data.default || '';
+            flash('Persona reset to default.', 'success');
+        })
+        .catch(function(err) { flash('Error resetting persona: ' + err.message, 'error'); })
+        .finally(function() { btn.disabled = false; });
     });
 })();
 </script>

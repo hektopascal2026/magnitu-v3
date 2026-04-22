@@ -36,9 +36,8 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; the embedding is invalidated when those fields change on sync
   - **Lead discovery blend** (optional, 0–0.25): gently emphasises `investigation_lead` probability in the relevance score pushed to Seismo
 - **Advanced training knobs** (Settings → Advanced training, all opt-in)
-  - **Label time-decay** — older labels count less at training time (configurable half-life, with a floor so ancient labels never fully vanish)
-  - **Reasoning-weight boost** — labels that come with a written reasoning note count more during training
-  - **Legal-signal patterns** — user phrases that get prepended to the embedded text as `signals=…` and boosted in the distilled recipe
+  - **Label time-decay** and **reasoning-weight boost** — stored **per profile** (each workspace can use different values)
+  - **Legal-signal patterns** — **global** (one list for all profiles; changing them invalidates shared embeddings)
   - Full reference with defaults, tradeoffs, and tuning guidance below: [Training Settings Reference](#training-settings-reference)
 - **Recipe distillation**
   - Unigrams, bigrams, trigrams; both positive and negative signals per class
@@ -125,7 +124,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ### Docker data persistence
 
 - App data is stored in the named volume `magnitu_data`:
-  - config: `/app/data/magnitu_config.json`
+  - config: `/app/data/magnitu_config.json` (global defaults; per-profile training overrides live in the DB)
   - database: `/app/data/magnitu.db`
   - models: `/app/data/models`
   - transformer cache: `/app/data/hf`
@@ -139,17 +138,19 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 
 ## Settings
 
-Settings are split into **global** (apply to every profile) and **per-profile** (only affect the active profile). All global settings live in `magnitu_config.json` in the data directory; per-profile settings live in the database.
+Settings are split into **global** (apply to every profile) and **per-profile**. Global values live in `magnitu_config.json` in the data directory. Per-profile training overrides are stored in SQLite on each profile row (`training_settings` JSON) and merged over the global file when you train, score, or distill a recipe for that profile.
 
 ### Global (applies to all profiles)
 - **Mothership Seismo URL + API key** — where entries are pulled from
 - **Model architecture** — `transformer` or `tfidf`
 - **Transformer model name** — HuggingFace model id (default `xlm-roberta-base`)
 - **GPU toggle** — CUDA/MPS acceleration when available
+- **Legal-signal patterns** — shared across profiles (they are baked into the same cached embeddings for every entry)
 
 ### Per-profile
 - **Push target URL + API key** — which Seismo instance receives this profile's scores and recipe. Leave blank to fall back to the mothership.
-- **Advanced training knobs** below all sit at the global config level today (they affect every profile's next train); this is a deliberate simplification — revisit if a profile ever needs different weighting.
+- **Training Settings** (minimum labels, recipe top keywords, alert threshold, lead discovery blend) — saved per profile when you click **Save** on that profile's Settings page. New profiles inherit global defaults until you change and save them there.
+- **Advanced training** (label time-decay, decay floor, reasoning-weight boost) — also per profile. **Legal-signal patterns** remain global (see above).
 
 ## Training Settings Reference
 
@@ -161,9 +162,10 @@ Each knob below is tagged with its **default**, a sensible **range**, and guidan
 Safety gate. Below 20 labels the transformer classifier can't generalise at all; around 50 classes start stabilising; 200+ is where minority classes (`investigation_lead`) get decent recall. Only lower this for debugging.
 
 **Recipe Top Keywords** — default `200`, range `50 – 1000`  
-How many features (words, bigrams, trigrams) the distilled recipe includes when pushed to Seismo.
+How many features (words, bigrams, trigrams) the distilled recipe includes when pushed to Seismo. **Stored per profile** (each profile can use a different cap).
 - **Tradeoff**: more keywords = broader coverage, but the recipe also grows (pushed to PHP on every update) and low-weight terms add noise to the Seismo live score. Fewer keywords = crisper signal, but niche terminology may fall below the cutoff.
 - **Typical**: `150–300` for ~500 labels; `200–400` once you're past 1000 labels. Below 80 the recipe feels thin; above 600 you're mostly pushing noise.
+- **Settings hint**: the Training panel shows a **heuristic** target (~200 scaling linearly toward **400** as label count approaches **2000**) when your current value is noticeably below that suggestion — optional guidance, not a requirement.
 - **How to tune**: on the Dashboard, look at the **Learned Legal Patterns** panel. If the strongest positive signals look strong and the weakest look like filler, your cutoff is roughly right.
 
 **Alert Threshold** — default `0.75`, range `0.0 – 1.0`  
@@ -197,7 +199,7 @@ Multiplier for labels that carry a written reasoning note. Labels are replicated
 - **Heuristic**: if a minority of your labels have reasoning (say 10–30%), you can afford a stronger boost. If most labels have reasoning, stay near `1.0` — the boost stops being informative.
 - The model never reads the reasoning text; only the *presence* of reasoning changes the label's weight.
 
-**Legal-signal patterns** — default empty (list of strings)  
+**Legal-signal patterns** — default empty (list of strings), **global (all profiles)**  
 Phrases (literal or regex) that, when matched in an entry's text, are:
 1. prepended to the embedded input as `signals=<matched phrases>` so the transformer sees them as emphasized context, and
 2. boosted in the distilled recipe pushed to Seismo (positive for `investigation_lead` and `important`).
@@ -219,6 +221,7 @@ Magnitu migrates existing installations automatically on startup:
 - Existing labels are assigned to the default profile (profile_id = 1)
 - Existing model records are assigned to the default profile
 - The old `model_profile` table is ported to the new `profiles` table
+- The `profiles` table gains a `training_settings` JSON column for per-profile training overrides (empty until you save Training / Advanced knobs for a profile)
 - No data is lost
 
 ## Notes

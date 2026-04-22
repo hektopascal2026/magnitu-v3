@@ -53,12 +53,16 @@ def run_gemini_synthetic_batch_job(
     batch_limit: int = 50,
     entry_type: Optional[str] = None,
     replace_gemini: bool = False,
+    system_instruction: Optional[str] = None,
     progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> Dict[str, Any]:
     """Process up to ``batch_limit`` smart-queue entries with Gemini; persist via ``db.set_label``.
 
     Does not push labels to Seismo (same as bulk operations: use Sync when ready).
     """
+    if not system_instruction:
+        system_instruction = db.get_profile_gemini_persona(profile_id)
+    
     cfg = GeminiConfig.from_env()
     if not (cfg.api_key or "").strip():
         raise ValueError(
@@ -113,7 +117,9 @@ def run_gemini_synthetic_batch_job(
                 continue
             try:
                 label, reasoning = call_gemini_for_synthetic_label(
-                    client, **_entry_fields_for_prompt(entry)
+                    client, 
+                    system_instruction=system_instruction,
+                    **_entry_fields_for_prompt(entry)
                 )
                 db.set_label(
                     et,

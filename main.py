@@ -474,6 +474,8 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         "embedding_count":   db.get_embedding_count(),
         "profile_accent_bg": profile_accent_bg,
         "profile_accent_fg": profile_accent_fg,
+        "gemini_persona": db.get_profile_gemini_persona(profile_id) if profile else None,
+        "default_gemini_persona": distiller.prompts.DEFAULT_GEMINI_PERSONA,
     }
 
 
@@ -633,7 +635,33 @@ async def gemini_page(request: Request, slug: str):
     ctx["active_model_basename"] = ""
     if paths and paths.get("model_path"):
         ctx["active_model_basename"] = Path(paths["model_path"]).name
+    
+    # Ensure persona is available (already in _base_context, but let's be explicit)
+    if not ctx.get("gemini_persona"):
+        ctx["gemini_persona"] = db.get_profile_gemini_persona(profile_id) or ctx["default_gemini_persona"]
+
     return templates.TemplateResponse("gemini.html", ctx)
+
+
+@app.post("/p/{slug}/api/gemini/persona")
+async def gemini_persona_update(slug: str, request: Request):
+    """Update the Gemini persona for this profile."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    body = await request.json()
+    persona = body.get("persona")
+    if persona is not None:
+        db.set_profile_gemini_persona(profile_id, persona.strip())
+    return {"success": True}
+
+
+@app.post("/p/{slug}/api/gemini/persona/reset")
+async def gemini_persona_reset(slug: str):
+    """Reset the Gemini persona to the system default."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    db.set_profile_gemini_persona(profile_id, None)
+    return {"success": True, "default": distiller.prompts.DEFAULT_GEMINI_PERSONA}
 
 
 @app.post("/p/{slug}/api/gemini/batch")
@@ -825,6 +853,8 @@ async def settings_page(request: Request, slug: str):
         ctx["label_count"] >= 250 and cur_kw < sug_kw - 5
     )
     ctx["RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX"] = RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX
+    ctx["profile_push_blank"] = sync.profile_satellite_blank(profile)
+    ctx["profile_push_incomplete"] = sync.profile_satellite_incomplete(profile)
     return templates.TemplateResponse("settings.html", ctx)
 
 
@@ -1239,7 +1269,7 @@ def _satellite_sync_test_payload(profile: dict, data: dict) -> dict:
         return {
             "success": False,
             "message": (
-                "Enter this profile's satellite URL and API key to test that Seismo. "
+                "Enter this profile's push target URL and API key to test that Seismo. "
                 "When both are blank here, Magnitu uses global mothership for push and "
                 "label pull — use 'Test mothership' under Mothership Connection instead."
             ),
@@ -1251,6 +1281,7 @@ def _satellite_sync_test_payload(profile: dict, data: dict) -> dict:
     ok, msg, status_payload = sync.test_connection(seismo_target=target)
     if not ok:
         return {"success": False, "message": msg}
+    msg = "This profile's push target — {}".format(msg)
     sync.maybe_profile_accent_from_status(status_payload, profile["id"])
     label_ok, label_msg = sync.verify_seismo_endpoints(seismo_target=target)
     if not label_ok:
@@ -1275,6 +1306,7 @@ async def sync_test_mothership(request: Request):
     ok, msg, status_payload = sync.test_connection(seismo_target=target)
     if not ok:
         return {"success": False, "message": msg}
+    msg = "Mothership — {}".format(msg)
     label_ok, label_msg = sync.verify_seismo_endpoints(seismo_target=target)
     if not label_ok:
         return {"success": True, "message": msg, "warning": label_msg}

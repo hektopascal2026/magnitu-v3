@@ -158,6 +158,12 @@ def _migrate_db(conn: sqlite3.Connection):
             "ALTER TABLE profiles ADD COLUMN training_settings TEXT DEFAULT '{}'"
         )
 
+    prof_cols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
+    if "gemini_persona" not in prof_cols:
+        conn.execute(
+            "ALTER TABLE profiles ADD COLUMN gemini_persona TEXT DEFAULT NULL"
+        )
+
     conn.commit()
 
 
@@ -242,7 +248,8 @@ def init_db():
             model_uuid  TEXT    DEFAULT '',
             accent_color TEXT   DEFAULT NULL,
             is_default  INTEGER DEFAULT 0,
-            created_at  TEXT    DEFAULT (datetime('now'))
+            created_at  TEXT    DEFAULT (datetime('now')),
+            gemini_persona TEXT DEFAULT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_entries_type_id  ON entries(entry_type, entry_id);
@@ -417,6 +424,26 @@ def set_profile_accent_color(profile_id: int, accent_hex: str) -> None:
     conn = get_db()
     conn.execute(
         "UPDATE profiles SET accent_color=? WHERE id=?", (accent_hex, profile_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_profile_gemini_persona(profile_id: int) -> Optional[str]:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT gemini_persona FROM profiles WHERE id = ?", (profile_id,)
+    ).fetchone()
+    conn.close()
+    if not row or row[0] is None:
+        return None
+    return str(row[0])
+
+
+def set_profile_gemini_persona(profile_id: int, persona: Optional[str]) -> None:
+    conn = get_db()
+    conn.execute(
+        "UPDATE profiles SET gemini_persona = ? WHERE id = ?", (persona, profile_id)
     )
     conn.commit()
     conn.close()
