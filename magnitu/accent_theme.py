@@ -30,7 +30,9 @@ def _parse_accent_nested(obj: Any, depth: int, max_depth: int) -> Optional[str]:
     """Find first valid accent_color hex at any nesting depth (bounded)."""
     if depth > max_depth or not isinstance(obj, dict):
         return None
-    nested = parse_accent_hex_string(obj.get("accent_color"))
+    nested = parse_accent_hex_string(obj.get("accent_color")) or \
+             parse_accent_hex_string(obj.get("brand_accent")) or \
+             parse_accent_hex_string(obj.get("SEISMO_BRAND_ACCENT"))
     if nested:
         return nested
     for v in obj.values():
@@ -51,7 +53,9 @@ def parse_accent_from_magnitu_status(status: Dict[str, Any]) -> Optional[str]:
     if not isinstance(status, dict):
         return None
 
-    direct = parse_accent_hex_string(status.get("accent_color"))
+    direct = parse_accent_hex_string(status.get("accent_color")) or \
+             parse_accent_hex_string(status.get("brand_accent")) or \
+             parse_accent_hex_string(status.get("SEISMO_BRAND_ACCENT"))
     if direct:
         return direct
 
@@ -71,7 +75,9 @@ def parse_accent_from_magnitu_status(status: Dict[str, Any]) -> Optional[str]:
     for key in nested_keys:
         inner = status.get(key)
         if isinstance(inner, dict):
-            nested = parse_accent_hex_string(inner.get("accent_color"))
+            nested = parse_accent_hex_string(inner.get("accent_color")) or \
+                     parse_accent_hex_string(inner.get("brand_accent")) or \
+                     parse_accent_hex_string(inner.get("SEISMO_BRAND_ACCENT"))
             if nested:
                 return nested
 
