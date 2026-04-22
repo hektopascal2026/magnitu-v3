@@ -1,33 +1,37 @@
-Magnitu – Installation
+Magnitu v3 – Installation
 ━━━━━━━━━━━━━━━━━━━━━━
 
 Magnitu is a machine-learning relevance engine for Seismo.
 It learns which news entries matter to you and highlights investigation leads.
 
 Requirements:
-  • macOS (or Linux)
-  • Python 3.9+ (pre-installed on macOS)
+  • macOS or Linux
+  • Python 3.9+ and git (on macOS, Xcode Command Line Tools)
 
-Install (paste into Terminal):
+Install (from the project README):
 
-  git clone https://github.com/hektopascal2026/magnitu-v3.git ~/magnitu-v3 && bash ~/magnitu-v3/install/bootstrap.sh
+  git clone https://github.com/hektopascal2026/magnitu-v3.git
+  cd magnitu-v3
+  bash install/bootstrap.sh
+  ./start.sh
 
-  It will:
-  1. Download Magnitu to ~/magnitu
-  2. Set up the Python environment
-  3. Ask for your API key
-  4. Test the connection to Seismo
+  The clone directory can be any name. bootstrap.sh will:
+  - create .venv and install dependencies
+  - ask for your Seismo URL and Magnitu API key (magnitu_config.json)
+  - test the Seismo connection
+  - optionally help create a model profile or import a .magnitu file
 
-Start Magnitu:
+  Full detail: see README.md → "Install from scratch (native)".
 
+Start: ./start.sh in your clone  →  http://127.0.0.1:8000
+
+  If you used the remote bootstrap that clones to ~/magnitu, use:
   ~/magnitu/start.sh
-
-  Opens automatically in your browser at http://127.0.0.1:8000
 
 Update:
 
-  cd ~/magnitu && git pull
+  cd /path/to/your/magnitu-v3 && git pull
 
 Uninstall:
 
-  rm -rf ~/magnitu
+  rm -rf /path/to/your/clone

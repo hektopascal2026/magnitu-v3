@@ -1,0 +1,11 @@
+# Optional: native window wrapper (see desktop.py, start_desktop.sh)
+# Install: pip install -r requirements-desktop.txt
+#
+# On macOS, pywebview pulls PyObjC. PyObjC 12+ requires Python 3.10+; 12.0 was also
+# yanked on PyPI. Pin the 11.x line for Python 3.9 (see pyobjc issue #661).
+pyobjc-core>=11.0.1,<12; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=11.0.1,<12; sys_platform == "darwin"
+pyobjc-framework-Quartz>=11.0.1,<12; sys_platform == "darwin"
+pyobjc-framework-Security>=11.0.1,<12; sys_platform == "darwin"
+pyobjc-framework-WebKit>=11.0.1,<12; sys_platform == "darwin"
+pywebview>=4.4

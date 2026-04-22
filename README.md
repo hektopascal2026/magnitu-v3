@@ -87,19 +87,45 @@ This is the intended path when Seismo manages **lightweight satellites** (topic-
 
 Optional **accent** for the Magnitu header tab: Seismo may expose `accent_color` on **`magnitu_status`** (`#rrggbb` / `#rgb`). Magnitu stores it after **Test satellite** or **Push**. Satellites must mirror entry IDs with the mothership so labels and scores line up.
 
-## Run locally
+## Install from scratch (native)
+
+**Requirements:** macOS or Linux, **Python 3.9+**, **git**, and a reachable **Seismo** instance with a **Magnitu API key** (Seismo → *Settings* → *Magnitu*). On macOS, **Xcode Command Line Tools** provide Python and git; `install/bootstrap.sh` can prompt you to install them if missing.
+
+**1. Clone and run the installer**
 
 ```bash
 git clone https://github.com/hektopascal2026/magnitu-v3.git
 cd magnitu-v3
 bash install/bootstrap.sh
+```
+
+You can use any directory name instead of `magnitu-v3`. If you already have the repo, run `bash install/bootstrap.sh` from the repository root; the script uses the current tree and does not clone again.
+
+**2. What `bootstrap.sh` does**
+
+- Creates a **`.venv`** in the repo and `pip install -r requirements.txt`
+- Prompts for **mothership Seismo URL** (full `index.php` URL) and **API key**, then writes **`magnitu_config.json`**
+- Optionally **resets** a leftover `magnitu.db` for a clean database
+- **Tests** the Seismo connection
+- Optionally walks through **model profile** creation, **importing a `.magnitu` file**, or **skip** (finish in the browser)
+
+**3. Start the app**
+
+```bash
 ./start.sh
 ```
 
-Use any directory name you like; `install/bootstrap.sh` detects an existing checkout when run from inside the repo.
+Open **`http://127.0.0.1:8000`**. The first visit sends you to **`/setup`** to name your first profile if you have not already created one in the installer.
 
-Open: `http://127.0.0.1:8000`  
-First run redirects to `/setup` to name your first profile.
+**Optional — desktop window:** same app in a **native window** (WebView) instead of using your default browser. After bootstrap, run `pip install -r requirements-desktop.txt` once, then **`./start_desktop.sh`** (or **`python desktop.py`** with the venv). If something is already listening on port 8000, only the window opens; otherwise a server is started and stopped when you close the window.
+
+**Data on disk (default):** with no `MAGNITU_DATA_DIR` override, the database (`magnitu.db`), config (`magnitu_config.json`), and `models/` live **next to `main.py`** in the same directory you cloned (see `config.py`).
+
+**Optional — Gemini synthetic labeling:** copy **`.env.example`** to **`.env`**, set **`GEMINI_API_KEY`**, and optionally **`GEMINI_MODEL`**. Do not commit `.env`.
+
+**Alternative one-liner (no prior clone):** the script can clone into **`~/magnitu`** if you run it from a download/curl flow (see the header in `install/bootstrap.sh`). After that, use `~/magnitu/start.sh`. When you self-clone to e.g. `magnitu-v3`, use `./start.sh` in that folder instead.
+
+**Update:** `cd` to your clone and `git pull` (or let `./start.sh` fast-forward on `main` if configured).
 
 ## Run with Docker
 
