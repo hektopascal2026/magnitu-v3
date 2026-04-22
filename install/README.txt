@@ -46,6 +46,10 @@ Start: ./start.sh in your clone  →  http://127.0.0.1:8000
   - If something goes wrong, an alert may appear and the last run log can open in TextEdit.
     Log file:  ~/Applications/magnitu3/.magnitu_desktop_last.log
     (or, before the clone exists:  ~/Library/Logs/Magnitu/magnitu_desktop_last.log)
+  - App icon: Magnitu.icns is bundled under install/Magnitu.app/Contents/Resources.
+    Edit install/magnitu_app_icon_source.svg if needed, then run:
+      bash install/build_mac_icon.sh
+    Finder may cache the old icon; move the app or log out/in to refresh.
   - If the clone lives elsewhere, run manually:  bash install/post_bootstrap_mac_app.sh
     only after moving the repo to ~/Applications/magnitu3, or use Terminal only.
 

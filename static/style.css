@@ -55,9 +55,27 @@ body {
     font-weight: 700;
 }
 
-.top-bar-title a {
+.top-bar-title a,
+.top-bar-brand {
     color: #000000;
     text-decoration: none;
+}
+
+.top-bar-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.brand-logo {
+    display: block;
+    height: 1.15em;
+    width: auto;
+    flex-shrink: 0;
+}
+
+.brand-text {
+    line-height: 1;
 }
 
 .top-bar-subtitle {

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#ffffff"/>
+  <g transform="translate(512 512) scale(3) translate(-120 -24)">
+    <rect x="36" y="14" width="168" height="20" fill="#FF7F7F"/>
+    <path fill="none" stroke="#000000" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"
+      d="M 4 24 L 10 22.5 L 16 24.5 L 22 23.5 L 30 24.5 L 38 24 L 44 7 L 50 41 L 57 21 L 64 28.5 L 72 24 L 80 27 L 88 24.5 L 96 26 L 104 24.5 L 112 26 L 120 24.5 L 128 26 L 136 24.5 L 144 26 L 152 24.5 L 160 26 L 168 24.5 L 176 26 L 184 24.5 L 192 26 L 200 24.5 L 208 26 L 216 24.5 L 224 26 L 232 24.5 L 236 24"/>
+  </g>
+</svg>

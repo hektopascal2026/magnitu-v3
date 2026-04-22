@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Magnitu Label</title>
+<link rel="icon" href="magnitu-logo.svg" type="image/svg+xml">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -35,6 +36,19 @@ body {
 .top-bar-title {
     font-size: 18px;
     font-weight: 700;
+}
+
+.top-bar-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.top-bar-brand .brand-logo {
+    display: block;
+    height: 1.15em;
+    width: auto;
+    flex-shrink: 0;
 }
 
 .top-bar-stats {
@@ -354,7 +368,10 @@ body {
 <body>
 
 <div class="top-bar">
-    <span class="top-bar-title">Magnitu Label</span>
+    <span class="top-bar-title top-bar-brand">
+        <img class="brand-logo" src="magnitu-logo.svg" alt="" width="120" height="24" decoding="async">
+        <span>Magnitu Label</span>
+    </span>
     <span class="top-bar-stats" id="stats"></span>
     <button class="settings-btn" id="settingsBtn" title="Settings">&#9881;</button>
 </div>

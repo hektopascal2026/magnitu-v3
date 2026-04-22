@@ -10,6 +10,8 @@
 	<string>ch.netmind.magnitu3</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleIconFile</key>
+	<string>Magnitu</string>
 	<key>CFBundleName</key>
 	<string>Magnitu</string>
 	<key>CFBundlePackageType</key>

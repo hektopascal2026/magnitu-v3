@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Magnitu{% endblock %}</title>
+    <link rel="icon" href="/static/magnitu-logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/style.css">
     {% if profile_accent_bg %}
     <style>
@@ -22,7 +23,10 @@
         <div class="top-bar">
             <div class="top-bar-left">
                 <span class="top-bar-title">
-                    <a href="/">Magnitu</a>
+                    <a href="/" class="top-bar-brand">
+                        <img class="brand-logo" src="/static/magnitu-logo.svg" alt="" width="120" height="24" decoding="async">
+                        <span class="brand-text">Magnitu</span>
+                    </a>
                 </span>
                 {% if all_profiles and all_profiles|length > 1 %}
                 <span class="profile-switcher profile-switcher-indicator" title="Active workspace — change in Settings → Profiles">
