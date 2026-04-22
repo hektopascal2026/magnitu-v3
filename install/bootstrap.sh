@@ -29,7 +29,7 @@ echo "  ━━━━━━━━━━━━━━━━━━━━━━━━
 echo ""
 
 # ── Check prerequisites ──
-echo "  [1/5] Checking prerequisites..."
+echo "  [1/6] Checking prerequisites..."
 
 # On macOS, ensure Xcode Command Line Tools are installed (provides git + python3)
 if [[ "$OSTYPE" == darwin* ]]; then
@@ -70,7 +70,7 @@ echo "         git: $(git --version 2>&1 | head -1)"
 echo ""
 
 # ── Clone or update ──
-echo "  [2/5] Getting Magnitu..."
+echo "  [2/6] Getting Magnitu..."
 if [ -f "$INSTALL_DIR/main.py" ]; then
     echo "         Found existing install at $INSTALL_DIR"
     if [ -d "$INSTALL_DIR/.git" ]; then
@@ -104,7 +104,7 @@ cd "$INSTALL_DIR"
 echo ""
 
 # ── Python environment ──
-echo "  [3/5] Setting up Python environment..."
+echo "  [3/6] Setting up Python environment..."
 if [ ! -d "$INSTALL_DIR/.venv" ]; then
     $PY -m venv "$INSTALL_DIR/.venv"
 fi
@@ -115,7 +115,7 @@ echo "         Done."
 echo ""
 
 # ── Configure ──
-echo "  [4/5] Configuration"
+echo "  [4/6] Configuration"
 echo ""
 
 CONFIG_FILE="$INSTALL_DIR/magnitu_config.json"
@@ -197,8 +197,7 @@ echo ""
 # ── Model setup ──
 echo "  [6/6] Model setup"
 echo ""
-
-# Check if a model profile already exists
+echo "         [·····] Checking whether a model profile already exists…"
 HAS_PROFILE=$("$INSTALL_DIR/.venv/bin/python" -c "
 import sys
 sys.path.insert(0, '$INSTALL_DIR')
@@ -207,53 +206,105 @@ print('yes' if model_manager.has_profile() else 'no')
 " 2>&1) || HAS_PROFILE="no"
 
 if [ "$HAS_PROFILE" = "yes" ]; then
-    echo "         Model profile already configured."
+    echo "         [done] A model profile is already configured — nothing to do here."
 else
+    echo "         [ok] No profile on file yet. You will create or import one next."
+    echo ""
     echo "         Every Magnitu instance needs a model profile."
     echo "         You can create a new model or load an existing .magnitu file."
     echo ""
-    echo "         1) Create a new model"
-    echo "         2) Load a .magnitu file"
-    echo "         3) Skip (set up later in the browser)"
-    read -r -p "         Choice [1/2/3]: " MODEL_CHOICE
-
-    if [ "$MODEL_CHOICE" = "1" ]; then
-        echo ""
-        read -r -p "         Model name (e.g. pascal1): " MODEL_NAME
-        while [ -z "$MODEL_NAME" ]; do
-            echo "         Name is required."
-            read -r -p "         Model name: " MODEL_NAME
-        done
-        read -r -p "         Short description: " MODEL_DESC
-        "$INSTALL_DIR/.venv/bin/python" -c "
+    while true; do
+        echo "         1) Create a new model"
+        echo "         2) Load a .magnitu file"
+        echo "         3) Set up later"
+        read -r -p "         Choice [1/2/3]: " MODEL_CHOICE
+        case "$MODEL_CHOICE" in
+            1)
+                echo ""
+                echo "         (At the prompts below, type back to return here and change your choice.)"
+                while true; do
+                    read -r -p "         Model name (e.g. pascal1), or type back: " MODEL_NAME
+                    MODEL_NAME="${MODEL_NAME#"${MODEL_NAME%%[![:space:]]*}"}"
+                    MODEL_NAME="${MODEL_NAME%"${MODEL_NAME##*[![:space:]]}"}"
+                    _mn_lc=$(printf '%s' "$MODEL_NAME" | tr '[:upper:]' '[:lower:]')
+                    if [ "$_mn_lc" = "back" ]; then
+                        echo ""
+                        continue 2
+                    fi
+                    if [ -n "$MODEL_NAME" ]; then
+                        break
+                    fi
+                    echo "         Name is required (or type back)."
+                done
+                while true; do
+                    read -r -p "         Short description (optional), or type back: " MODEL_DESC
+                    MODEL_DESC="${MODEL_DESC#"${MODEL_DESC%%[![:space:]]*}"}"
+                    MODEL_DESC="${MODEL_DESC%"${MODEL_DESC##*[![:space:]]}"}"
+                    _md_lc=$(printf '%s' "$MODEL_DESC" | tr '[:upper:]' '[:lower:]')
+                    if [ "$_md_lc" = "back" ]; then
+                        echo ""
+                        continue 2
+                    fi
+                    break
+                done
+                echo ""
+                echo "         [·····] Creating profile and writing to the local database…"
+                "$INSTALL_DIR/.venv/bin/python" -c "
 import sys
 sys.path.insert(0, '$INSTALL_DIR')
 import model_manager
 p = model_manager.create_profile('$MODEL_NAME', '$MODEL_DESC')
 print('Created model: ' + p['model_name'] + ' (' + p['model_uuid'][:8] + '...)')
 " 2>&1
-    elif [ "$MODEL_CHOICE" = "2" ]; then
-        echo ""
-        read -r -p "         Path to .magnitu file: " MAGNITU_FILE
-        if [ -f "$MAGNITU_FILE" ]; then
-            "$INSTALL_DIR/.venv/bin/python" -c "
+                echo "         [done] Profile created."
+                break
+                ;;
+            2)
+                echo ""
+                echo "         (Type back to return to the menu.)"
+                while true; do
+                    read -r -p "         Path to .magnitu file, or type back: " MAGNITU_FILE
+                    MAGNITU_FILE="${MAGNITU_FILE#"${MAGNITU_FILE%%[![:space:]]*}"}"
+                    MAGNITU_FILE="${MAGNITU_FILE%"${MAGNITU_FILE##*[![:space:]]}"}"
+                    _mf_lc=$(printf '%s' "$MAGNITU_FILE" | tr '[:upper:]' '[:lower:]')
+                    if [ "$_mf_lc" = "back" ]; then
+                        echo ""
+                        continue 2
+                    fi
+                    if [ -f "$MAGNITU_FILE" ]; then
+                        echo ""
+                        echo "         [·····] Importing .magnitu package (unpacking model, labels, recipe)…"
+                        "$INSTALL_DIR/.venv/bin/python" -c "
 import sys
 sys.path.insert(0, '$INSTALL_DIR')
 import model_manager
 result = model_manager.import_model('$MAGNITU_FILE')
 print(result.get('message', 'Imported.'))
 " 2>&1
-        else
-            echo "         File not found. You can set up a model later in the browser."
-        fi
-    else
-        echo "         Skipped. You'll be prompted when you first open Magnitu."
-    fi
+                        echo "         [done] Import finished."
+                        break 2
+                    fi
+                    echo "         File not found. Check the path, or type back."
+                done
+                ;;
+            3)
+                echo ""
+                echo "         [skip] You can add a profile when you first open Magnitu in the browser."
+                break
+                ;;
+            *)
+                echo "         Type 1, 2, or 3 (not \"$MODEL_CHOICE\")."
+                echo ""
+                ;;
+        esac
+    done
 fi
+echo "         [done] Model setup step complete."
 echo ""
 
 # ── macOS: Magnitu.app on Desktop and in Applications (canonical path only) ──
 if [[ "$OSTYPE" == darwin* ]] && [ -f "$INSTALL_DIR/install/post_bootstrap_mac_app.sh" ]; then
+    echo "  (macOS) Optional: adding Magnitu.app to Applications / Desktop if your install path matches…"
     if bash "$INSTALL_DIR/install/post_bootstrap_mac_app.sh" "$INSTALL_DIR"; then
         :
     else

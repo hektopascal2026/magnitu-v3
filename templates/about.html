@@ -3,158 +3,135 @@
 
 {% block content %}
 
-<!-- 1. What is Magnitu? -->
+<!-- SECTION 1: WHAT IS MAGNITU? -->
 <div class="dashboard-section">
-    <h2>1. What is Magnitu?</h2>
-    <p class="section-desc">Magnitu is a personal relevance engine that learns what you care about and scores every incoming article, email, and legal notice on a scale from 0 to 100.</p>
-    <p>It does this by watching your judgments: you read entries and assign them one of four labels. Over time, Magnitu builds a model to predict your judgment on entries you haven't seen yet.</p>
-
-    <h3>The Four Labels</h3>
-    <p>These are the categories Magnitu learns to predict:</p>
-    <div class="about-detail-grid">
-        <div class="about-detail">
-            <span class="about-detail-label">Investigation Lead</span>
-            <span class="about-detail-value">The highest-value category. Points to a story worth pursuing, evidence of wrongdoing, or connections between actors.</span>
-        </div>
-        <div class="about-detail">
-            <span class="about-detail-label">Important</span>
-            <span class="about-detail-value">Relevant to your beat and worth reading, but not an actionable lead on its own.</span>
-        </div>
-        <div class="about-detail">
-            <span class="about-detail-label">Background</span>
-            <span class="about-detail-value">Tangentially related or good to know, but not something you'd act on today.</span>
-        </div>
-        <div class="about-detail">
-            <span class="about-detail-label">Noise</span>
-            <span class="about-detail-value">Irrelevant to your work, such as press releases, off-topic content, or duplicates.</span>
-        </div>
-    </div>
-</div>
-
-<!-- 2. The Learning Loop -->
-<div class="dashboard-section">
-    <h2>2. The Learning Loop</h2>
-    <p class="section-desc">Magnitu improves through a repeating five-step cycle. Each cycle sharpens the model's accuracy.</p>
-
-    <div class="about-steps">
-        <div class="about-step">
-            <div class="about-step-number">1</div>
-            <div class="about-step-body">
-                <h3>Sync</h3>
-                <p>Pull new entries from the main Seismo feed aggregator. You can run a standard "Sync" for quick incremental updates or a "Full Sync" for source-by-source backfill and embedding completion. Both run as background jobs with live progress bars.</p>
-            </div>
-        </div>
-        <div class="about-step">
-            <div class="about-step-number">2</div>
-            <div class="about-step-body">
-                <h3>Label</h3>
-                <p>Read entries and assign them one of the four categories. Each label serves as a concrete training example.</p>
-            </div>
-        </div>
-        <div class="about-step">
-            <div class="about-step-number">3</div>
-            <div class="about-step-body">
-                <h3>Train</h3>
-                <p>Magnitu builds a completely new model from all your historical labels. You need at least {{ config.min_labels_to_train or 20 }} labels to start, but more data yields better accuracy.</p>
-            </div>
-        </div>
-        <div class="about-step">
-            <div class="about-step-number">4</div>
-            <div class="about-step-body">
-                <h3>Score &amp; Push</h3>
-                <p>The model scores every entry and sends those numbers, along with a lightweight keyword "recipe", to Seismo.</p>
-            </div>
-        </div>
-        <div class="about-step">
-            <div class="about-step-number">5</div>
-            <div class="about-step-body">
-                <h3>Review &amp; Correct</h3>
-                <p>Check the <strong>Top 30</strong> page to review the model's highest-ranked entries. If it ranked a press release as a lead, reclassify it—these corrections are the highest-value training data because they target exact areas of model confusion.</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- 3. How Magnitu Reads Text -->
-<div class="dashboard-section">
-    <h2>3. How Magnitu Reads Text</h2>
-    <p class="section-desc">Before Magnitu can learn from your labels, it needs to convert articles into a mathematical format. It relies on two concurrent systems.</p>
+    <h2>I. What is Magnitu?</h2>
+    <p class="section-desc">A personal relevance engine that learns what you care about.</p>
 
     <div class="about-section">
-        <h3>The Language Model &amp; Meaning Vectors</h3>
-        <p><strong>Transformer Architecture:</strong> Magnitu uses a pre-trained language model (defaulting to <code>{{ config.transformer_model_name or 'xlm-roberta-base' }}</code>). With 278 million parameters trained across 100 languages, it inherently understands what words mean before seeing your labels.</p>
-        <p><strong>Meaning Vectors:</strong> For each article, the model produces a "meaning vector"—a 768-dimensional list of numbers that captures the article's concept. This enables cross-language understanding, meaning <em>"Untersuchung"</em> and <em>"investigation"</em> produce similar fingerprints.</p>
-        <p><strong>Input Construction:</strong> The text passed to the embedder is built from the title (emphasised by repeating it once), the description, and a capped excerpt of the body (500 characters). It also prepends structured context from Seismo: <code>source_type</code>, <code>source_name</code>, and <code>source_category</code>.</p>
-        <p><strong>Caching:</strong> Embedding runs once per article during sync. If the main text or Seismo context fields change later, the cached vector is automatically dropped and recomputed on the next sync.</p>
-    </div>
+        <p>Magnitu scores every incoming article, email, and legal notice on a scale from 0 to 100 based on your priorities. It watches your judgments—as you read entries and assign them one of four labels, Magnitu builds a model to predict your judgment on entries you haven't seen yet.</p>
 
-    <div class="about-section">
-        <h3>Training: From Understanding to Judgment</h3>
-        <p><strong>The Classifier Head:</strong> Every time you train, Magnitu builds a Multi-Layer Perceptron (MLP) from scratch, trained on your cached transformer embeddings.</p>
-        <p><strong>What It Learns:</strong> The language model provides the semantic understanding, while your labels teach the MLP which vectors correspond to which priorities.</p>
-    </div>
-
-    <div class="about-section">
-        <h3>The Recipe &amp; Knowledge Distillation</h3>
-        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models directly. To bridge this, Magnitu trains a simpler TF-IDF student model to mimic the transformer's predictions.</p>
-        <p><strong>The Exported Recipe:</strong> A lightweight JSON summary (the "recipe") is extracted from this student model. It contains weighted text features (single words, bigrams, and trigrams) and maintains both strong positive and strong negative signals per class.</p>
-        <p><strong>Live Scoring:</strong> This recipe is pushed to Seismo, allowing its PHP engine to evaluate new incoming articles in milliseconds by matching words against the recipe's weights.</p>
-    </div>
-</div>
-
-<!-- 4. Relevance Scores & Measuring Quality -->
-<div class="dashboard-section">
-    <h2>4. Relevance Scores &amp; Measuring Quality</h2>
-    <p class="section-desc">Every entry gets a relevance score from 0 to 1 (shown as a percentage).</p>
-
-    <div class="about-section">
-        <p><strong>Probability &amp; Calibration:</strong> The model estimates the probability of each label. These probabilities are calibrated using a simple temperature fit on a held-out slice of your training data to prevent overconfidence.</p>
-        <p><strong>Weighted Average:</strong> The final relevance score is a weighted composite of these calibrated probabilities:</p>
+        <h4>The Four Labels</h4>
         <div class="about-detail-grid">
             <div class="about-detail">
                 <span class="about-detail-label">Investigation Lead</span>
-                <span class="about-detail-value">Weight 1.0</span>
+                <span class="about-detail-value">The highest-value category. Points to a story worth pursuing, evidence of wrongdoing, or connections between actors.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Important</span>
-                <span class="about-detail-value">Weight 0.66</span>
+                <span class="about-detail-value">Relevant to your beat and worth reading, but not an actionable lead on its own.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Background</span>
-                <span class="about-detail-value">Weight 0.33</span>
+                <span class="about-detail-value">Tangentially related or good to know, but not something you'd act on today.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Noise</span>
-                <span class="about-detail-value">Weight 0.0</span>
+                <span class="about-detail-value">Irrelevant to your work, such as press releases, off-topic content, or duplicates.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SECTION 2: WORKSPACE ARCHITECTURE -->
+<div class="dashboard-section">
+    <h2>II. Architecture & Workspaces</h2>
+    <p class="section-desc">Designed for newsrooms where teams share a data pool but have diverging beats.</p>
+
+    <div class="about-section">
+        <ul>
+            <li><strong>The Mothership:</strong> All profiles share a single, global connection to the main Seismo instance. You sync entries once, and embedding computation runs once per entry for all profiles.</li>
+            <li><strong>Multi-Profile Architecture:</strong> One Magnitu instance can run multiple isolated profiles. Each profile trains its own model on its own labels and manages its own recipe.</li>
+            <li><strong>Lightweight Satellites:</strong> Each profile can push its specific scores to a dedicated "satellite" Seismo installation (e.g., one PHP install per topic). The satellite maintains its own database for Magnitu scores and state, while the raw entries stream from the mothership.</li>
+            <li><strong>Sharing (.magnitu files):</strong> Models can be exported as a zip archive containing the <code>manifest.json</code>, <code>labels.json</code>, <code>model.joblib</code>, <code>calibration.json</code>, and <code>recipe.json</code>.</li>
+            <li><strong>Forking:</strong> You can "fork" a team's base model to inherit their shared baseline judgments (e.g., ignoring general press releases), which you can then customize for your specific beat.</li>
+        </ul>
+    </div>
+</div>
+
+<!-- SECTION 3: VERSION HISTORY -->
+<div class="dashboard-section">
+    <h2>III. Version History</h2>
+    <p class="section-desc">The evolution of Magnitu to support larger newsrooms, distributed architectures, and faster training loops.</p>
+
+    <div class="about-section">
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Version 3.x (Current)</span>
+                <span class="about-detail-value">
+                    <p><strong>The Satellite Era & Multi-Profile Automation</strong></p>
+                    <p><strong>Satellites are now built and deployed!</strong> The primary goal of v3—pushing customized topic models to standalone "Satellite" Seismo instances—is fully realized. This version introduces a robust Multi-Profile Architecture and a new Model Library to manage multiple <code>.magnitu</code> profiles within a single app. It also adds the <strong>Gemini Synthetic Scorer</strong> (with prompt batching) to auto-label entries and drastically accelerate model convergence.</p>
+                </span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Version 2.x</span>
+                <span class="about-detail-value">
+                    <p><strong>The Deep Learning & Distillation Bridge</strong></p>
+                    <p>Introduced the modern transformer-based embedding pipeline (<code>xlm-roberta-base</code>) alongside Knowledge Distillation, successfully bridging rich deep learning semantics with high-speed PHP recipe evaluation in Seismo.</p>
+                </span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Version 1.x</span>
+                <span class="about-detail-value">
+                    <p><strong>The Prototype</strong></p>
+                    <p>Established the core concept of user-driven relevance feedback, the four primary labels, and the foundational 0-100 scoring scale.</p>
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SECTION 4: WORKFLOW & STRATEGY -->
+<div class="dashboard-section">
+    <h2>IV. Workflow & Strategy</h2>
+    <p class="section-desc">How you interact with Magnitu and guide its learning.</p>
+
+    <div class="about-section">
+        <h3>The Learning Loop</h3>
+        <p>Magnitu improves through a repeating five-step cycle. Each cycle sharpens the model's accuracy.</p>
+        <div class="about-steps">
+            <div class="about-step">
+                <div class="about-step-number">1</div>
+                <div class="about-step-body">
+                    <h4>Sync</h4>
+                    <p>Pull new entries from the main Seismo feed aggregator. Run a standard "Sync" for quick incremental updates or a "Full Sync" for source-by-source backfill and embedding completion.</p>
+                </div>
+            </div>
+            <div class="about-step">
+                <div class="about-step-number">2</div>
+                <div class="about-step-body">
+                    <h4>Label</h4>
+                    <p>Read entries and assign them one of the four categories. Each label serves as a concrete training example.</p>
+                </div>
+            </div>
+            <div class="about-step">
+                <div class="about-step-number">3</div>
+                <div class="about-step-body">
+                    <h4>Train</h4>
+                    <p>Magnitu builds a completely new model from all your historical labels. You need at least {{ config.min_labels_to_train or 20 }} labels to start.</p>
+                </div>
+            </div>
+            <div class="about-step">
+                <div class="about-step-number">4</div>
+                <div class="about-step-body">
+                    <h4>Score &amp; Push</h4>
+                    <p>The model scores every entry and sends those numbers, along with a lightweight keyword "recipe", to Seismo.</p>
+                </div>
+            </div>
+            <div class="about-step">
+                <div class="about-step-number">5</div>
+                <div class="about-step-body">
+                    <h4>Review &amp; Correct</h4>
+                    <p>Check the Top 30 page to review the model's highest-ranked entries. Reclassifying errors targets exact areas of model confusion and yields the highest-value training data.</p>
+                </div>
             </div>
         </div>
     </div>
 
     <div class="about-section">
-        <h3>Measuring Quality</h3>
-        <p>When training, Magnitu holds back ~20% of your labels as a test set to calculate <strong>Accuracy</strong>. It also calculates an <strong>F1 Score</strong>, which is crucial because it penalizes models that get high accuracy simply by calling everything "noise" (class imbalance).</p>
-    </div>
-</div>
-
-<!-- 5. Workspaces: Mothership, Satellites, and Profiles -->
-<div class="dashboard-section">
-    <h2>5. Workspaces: Mothership, Satellites, and Profiles</h2>
-    <p class="section-desc">Magnitu is designed for newsrooms where teams share a data pool but have diverging beats.</p>
-
-    <div class="about-section">
-        <p><strong>The Mothership:</strong> All profiles share a single, global connection to the main Seismo instance. You sync entries once, and embedding computation runs once per entry for all profiles.</p>
-        <p><strong>Multi-Profile Architecture:</strong> One Magnitu instance can run multiple isolated profiles. Each profile trains its own model on its own labels and manages its own recipe.</p>
-        <p><strong>Lightweight Satellites:</strong> Each profile can push its specific scores to a dedicated "satellite" Seismo installation (one PHP install per topic). The satellite holds its own database for Magnitu scores and state, while entries still stream from the mothership.</p>
-        <p><strong>Sharing (.magnitu files):</strong> Models can be exported as a zip archive containing the <code>manifest.json</code>, <code>labels.json</code>, <code>model.joblib</code>, <code>calibration.json</code>, and <code>recipe.json</code>.</p>
-        <p><strong>Forking:</strong> You can "fork" a team's base model. This gives you the team's shared baseline judgments (e.g., press releases = noise), which you can then customize by relabeling entries for your specific beat.</p>
-    </div>
-</div>
-
-<!-- 6. Advanced Labeling Strategies -->
-<div class="dashboard-section">
-    <h2>6. Advanced Labeling Strategies</h2>
-    <div class="about-section">
-        <h3>The Smart Queue</h3>
+        <h3>Advanced Labeling Strategies</h3>
+        
+        <h4>The Smart Queue</h4>
         <p>Magnitu mixes several strategies to surface entries that will improve the model fastest:</p>
         <div class="about-sampling-grid">
             <div class="about-sampling-item">
@@ -163,7 +140,7 @@
             </div>
             <div class="about-sampling-item">
                 <span class="sampling-pill sampling-pill-conflict">Conflict</span>
-                <p>Entries where the deep local model and the lightweight PHP recipe disagree on the predicted label.</p>
+                <p>Entries where the deep local model and the lightweight PHP recipe disagree.</p>
             </div>
             <div class="about-sampling-item">
                 <span class="sampling-pill sampling-pill-diverse">Diverse</span>
@@ -174,29 +151,76 @@
                 <p>The most recent unlabeled entries.</p>
             </div>
         </div>
-    </div>
 
-    <div class="about-section">
-        <h3>Reasoning Notes</h3>
-        <p>You can optionally write a short note explaining why an entry received a label.</p>
-        <p><strong>The Effect:</strong> The deep model does not read this text. Instead, the recipe distiller extracts matching keywords from your reasoning and boosts them in the Seismo recipe. If enabled in settings, the presence of a reasoning note increases that row's training weight (<strong>Reasoning-Weight Boost</strong>).</p>
-    </div>
-
-    <div class="about-section">
-        <h3>Legislation Monitoring (The Swiss Use Case)</h3>
-        <p>Foreign legislation rarely mentions Switzerland by name. Magnitu learns to spot these hidden impacts by recognizing patterns across languages:</p>
+        <h4>Reasoning Notes & Legal Patterns</h4>
+        <p><strong>Reasoning Notes:</strong> The deep model does not read your note text directly. Instead, explaining a label lets the recipe distiller extract your matching keywords and boost them in the Seismo recipe. If enabled in settings, it also applies a <strong>Reasoning-Weight Boost</strong> to that row's training weight.</p>
+        
+        <p><strong>Legislation Monitoring:</strong> For tracking foreign legislation (e.g., Swiss impacts from EU law), Magnitu learns to spot hidden impacts by recognizing patterns across languages:</p>
         <ul>
-            <li><strong>Exclusion language:</strong> "EU or EEA", "Binnenmarkt".</li>
-            <li><strong>Third-country provisions:</strong> "Drittstaaten", "equivalence".</li>
-            <li><strong>Compliance triggers:</strong> "CE-Kennzeichnung", "Konformitätsbewertung".</li>
+            <li><strong>Exclusion language:</strong> "EU or EEA", "Binnenmarkt"</li>
+            <li><strong>Third-country provisions:</strong> "Drittstaaten", "equivalence"</li>
+            <li><strong>Compliance triggers:</strong> "CE-Kennzeichnung", "Konformitätsbewertung"</li>
         </ul>
-        <p><strong>Workflow:</strong> Use the "Legislation" source filter to label 50–100 legal items, adding reasoning notes to boost terms. Check the <em>Learned Legal Patterns</em> panel on the Model page to ensure the model is picking up the right signals.</p>
+        <p><em>Workflow:</em> Use the "Legislation" source filter to label 50–100 legal items, adding reasoning notes to boost terms. Check the <em>Learned Legal Patterns</em> panel on the Model page to ensure correct signals are picked up.</p>
     </div>
 </div>
 
-<!-- 7. Tuning & Advanced Settings -->
+<!-- SECTION 5: UNDER THE HOOD -->
 <div class="dashboard-section">
-    <h2>7. Tuning &amp; Advanced Settings</h2>
+    <h2>V. Under the Hood</h2>
+    <p class="section-desc">The mechanics of how Magnitu understands text, trains models, and calculates scores.</p>
+
+    <div class="about-section">
+        <h3>How Magnitu Reads Text</h3>
+        <p><strong>Language Model:</strong> Magnitu uses a pre-trained transformer (default <code>{{ config.transformer_model_name or 'xlm-roberta-base' }}</code>). With 278 million parameters trained across 100 languages, it naturally understands what words mean—allowing terms like <em>"Untersuchung"</em> and <em>"investigation"</em> to produce similar vectors.</p>
+        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional fingerprint based on its title (emphasized by repeating it once), description, a 500-character body excerpt, and structured Seismo context (<code>source_type</code>, <code>source_name</code>, <code>source_category</code>). Embedding runs once per article during sync and is cached.</p>
+
+        <h3>Training & Distillation</h3>
+        <p><strong>The Classifier Head:</strong> Every time you train, Magnitu builds a Multi-Layer Perceptron (MLP) from scratch on your cached transformer embeddings. The language model provides the semantic understanding, while the MLP learns your priorities.</p>
+        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models. To bridge this, Magnitu trains a simpler TF-IDF student model to mimic the transformer's predictions, extracting a lightweight JSON "recipe" of weighted features (single words, bigrams, trigrams). This recipe is pushed to Seismo for millisecond live scoring.</p>
+    </div>
+
+    <div class="about-section">
+        <h3>Relevance Scores & Measuring Quality</h3>
+        <p>Every entry gets a relevance score from 0 to 1 (shown as a percentage). Probabilities are calibrated using a temperature fit on a held-out slice of data to prevent overconfidence.</p>
+        <p>The final score is a weighted composite of calibrated probabilities:</p>
+        <ul>
+            <li>Investigation Lead: <strong>Weight 1.0</strong></li>
+            <li>Important: <strong>Weight 0.66</strong></li>
+            <li>Background: <strong>Weight 0.33</strong></li>
+            <li>Noise: <strong>Weight 0.0</strong></li>
+        </ul>
+
+        <h4>Measuring Quality</h4>
+        <p>Magnitu holds back ~20% of your labels as a test set. It calculates <strong>Accuracy</strong> and an <strong>F1 Score</strong>, which is crucial because it penalizes models that inflate accuracy by simply calling everything "noise".</p>
+    </div>
+
+    <div class="about-section">
+        <h3>Known Biases & Limitations</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Text Length</span>
+                <span class="about-detail-value">Keyword weights in the recipe are normalized to compensate. Local transformer body excerpts are capped at 500 characters.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Source Bias</span>
+                <span class="about-detail-value">The recipe includes source weights (e.g. RSS toward noise). The deep model ignores source types unless they use distinctive language.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Class Imbalance</span>
+                <span class="about-detail-value">Rare classes (like leads) are automatically up-weighted during training to prevent them from being ignored.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Recency Bias</span>
+                <span class="about-detail-value">Unless Label Time-Decay is enabled, all labels hold equal weight regardless of age.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SECTION 6: CONFIGURATION -->
+<div class="dashboard-section">
+    <h2>VI. Configuration</h2>
     <p class="section-desc">Settings are divided into global (shared) and per-profile knobs.</p>
 
     <div class="about-section">
@@ -224,37 +248,14 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Reasoning-Weight Boost</span>
-                <span class="about-detail-value">Default Off. Assigns a heavier training multiplier (e.g., 1.3–1.5x) to labels with reasoning.</span>
+                <span class="about-detail-value">Default Off. Assigns a heavier training multiplier to labels with reasoning.</span>
             </div>
         </div>
     </div>
 
     <div class="about-section">
         <h3>Global Settings (Shared Across All Profiles)</h3>
-        <p><strong>Legal-Signal Patterns:</strong> A user-configured list of regex/phrases (e.g., 5-20 phrases like <code>Drittland</code> or <code>Binnenmarkt</code>). Matches are prepended to the embedded text as <code>signals=...</code> and aggressively boosted in the Seismo recipe. <em>Note: Changing this list invalidates all cached embeddings globally.</em></p>
-    </div>
-</div>
-
-<!-- 8. Known Biases & Limitations -->
-<div class="dashboard-section">
-    <h2>8. Known Biases &amp; Limitations</h2>
-    <div class="about-detail-grid">
-        <div class="about-detail">
-            <span class="about-detail-label">Text Length</span>
-            <span class="about-detail-value">Magnitu normalizes keyword weights in the recipe to compensate for length bias. The local transformer caps body excerpts at 500 characters.</span>
-        </div>
-        <div class="about-detail">
-            <span class="about-detail-label">Source Bias</span>
-            <span class="about-detail-value">The recipe includes source weights (e.g. RSS toward noise). The deep model ignores source types unless they use distinctive language.</span>
-        </div>
-        <div class="about-detail">
-            <span class="about-detail-label">Class Imbalance</span>
-            <span class="about-detail-value">Magnitu automatically up-weights rare classes (like leads) during training to prevent them from being ignored.</span>
-        </div>
-        <div class="about-detail">
-            <span class="about-detail-label">Recency Bias</span>
-            <span class="about-detail-value">Unless Label Time-Decay is enabled, all labels hold equal weight regardless of age.</span>
-        </div>
+        <p><strong>Legal-Signal Patterns:</strong> A user-configured list of regex/phrases. Matches are prepended to the embedded text as <code>signals=...</code> and aggressively boosted in the Seismo recipe. <em>Changing this list invalidates all cached embeddings globally.</em></p>
     </div>
 </div>
 

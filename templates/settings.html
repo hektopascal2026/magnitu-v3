@@ -69,37 +69,34 @@
         {% endif %}
 
         <h3 style="font-size: 16px; margin: 20px 0 12px 0;">Add profile</h3>
+        <p style="color: #666; font-size: 13px; margin: 0 0 14px 0;">
+            For a <strong>satellite</strong>, enter its Seismo URL and Magnitu API key.
+            Magnitu picks the <strong>profile name</strong> and <strong>URL slug</strong> from the path
+            (e.g. <code style="font-size:12px;">…/seismo-example/…</code> → name <em>Example</em>, slug <code style="font-size:12px;">example</code>).
+            Leave URL and key blank to add a profile that uses the <strong>global mothership</strong> only.
+        </p>
         <div class="settings-form" id="addProfileForm">
             <div class="settings-grid">
-                <div class="form-group">
-                    <label>Profile name <span style="color:red;">*</span></label>
-                    <input type="text" id="newName" placeholder="e.g. Security, Digitalthemen"
-                           oninput="autoSlugFromName()">
-                    <div class="form-help">Shown in the profile switcher</div>
-                </div>
-                <div class="form-group">
-                    <label>URL slug</label>
-                    <input type="text" id="newSlug" placeholder="auto-generated from name"
-                           style="font-family: monospace;">
-                    <div class="form-help">Used in URLs: /p/your-slug/</div>
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <input type="text" id="newDesc" placeholder="Optional">
-                </div>
-                <div class="form-group">
+                <div class="form-group" style="grid-column: 1 / -1;">
                     <label>Push target URL</label>
-                    <input type="url" id="newSeismoUrl" placeholder="Satellite URL (recommended)">
+                    <input type="url" id="newSeismoUrl" placeholder="https://your-domain.org/seismo-topic/index.php">
                     <div class="form-help">
-                        Satellite Seismo receives scores/recipes/pushed labels from this profile.
-                        If blank, pushes and Sync label-pull use global mothership (same as entries).
+                        Full <code>index.php</code> URL for this satellite (or leave blank with blank key for mothership-only).
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="grid-column: 1 / -1;">
                     <label>Push target API key</label>
-                    <input type="text" id="newApiKey" placeholder="Satellite API key"
+                    <input type="text" id="newApiKey" placeholder="Magnitu API key for this Seismo instance"
                            style="font-family: monospace;">
-                    <div class="form-help">If blank with blank URL, mothership credentials are used.</div>
+                    <div class="form-help">Seismo → Settings → Magnitu. Must be set together with the URL for a satellite.</div>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label>Import existing model (optional)</label>
+                    <input type="file" id="newMagnituFile" accept=".magnitu,.zip">
+                    <div class="form-help">
+                        <code>.magnitu</code> snapshot if this satellite was already trained elsewhere.
+                        Skip to start fresh or import later under <strong>Import package</strong>.
+                    </div>
                 </div>
             </div>
             <div class="form-actions">
@@ -163,7 +160,9 @@
     <div class="dashboard-section" id="importPackage">
         <h2>Import package</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
-            Merge a <code>.magnitu</code> snapshot into <strong>{{ profile.display_name }}</strong> (labels, classifier, recipe). Use the first-run <a href="/setup">setup</a> flow to create a profile from a file instead.
+            Merge a <code>.magnitu</code> snapshot into <strong>{{ profile.display_name }}</strong> (labels, classifier, recipe).
+            When <strong>adding a profile</strong> for an existing satellite, you can attach the same file under <em>Add profile → Import existing model</em>.
+            The first-run <a href="/setup">setup</a> flow can also create a profile from a file.
         </p>
         <div class="settings-form">
             <div class="form-group">
@@ -388,24 +387,6 @@
         setTimeout(scrollToProfilesSection, 80);
     }
 
-    function slugify(s) {
-        return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || '';
-    }
-    window.autoSlugFromName = function() {
-        var nameEl = document.getElementById('newName');
-        var slugField = document.getElementById('newSlug');
-        if (!nameEl || !slugField) return;
-        if (!slugField._edited) {
-            slugField.value = slugify(nameEl.value);
-        }
-    };
-    var newSlugEl = document.getElementById('newSlug');
-    if (newSlugEl) {
-        newSlugEl.addEventListener('input', function() {
-            this._edited = this.value.length > 0;
-        });
-    }
-
     document.querySelectorAll('.profile-switch-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             var id = parseInt(btn.getAttribute('data-profile-id'), 10);
@@ -470,35 +451,85 @@
     var createBtn = document.getElementById('createProfileBtn');
     if (createBtn) {
         createBtn.addEventListener('click', function() {
-            var name = document.getElementById('newName').value.trim();
-            var s = document.getElementById('newSlug').value.trim() || slugify(name);
-            var desc = document.getElementById('newDesc').value.trim();
             var url = document.getElementById('newSeismoUrl').value.trim();
             var key = document.getElementById('newApiKey').value.trim();
+            var fileEl = document.getElementById('newMagnituFile');
             var status = document.getElementById('createStatus');
-            if (!name) { flash('Profile name is required.', 'error'); return; }
-            if (!s) { flash('Slug is required.', 'error'); return; }
-            status.textContent = 'Creating…';
+            if ((url && !key) || (!url && key)) {
+                flash('Satellite push target needs both URL and API key, or leave both blank for mothership-only.', 'error');
+                return;
+            }
+            var prevBtnText = createBtn.textContent;
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating…';
+            status.textContent = 'Creating profile…';
+            status.className = '';
             fetch('/api/profiles', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    display_name: name, slug: s, description: desc,
-                    seismo_url: url, api_key: key,
+                    seismo_url: url,
+                    api_key: key,
                 }),
             })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d.success) {
-                    window.location.href = '/p/' + d.profile.slug + '/';
-                } else {
+                if (!d.success) {
+                    createBtn.disabled = false;
+                    createBtn.textContent = prevBtnText;
                     status.textContent = d.error || 'Failed.';
                     status.className = 'status-error';
+                    return;
                 }
+                var p = d.profile;
+                status.textContent = 'Switching workspace…';
+                return fetch('/api/profiles/' + p.id + '/activate', { method: 'POST' })
+                    .then(function(r) {
+                        if (!r.ok) {
+                            return r.json().then(function(j) {
+                                throw new Error((j && (j.detail || j.error)) || ('HTTP ' + r.status));
+                            });
+                        }
+                        return r.json();
+                    })
+                    .then(function(ad) {
+                        if (!ad.success) {
+                            throw new Error(ad.error || 'Could not activate profile.');
+                        }
+                        if (fileEl && fileEl.files.length) {
+                            status.textContent = 'Importing snapshot…';
+                            var formData = new FormData();
+                            formData.append('file', fileEl.files[0]);
+                            return fetch('/p/' + p.slug + '/api/model/import', { method: 'POST', body: formData })
+                                .then(function(r) {
+                                    return r.text().then(function(t) {
+                                        var parsed = {};
+                                        try { parsed = JSON.parse(t); } catch (e) {
+                                            parsed = { error: t || ('HTTP ' + r.status) };
+                                        }
+                                        return { ok: r.ok, data: parsed };
+                                    });
+                                })
+                                .then(function(io) {
+                                    if (io.ok && io.data.success) {
+                                        if (io.data.message) flash(io.data.message, 'success');
+                                    } else {
+                                        var msg = (io.data && (io.data.error || io.data.detail)) || 'Import failed.';
+                                        flash(msg + ' You can retry under Import package below.', 'error');
+                                    }
+                                });
+                        }
+                    })
+                    .then(function() {
+                        window.location.href = '/p/' + p.slug + '/settings#profiles';
+                    });
             })
             .catch(function(err) {
+                createBtn.disabled = false;
+                createBtn.textContent = prevBtnText;
                 status.textContent = 'Error: ' + err.message;
                 status.className = 'status-error';
+                if (typeof flash === 'function') flash(err.message || 'Error', 'error');
             });
         });
     }
