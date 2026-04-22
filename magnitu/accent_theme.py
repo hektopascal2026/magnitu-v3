@@ -95,3 +95,35 @@ def contrast_text_on_accent(accent_hex6: str) -> str:
 def safe_accent_for_profile(stored: Any) -> Optional[str]:
     """Re-validate DB value before use in HTML/CSS."""
     return parse_accent_hex_string(stored)
+
+
+def get_theme_colors(hex_color: Optional[str]) -> Dict[str, str]:
+    """Generate all theme variants from a base accent hex.
+    
+    If hex_color is None, returns default Seismo red theme.
+    """
+    base = parse_accent_hex_string(hex_color) or "#FF6B6B"
+    
+    # Calculate RGB for HSL manipulation
+    try:
+        r = int(base[1:3], 16)
+        g = int(base[3:5], 16)
+        b = int(base[5:7], 16)
+    except (ValueError, IndexError):
+        r, g, b = 255, 107, 107 # Fallback to Seismo red
+
+    # Subtle background: high desaturation, extremely high lightness
+    # We'll use RGBA with 0.05 opacity for the desaturated feel or just calculate desaturated light color
+    # Let's go with a very light tinted version:
+    subtle = "rgba(%d, %d, %d, 0.06)" % (r, g, b)
+    
+    # Border: slightly darker or desaturated version of base
+    # For now, let's just use the base for borders or slightly darken it if needed.
+    # But often the base itself is perfect for active state borders.
+    
+    return {
+        "bg": base,
+        "fg": contrast_text_on_accent(base),
+        "subtle": subtle,
+        "border": base,
+    }

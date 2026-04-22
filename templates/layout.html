@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Magnitu{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
+    {% if profile_accent_bg %}
+    <style>
+        :root {
+            --accent-bg: {{ profile_accent_bg }};
+            --accent-fg: {{ profile_accent_fg }};
+            --accent-subtle: {{ profile_accent_subtle }};
+            --accent-border: {{ profile_accent_border }};
+        }
+    </style>
+    {% endif %}
 </head>
 <body>
     <div class="container">
@@ -20,12 +30,7 @@
                         {% set is_workspace = active_profile and (p.id == active_profile.id) %}
                         {% set st = nav_profile_styles[p.id] if p.id in nav_profile_styles else {} %}
                         {% if is_workspace %}
-                            {% if st.bg %}
-                            <span class="profile-pill profile-pill-indicator-active"
-                                  style="background-color: {{ st.bg }}; color: {{ st.fg }}; border-color: {{ st.bg }};">{{ p.display_name }}</span>
-                            {% else %}
-                            <span class="profile-pill profile-pill-indicator-active profile-pill-indicator-default">{{ p.display_name }}</span>
-                            {% endif %}
+                            <span class="profile-pill profile-pill-indicator-active">{{ p.display_name }}</span>
                         {% else %}
                             <span class="profile-pill profile-pill-indicator-muted">{{ p.display_name }}</span>
                         {% endif %}
@@ -33,13 +38,7 @@
                 </span>
                 {% elif profile %}
                 <span class="profile-switcher profile-switcher-indicator" title="Active workspace">
-                    {% set st = nav_profile_styles[profile.id] if profile.id in nav_profile_styles else {} %}
-                    {% if st.bg %}
-                    <span class="profile-pill profile-pill-indicator-active"
-                          style="background-color: {{ st.bg }}; color: {{ st.fg }}; border-color: {{ st.bg }};">{{ profile.display_name }}</span>
-                    {% else %}
-                    <span class="profile-pill profile-pill-indicator-active profile-pill-indicator-default">{{ profile.display_name }}</span>
-                    {% endif %}
+                    <span class="profile-pill profile-pill-indicator-active">{{ profile.display_name }}</span>
                 </span>
                 <span class="top-bar-subtitle" style="margin-left: 10px;">
                     {% if active_model %}v{{ active_model.version }}{% endif %} &middot; {{ label_count }} labels

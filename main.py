@@ -38,7 +38,7 @@ import sampler
 import model_manager
 from magnitu.prompts import DEFAULT_GEMINI_PERSONA
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
-from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent
+from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent, get_theme_colors
 from config import (
     get_config,
     save_config,
@@ -456,13 +456,13 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
     profile_id = profile["id"] if profile else 1
     config = db.get_effective_config(profile_id) if profile else get_config()
     active_model = db.get_active_model(profile_id)
-    profile_accent_bg = ""
-    profile_accent_fg = ""
-    if profile:
-        h = safe_accent_for_profile(profile.get("accent_color"))
-        if h:
-            profile_accent_bg = h
-            profile_accent_fg = contrast_text_on_accent(h)
+    
+    theme = get_theme_colors(profile.get("accent_color") if profile else None)
+    profile_accent_bg = theme["bg"]
+    profile_accent_fg = theme["fg"]
+    profile_accent_subtle = theme["subtle"]
+    profile_accent_border = theme["border"]
+
     ap = db.get_active_profile()
     profs = db.get_all_profiles()
     return {
@@ -481,6 +481,8 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         "embedding_count":   db.get_embedding_count(),
         "profile_accent_bg": profile_accent_bg,
         "profile_accent_fg": profile_accent_fg,
+        "profile_accent_subtle": profile_accent_subtle,
+        "profile_accent_border": profile_accent_border,
         "gemini_persona": db.get_profile_gemini_persona(profile_id) if profile else None,
         "default_gemini_persona": DEFAULT_GEMINI_PERSONA,
     }
