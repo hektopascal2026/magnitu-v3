@@ -64,6 +64,11 @@
         <div class="task-progress-meta" id="taskProgressMeta">0%</div>
     </div>
 
+    <div id="geminiLog" class="gemini-log-window" style="display:none;">
+        <div class="gemini-log-header">Diagnostic Log</div>
+        <div id="geminiLogContent" class="gemini-log-content"></div>
+    </div>
+
     <div id="geminiResult" class="gemini-result" style="display:none;"></div>
 </div>
 {% endblock %}
@@ -77,6 +82,9 @@
     var taskProgressFill = document.getElementById('taskProgressFill');
     var taskProgressMeta = document.getElementById('taskProgressMeta');
     var resultEl = document.getElementById('geminiResult');
+    var logEl = document.getElementById('geminiLog');
+    var logContentEl = document.getElementById('geminiLogContent');
+    var seenLogCount = 0;
 
     function setProgress(visible, label, pct, meta) {
         taskProgress.style.display = visible ? 'block' : 'none';
@@ -92,6 +100,22 @@
                 .then(function(r) { return r.json(); })
                 .then(function(job) {
                     setProgress(true, job.message || 'Working...', job.progress || 0, (job.progress || 0) + '%');
+                    
+                    if (job.logs && job.logs.length > seenLogCount) {
+                        logEl.style.display = 'block';
+                        for (var i = seenLogCount; i < job.logs.length; i++) {
+                            var line = document.createElement('div');
+                            line.className = 'log-line';
+                            var txt = job.logs[i];
+                            if (txt.includes('-> Label: investigation_lead')) line.classList.add('log-lead');
+                            else if (txt.includes('-> Label: noise')) line.classList.add('log-noise');
+                            line.textContent = txt;
+                            logContentEl.appendChild(line);
+                        }
+                        seenLogCount = job.logs.length;
+                        logContentEl.scrollTop = logContentEl.scrollHeight;
+                    }
+
                     if (job.status === 'success') {
                         clearInterval(timer);
                         onDone(job.result || {});
@@ -146,6 +170,9 @@
 
         btn.disabled = true;
         resultEl.style.display = 'none';
+        logEl.style.display = 'none';
+        logContentEl.innerHTML = '';
+        seenLogCount = 0;
         setProgress(true, 'Starting Gemini job...', 1, '1%');
 
         fetch(P + '/api/gemini/batch', {

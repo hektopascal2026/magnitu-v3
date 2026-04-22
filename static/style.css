@@ -1385,6 +1385,38 @@ kbd {
     font-size: 13px;
 }
 
+.gemini-log-window {
+    margin-top: 16px;
+    border: 2px solid #000;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 12px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.gemini-log-header {
+    background: #333;
+    padding: 6px 12px;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    border-bottom: 1px solid #444;
+    color: #eee;
+}
+.gemini-log-content {
+    padding: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+.log-line {
+    margin-bottom: 4px;
+}
+.log-lead { color: #ff6b6b; font-weight: 700; }
+.log-noise { color: #888; }
+
 /* ═══ Responsive ═══ */
 @media (max-width: 768px) {
     .container { padding: 12px; }

@@ -50,11 +50,9 @@ def _eligible_for_gemini(
 def run_gemini_synthetic_batch_job(
     profile_id: int,
     *,
-    batch_limit: int = 50,
-    entry_type: Optional[str] = None,
     replace_gemini: bool = False,
     system_instruction: Optional[str] = None,
-    progress_cb: Optional[Callable[[int, str], None]] = None,
+    progress_cb: Optional[Callable[[int, str, Optional[str]], None]] = None,
 ) -> Dict[str, Any]:
     """Process up to ``batch_limit`` smart-queue entries with Gemini; persist via ``db.set_label``.
 
@@ -110,6 +108,7 @@ def run_gemini_synthetic_batch_job(
                 progress_cb(
                     min(pct, 94),
                     "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
+                    "Processing %s #%s: %s" % (et, eid, entry.get("title") or "No title")
                 )
             ok, _skip = _eligible_for_gemini(et, eid, profile_id, replace_gemini)
             if not ok:
@@ -130,6 +129,12 @@ def run_gemini_synthetic_batch_job(
                     label_source=SOURCE_GEMINI,
                 )
                 labeled += 1
+                if progress_cb:
+                    progress_cb(
+                        min(pct, 94),
+                        "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
+                        "  -> Label: %s\n  -> Reasoning: %s" % (label, reasoning)
+                    )
             except Exception as ex:
                 failed.append(
                     {

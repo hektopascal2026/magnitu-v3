@@ -124,6 +124,7 @@ def _create_job(job_type: str) -> str:
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
             "result": None, "error": None,
+            "logs": [],
         }
     return job_id
 
@@ -133,6 +134,8 @@ def _update_job(job_id: str, **kwargs):
         job = _JOBS.get(job_id)
         if not job:
             return
+        if "logs" in kwargs and job.get("logs") is not None:
+            job["logs"].extend(kwargs.pop("logs"))
         job.update(kwargs)
         job["updated_at"] = datetime.utcnow().isoformat()
 
@@ -146,8 +149,11 @@ def _get_job(job_id: str) -> Optional[dict]:
 def _run_job(job_id: str, target):
     _update_job(job_id, status="running", progress=1, message="Starting...")
     try:
-        def progress_cb(pct: int, msg: str):
-            _update_job(job_id, progress=max(0, min(100, int(pct))), message=msg)
+        def progress_cb(pct: int, msg: str, log: Optional[str] = None):
+            update = {"progress": max(0, min(100, int(pct))), "message": msg}
+            if log:
+                update["logs"] = [log]
+            _update_job(job_id, **update)
         result = target(progress_cb)
         _update_job(job_id, status="success", progress=100,
                     message="Done", result=result, error=None)
