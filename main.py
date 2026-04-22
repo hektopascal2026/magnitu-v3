@@ -1474,7 +1474,7 @@ async def update_settings(request: Request):
 
     # Always-global keys
     for key in ["seismo_url", "api_key", "model_architecture",
-                "transformer_model_name", "use_gpu"]:
+                "transformer_model_name", "use_gpu", "gemini_api_key", "gemini_model"]:
         if key in data:
             config[key] = data[key]
 
