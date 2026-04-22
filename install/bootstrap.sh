@@ -181,18 +181,69 @@ fi
 echo ""
 
 # ── Test connection ──
-echo "  [5/6] Testing connection to Seismo..."
-TEST_RESULT=$("$INSTALL_DIR/.venv/bin/python" -c "
+UPDATE_CONFIG_KEYS() {
+    # Merge seismo_url + api_key into existing magnitu_config.json (preserve other keys).
+    CONFIG_PATH="$1"
+    URL_VAL="$2"
+    KEY_VAL="$3"
+    export MAGNITU_BOOTSTRAP_CFG="$CONFIG_PATH"
+    export MAGNITU_BOOTSTRAP_URL="$URL_VAL"
+    export MAGNITU_BOOTSTRAP_KEY="$KEY_VAL"
+    "$INSTALL_DIR/.venv/bin/python" -c "
+import json, os
+p = os.environ['MAGNITU_BOOTSTRAP_CFG']
+with open(p) as f:
+    c = json.load(f)
+c['seismo_url'] = os.environ['MAGNITU_BOOTSTRAP_URL']
+c['api_key'] = os.environ['MAGNITU_BOOTSTRAP_KEY']
+with open(p, 'w') as f:
+    json.dump(c, f, indent=2)
+    f.write('\n')
+"
+}
+
+while true; do
+    echo "  [5/6] Testing connection to Seismo..."
+    if TEST_RESULT=$("$INSTALL_DIR/.venv/bin/python" -c "
 import sys
 sys.path.insert(0, '$INSTALL_DIR')
 import sync
 ok, msg, _ = sync.test_connection()
 print(msg)
-if not ok:
-    sys.exit(1)
-" 2>&1) || true
-echo "         $TEST_RESULT"
-echo ""
+sys.exit(0 if ok else 1)
+" 2>&1); then
+        echo "         $TEST_RESULT"
+        echo ""
+        break
+    else
+        echo "         $TEST_RESULT"
+        echo ""
+        echo "         The mothership URL or Magnitu API key may be wrong (fix in Seismo → Settings → Magnitu)."
+        read -r -p "         Press Enter to re-enter URL and API key and try again, or type continue to skip: " SKIP_TEST
+        _sk=$(printf '%s' "$SKIP_TEST" | tr '[:upper:]' '[:lower:]')
+        if [ "$_sk" = "continue" ]; then
+            echo "         [warn] Skipping connection check — you can fix mothership settings in the app later."
+            echo ""
+            break
+        fi
+        CUR_URL=$("$INSTALL_DIR/.venv/bin/python" -c "import json; print(json.load(open('$CONFIG_FILE'))['seismo_url'])" 2>/dev/null || echo "$DEFAULT_URL")
+        CUR_KEY=$("$INSTALL_DIR/.venv/bin/python" -c "import json; print(json.load(open('$CONFIG_FILE'))['api_key'])" 2>/dev/null || echo "")
+        echo ""
+        echo "         Seismo URL (Enter = keep current)"
+        echo "         Current: $CUR_URL"
+        read -r -p "         URL: " IN_URL
+        SEISMO_URL="${IN_URL:-$CUR_URL}"
+        read -r -p "         API Key: " IN_KEY
+        API_KEY="${IN_KEY:-$CUR_KEY}"
+        while [ -z "$API_KEY" ]; do
+            echo "         API key is required for a working connection."
+            read -r -p "         API Key: " API_KEY
+        done
+        UPDATE_CONFIG_KEYS "$CONFIG_FILE" "$SEISMO_URL" "$API_KEY"
+        echo "         Config updated."
+        echo ""
+    fi
+done
 
 # ── Model setup ──
 echo "  [6/6] Model setup"
