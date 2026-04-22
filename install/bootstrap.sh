@@ -29,7 +29,7 @@ echo "  ━━━━━━━━━━━━━━━━━━━━━━━━
 echo ""
 
 # ── Check prerequisites ──
-echo "  [1/6] Checking prerequisites..."
+echo "  [1/7] Checking prerequisites..."
 
 # On macOS, ensure Xcode Command Line Tools are installed (provides git + python3)
 if [[ "$OSTYPE" == darwin* ]]; then
@@ -70,7 +70,7 @@ echo "         git: $(git --version 2>&1 | head -1)"
 echo ""
 
 # ── Clone or update ──
-echo "  [2/6] Getting Magnitu..."
+echo "  [2/7] Getting Magnitu..."
 if [ -f "$INSTALL_DIR/main.py" ]; then
     echo "         Found existing install at $INSTALL_DIR"
     if [ -d "$INSTALL_DIR/.git" ]; then
@@ -104,7 +104,7 @@ cd "$INSTALL_DIR"
 echo ""
 
 # ── Python environment ──
-echo "  [3/6] Setting up Python environment..."
+echo "  [3/7] Setting up Python environment..."
 if [ ! -d "$INSTALL_DIR/.venv" ]; then
     $PY -m venv "$INSTALL_DIR/.venv"
 fi
@@ -115,7 +115,7 @@ echo "         Done."
 echo ""
 
 # ── Configure ──
-echo "  [4/6] Configuration"
+echo "  [4/7] Configuration"
 echo ""
 
 # Config and DB live in the user data dir (outside the repo) unless MAGNITU_DATA_DIR is set.
@@ -209,7 +209,7 @@ with open(p, 'w') as f:
 }
 
 while true; do
-    echo "  [5/6] Testing connection to Seismo..."
+    echo "  [5/7] Testing connection to Seismo..."
     if TEST_RESULT=$("$INSTALL_DIR/.venv/bin/python" -c "
 import sys
 sys.path.insert(0, '$INSTALL_DIR')
@@ -251,8 +251,8 @@ sys.exit(0 if ok else 1)
     fi
 done
 
-# ── Model setup ──
-echo "  [6/6] Model setup"
+# ── Downloads: optional .magnitu import ──
+echo "  [6/7] Snapshots in Downloads (optional)"
 echo ""
 echo "         [·····] Checking whether a model profile already exists…"
 HAS_PROFILE=$("$INSTALL_DIR/.venv/bin/python" -c "
@@ -262,8 +262,71 @@ import model_manager
 print('yes' if model_manager.has_profile() else 'no')
 " 2>&1) || HAS_PROFILE="no"
 
+IMPORTED_FROM_DOWNLOADS=0
 if [ "$HAS_PROFILE" = "yes" ]; then
+    echo "         [done] A model profile is already configured — skipping Downloads scan."
+else
+    DL="$HOME/Downloads"
+    if [ -n "${XDG_DOWNLOAD_DIR:-}" ] && [ -d "${XDG_DOWNLOAD_DIR}" ]; then
+        DL="${XDG_DOWNLOAD_DIR}"
+    fi
+    shopt -s nullglob
+    MAG_FILES=("$DL"/*.magnitu)
+    shopt -u nullglob
+    if [ ${#MAG_FILES[@]} -eq 0 ]; then
+        echo "         [ok] No .magnitu files in Downloads — continue to the next step."
+    else
+        echo "         Found ${#MAG_FILES[@]} .magnitu file(s) in Downloads ($DL):"
+        _i=1
+        for _f in "${MAG_FILES[@]}"; do
+            echo "         $_i) $(basename "$_f")"
+            _i=$((_i + 1))
+        done
+        _decline=$_i
+        echo "         $_decline) No — use other setup options next"
+        read -r -p "         Import one now? Choice [1-$_decline]: " DL_CHOICE
+        if [[ "$DL_CHOICE" =~ ^[0-9]+$ ]] && [ "$DL_CHOICE" -ge 1 ] && [ "$DL_CHOICE" -le ${#MAG_FILES[@]} ]; then
+            _idx=$((DL_CHOICE - 1))
+            _SEL="${MAG_FILES[$_idx]}"
+            echo ""
+            echo "         [·····] Importing $(basename "$_SEL")…"
+            export MAGNITU_BOOTSTRAP_REPO="$INSTALL_DIR"
+            export MAGNITU_BOOTSTRAP_IMPORT="$_SEL"
+            set +e
+            _imp_out=$("$INSTALL_DIR/.venv/bin/python" -c "
+import os, sys
+sys.path.insert(0, os.environ['MAGNITU_BOOTSTRAP_REPO'])
+import model_manager
+path = os.environ['MAGNITU_BOOTSTRAP_IMPORT']
+r = model_manager.import_model(path)
+print(r.get('message', 'Imported.'))
+" 2>&1)
+            _imp_rc=$?
+            set -e
+            echo "         $_imp_out"
+            if [ "$_imp_rc" -eq 0 ]; then
+                echo "         [done] Import finished."
+                IMPORTED_FROM_DOWNLOADS=1
+                HAS_PROFILE=yes
+            else
+                echo "         [warn] Import failed — you can try again in the next step."
+            fi
+        else
+            echo "         Continuing without a Downloads import."
+        fi
+    fi
+fi
+unset MAGNITU_BOOTSTRAP_REPO MAGNITU_BOOTSTRAP_IMPORT
+echo ""
+
+# ── Model setup ──
+echo "  [7/7] Model setup"
+echo ""
+
+if [ "$HAS_PROFILE" = "yes" ] && [ "$IMPORTED_FROM_DOWNLOADS" = "0" ]; then
     echo "         [done] A model profile is already configured — nothing to do here."
+elif [ "$IMPORTED_FROM_DOWNLOADS" = "1" ]; then
+    echo "         [done] Profile is set from your Downloads snapshot."
 else
     echo "         [ok] No profile on file yet. You will create or import one next."
     echo ""
