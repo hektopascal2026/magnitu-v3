@@ -106,55 +106,6 @@
         </div>
     </div>
 
-    <!-- Per-Profile Push Target -->
-    {% if profile %}
-    <div class="dashboard-section">
-        <h2>Per-profile push target — {{ profile.display_name }}</h2>
-        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
-            <strong>{{ profile.display_name }}</strong> is a Magnitu <em>profile</em> (model + labels), not a Seismo instance.
-            Here you optionally point this profile at a <strong>lightweight Seismo</strong> (often called a satellite) that <strong>receives</strong> scores, recipes, and pushed labels.
-            Sync imports labels <strong>from that URL</strong> when URL and key are set (entries always come from mothership).
-            When <strong>Test push target</strong> succeeds and Seismo returns <code>accent_color</code>, Magnitu uses it for the header tab colour (optional).
-        </p>
-        {% if profile_push_blank %}
-        <div id="satelliteFallbackBanner" style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #cc8800; background: #fffbf0; font-size: 13px;">
-            <strong>No separate Seismo for this profile.</strong>
-            Push and Sync label-pull use <strong>global mothership</strong> (same URL as Mothership Connection below).
-            To push to / pull labels from a dedicated lightweight Seismo instead, set URL + API key here before syncing.
-        </div>
-        {% elif profile_push_incomplete %}
-        <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #c60; background: #fff8f0; font-size: 13px;">
-            <strong>Incomplete push target.</strong>
-            Set <strong>both</strong> Seismo URL and API key for this profile, or clear both to use mothership only.
-        </div>
-        {% else %}
-        <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #080; background: #f0fff4; font-size: 13px;">
-            <strong>This profile has its own Seismo URL and API key.</strong>
-            Push, recipe upload, and label pull for <strong>{{ profile.display_name }}</strong> use this target (not mothership-only).
-        </div>
-        {% endif %}
-        <div class="settings-form" id="profileForm">
-            <div class="form-group">
-                <label>Push target Seismo URL</label>
-                <input type="url" id="profileSeismoUrl" value="{{ profile.seismo_url or '' }}"
-                       placeholder="Lightweight Seismo index.php URL">
-                <div class="form-help">Must mirror mothership entries. If blank with blank key, mothership is used.</div>
-            </div>
-            <div class="form-group">
-                <label>Push target API key</label>
-                <input type="text" id="profileApiKey" value="{{ profile.api_key or '' }}"
-                       placeholder="API key for this Seismo instance"
-                       style="font-family: monospace;">
-            </div>
-            <div class="form-actions">
-                <button class="btn btn-primary" id="saveProfileBtn">Save push target</button>
-                <button class="btn" id="testProfileBtn" type="button">Test push target</button>
-                <span id="profileStatus"></span>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
     <!-- Import .magnitu into active profile -->
     {% if profile %}
     <div class="dashboard-section" id="importPackage">
@@ -370,6 +321,55 @@
             <div class="shortcut"><kbd>u</kbd> Undo label</div>
         </div>
     </div>
+
+    <!-- Optional satellite URL override (advanced; most installs use mothership only) -->
+    {% if profile %}
+    <div class="dashboard-section dashboard-section-danger" id="pushTargetOverride">
+        <h2>Push Target Override (Danger Zone) — {{ profile.display_name }}</h2>
+        <p class="settings-danger-body" style="margin-bottom: 16px;">
+            <strong>{{ profile.display_name }}</strong> is a Magnitu <em>profile</em> (model + labels), not a Seismo instance.
+            Only if needed, point this profile at a <strong>lightweight Seismo</strong> (satellite) that <strong>receives</strong> scores, recipes, and pushed labels.
+            Sync imports labels <strong>from that URL</strong> when URL and key are set (entries always come from mothership).
+            When <strong>Test push target</strong> succeeds and Seismo returns <code>accent_color</code>, Magnitu uses it for the header tab colour (optional).
+        </p>
+        {% if profile_push_blank %}
+        <div id="satelliteFallbackBanner" style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #cc8800; background: #fffbf0; font-size: 13px;">
+            <strong>No separate Seismo for this profile.</strong>
+            Push and Sync label-pull use <strong>global mothership</strong> (same URL as Mothership Connection).
+            To push to / pull labels from a dedicated lightweight Seismo instead, set URL + API key here before syncing.
+        </div>
+        {% elif profile_push_incomplete %}
+        <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #c60; background: #fff8f0; font-size: 13px;">
+            <strong>Incomplete push target.</strong>
+            Set <strong>both</strong> Seismo URL and API key for this profile, or clear both to use mothership only.
+        </div>
+        {% else %}
+        <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #080; background: #f0fff4; font-size: 13px;">
+            <strong>This profile has its own Seismo URL and API key.</strong>
+            Push, recipe upload, and label pull for <strong>{{ profile.display_name }}</strong> use this target (not mothership-only).
+        </div>
+        {% endif %}
+        <div class="settings-form" id="profileForm">
+            <div class="form-group">
+                <label>Push target Seismo URL</label>
+                <input type="url" id="profileSeismoUrl" value="{{ profile.seismo_url or '' }}"
+                       placeholder="Lightweight Seismo index.php URL">
+                <div class="form-help">Must mirror mothership entries. If blank with blank key, mothership is used.</div>
+            </div>
+            <div class="form-group">
+                <label>Push target API key</label>
+                <input type="text" id="profileApiKey" value="{{ profile.api_key or '' }}"
+                       placeholder="API key for this Seismo instance"
+                       style="font-family: monospace;">
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="saveProfileBtn">Save push target</button>
+                <button class="btn" id="testProfileBtn" type="button">Test push target</button>
+                <span id="profileStatus"></span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
 

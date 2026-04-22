@@ -626,6 +626,20 @@ body {
     color: #000000;
 }
 
+/* Optional per-profile Seismo override — same red token as .btn-danger / .message-error */
+.dashboard-section-danger {
+    border-color: #FF2C2C;
+    background: #fff0f0;
+}
+.dashboard-section-danger > h2 {
+    color: #FF2C2C;
+    border-bottom-color: #FF2C2C;
+}
+.dashboard-section-danger .settings-danger-body {
+    font-size: 13px;
+    color: #5c1a1a;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
