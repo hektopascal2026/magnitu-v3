@@ -50,6 +50,8 @@ def _eligible_for_gemini(
 def run_gemini_synthetic_batch_job(
     profile_id: int,
     *,
+    batch_limit: int = 50,
+    entry_type: Optional[str] = None,
     replace_gemini: bool = False,
     system_instruction: Optional[str] = None,
     progress_cb: Optional[Callable[[int, str, Optional[str]], None]] = None,
