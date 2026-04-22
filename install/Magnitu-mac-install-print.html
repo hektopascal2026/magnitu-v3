@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Magnitu — Install on a new Mac</title>
+  <style>
+    @page { margin: 1.5cm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.45;
+      color: #111;
+      max-width: 42em;
+      margin: 0 auto;
+      padding: 1rem 1.25rem 2rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      border-bottom: 2px solid #000;
+      padding-bottom: 0.35rem;
+      margin-top: 0;
+    }
+    h2 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin: 1.35rem 0 0.5rem;
+    }
+    p { margin: 0.5rem 0; }
+    ol { margin: 0.5rem 0; padding-left: 1.35rem; }
+    li { margin: 0.35rem 0; }
+    pre, code {
+      font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+      font-size: 0.88em;
+    }
+    pre {
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+      padding: 0.65rem 0.85rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .note {
+      font-size: 0.95em;
+      color: #333;
+      margin-top: 0.75rem;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #ccc;
+      margin: 1.25rem 0;
+    }
+    @media print {
+      body { padding: 0; max-width: none; }
+      pre { break-inside: avoid; }
+      h2 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>Magnitu — Install on a new Mac</h1>
+
+<h2>1. Install Apple command-line tools</h2>
+<p>Open <strong>Terminal</strong> and run:</p>
+<pre>xcode-select --install</pre>
+<p>Finish the installer if a dialog appears. If it says the tools are already installed, continue.</p>
+
+<h2>2. Clone the repository</h2>
+<p>Use this path so the <strong>Magnitu.app</strong> shortcuts work (Desktop and Applications):</p>
+<pre>mkdir -p ~/Applications
+git clone https://github.com/hektopascal2026/magnitu-v3.git ~/Applications/magnitu3
+cd ~/Applications/magnitu3</pre>
+<p class="note">You may clone elsewhere if you only use the browser; automatic <strong>Magnitu.app</strong> aliases are intended for <code>~/Applications/magnitu3</code>.</p>
+
+<h2>3. Run the installer</h2>
+<pre>bash install/bootstrap.sh</pre>
+<p>Follow the prompts: Seismo mothership URL, Magnitu API key, optional database reset, and model setup. At step 6 you can type <strong>back</strong> at prompts to return to the menu.</p>
+
+<h2>4. Start Magnitu</h2>
+<p><strong>Magnitu.app:</strong> After bootstrap, double-click <strong>Magnitu</strong> on the Desktop or in Applications. If macOS blocks it: right-click → Open → Open once.</p>
+<p><strong>Terminal + browser:</strong></p>
+<pre>cd ~/Applications/magnitu3
+./start.sh</pre>
+<p>Open <strong>http://127.0.0.1:8000</strong>.</p>
+<p><strong>Desktop window (WebView):</strong></p>
+<pre>./start_desktop.sh</pre>
+
+<h2>5. If Magnitu.app is missing</h2>
+<pre>cd ~/Applications/magnitu3
+bash install/post_bootstrap_mac_app.sh</pre>
+
+<h2>6. Updates</h2>
+<pre>cd ~/Applications/magnitu3
+git pull</pre>
+
+<hr>
+
+<p><strong>Prerequisites:</strong> Git and Python (from Command Line Tools), a reachable Seismo <code>index.php</code> URL, and a Magnitu API key from Seismo. Optional: copy <code>.env.example</code> to <code>.env</code> and set <code>GEMINI_API_KEY</code> for Gemini labeling.</p>
+<p><strong>Logs:</strong> See <code>install/README.txt</code> if launch fails (e.g. <code>~/Applications/magnitu3/.magnitu_desktop_last.log</code>).</p>
+
+</body>
+</html>
