@@ -36,6 +36,7 @@ import explainer
 import distiller
 import sampler
 import model_manager
+from magnitu.prompts import DEFAULT_GEMINI_PERSONA
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
 from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent
 from config import (
@@ -475,7 +476,7 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         "profile_accent_bg": profile_accent_bg,
         "profile_accent_fg": profile_accent_fg,
         "gemini_persona": db.get_profile_gemini_persona(profile_id) if profile else None,
-        "default_gemini_persona": distiller.prompts.DEFAULT_GEMINI_PERSONA,
+        "default_gemini_persona": DEFAULT_GEMINI_PERSONA,
     }
 
 
@@ -661,7 +662,7 @@ async def gemini_persona_reset(slug: str):
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
     db.set_profile_gemini_persona(profile_id, None)
-    return {"success": True, "default": distiller.prompts.DEFAULT_GEMINI_PERSONA}
+    return {"success": True, "default": DEFAULT_GEMINI_PERSONA}
 
 
 @app.post("/p/{slug}/api/gemini/batch")
