@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import db
@@ -48,6 +50,19 @@ def _eligible_for_gemini(
     if src == SOURCE_GEMINI:
         return False, "already_gemini_skip"
     return False, "already_labeled_human"
+
+
+def _transient_io_error(ex: BaseException) -> bool:
+    """True for OS I/O errors we may recover from with one retry (e.g. EIO on SQLite/FS)."""
+    cur: Optional[BaseException] = ex
+    for _ in range(6):
+        if cur is None:
+            break
+        if isinstance(cur, OSError) and cur.errno == errno.EIO:
+            return True
+        nxt = cur.__cause__ if cur.__cause__ is not None else cur.__context__
+        cur = nxt
+    return False
 
 
 def run_gemini_synthetic_batch_job(
@@ -121,52 +136,62 @@ def run_gemini_synthetic_batch_job(
                         "Sending batch of %d entries to Gemini..." % len(chunk)
                     )
                 
-                try:
-                    results = call_gemini_for_synthetic_label_batch(
-                        client,
-                        chunk,
-                        system_instruction=system_instruction
-                    )
-                    # Match by (entry_type, entry_id) — IDs can repeat across types.
-                    results_by_key = {}
-                    for r in results:
-                        if not isinstance(r, dict):
-                            continue
-                        try:
-                            rid = int(r.get("entry_id", 0))
-                        except (TypeError, ValueError):
-                            continue
-                        rt = str(r.get("entry_type") or "").strip()
-                        if rt and rid:
-                            results_by_key[(rt, rid)] = r
-                    for entry in chunk:
-                        et, eid = entry["entry_type"], int(entry["entry_id"])
-                        et_s = str(et)
-                        res = results_by_key.get((et_s, eid))
-                        if res:
-                            label = res.get("label")
-                            reasoning = res.get("reasoning", "")
-                            if label in sampler.MAGNITU_LABELS and reasoning:
-                                db.set_label(
-                                    et, eid, label, 
-                                    reasoning=reasoning, 
-                                    profile_id=profile_id,
-                                    label_source=SOURCE_GEMINI
-                                )
-                                labeled += 1
-                                if progress_cb:
-                                    progress_cb(
-                                        min(pct, 94),
-                                        "Gemini Batch %d-%d/%d" % (i + 1, min(i + chunk_size, total), total),
-                                        "  -> %s #%s: %s" % (et, eid, label)
+                ex_chunk: Optional[Exception] = None
+                for attempt in (0, 1):
+                    try:
+                        results = call_gemini_for_synthetic_label_batch(
+                            client,
+                            chunk,
+                            system_instruction=system_instruction
+                        )
+                        # Match by (entry_type, entry_id) — IDs can repeat across types.
+                        results_by_key = {}
+                        for r in results:
+                            if not isinstance(r, dict):
+                                continue
+                            try:
+                                rid = int(r.get("entry_id", 0))
+                            except (TypeError, ValueError):
+                                continue
+                            rt = str(r.get("entry_type") or "").strip()
+                            if rt and rid:
+                                results_by_key[(rt, rid)] = r
+                        for entry in chunk:
+                            et, eid = entry["entry_type"], int(entry["entry_id"])
+                            et_s = str(et)
+                            res = results_by_key.get((et_s, eid))
+                            if res:
+                                label = res.get("label")
+                                reasoning = res.get("reasoning", "")
+                                if label in sampler.MAGNITU_LABELS and reasoning:
+                                    db.set_label(
+                                        et, eid, label,
+                                        reasoning=reasoning,
+                                        profile_id=profile_id,
+                                        label_source=SOURCE_GEMINI
                                     )
+                                    labeled += 1
+                                    if progress_cb:
+                                        progress_cb(
+                                            min(pct, 94),
+                                            "Gemini Batch %d-%d/%d" % (i + 1, min(i + chunk_size, total), total),
+                                            "  -> %s #%s: %s" % (et, eid, label)
+                                        )
+                                else:
+                                    failed.append({"entry_type": et, "entry_id": eid, "error": "Invalid label or empty reasoning in batch response"})
                             else:
-                                failed.append({"entry_type": et, "entry_id": eid, "error": "Invalid label or empty reasoning in batch response"})
-                        else:
-                            failed.append({"entry_type": et, "entry_id": eid, "error": "Entry missing in Gemini batch response"})
-                except Exception as ex:
+                                failed.append({"entry_type": et, "entry_id": eid, "error": "Entry missing in Gemini batch response"})
+                        ex_chunk = None
+                        break
+                    except Exception as ex:
+                        ex_chunk = ex
+                        if attempt == 0 and _transient_io_error(ex):
+                            time.sleep(0.5)
+                            continue
+                        break
+                if ex_chunk is not None:
                     for entry in chunk:
-                        failed.append({"entry_type": entry["entry_type"], "entry_id": entry["entry_id"], "error": str(ex)[:500]})
+                        failed.append({"entry_type": entry["entry_type"], "entry_id": entry["entry_id"], "error": str(ex_chunk)[:500]})
         
         else:
             # Original single-entry mode
@@ -183,33 +208,43 @@ def run_gemini_synthetic_batch_job(
                 if not ok:
                     skipped_mid += 1
                     continue
-                try:
-                    label, reasoning = call_gemini_for_synthetic_label(
-                        client, 
-                        system_instruction=system_instruction,
-                        **_entry_fields_for_prompt(entry)
-                    )
-                    db.set_label(
-                        et,
-                        eid,
-                        label,
-                        reasoning=reasoning,
-                        profile_id=profile_id,
-                        label_source=SOURCE_GEMINI,
-                    )
-                    labeled += 1
-                    if progress_cb:
-                        progress_cb(
-                            min(pct, 94),
-                            "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
-                            "  -> Label: %s\n  -> Reasoning: %s" % (label, reasoning)
+                last_ex: Optional[Exception] = None
+                for attempt in (0, 1):
+                    try:
+                        label, reasoning = call_gemini_for_synthetic_label(
+                            client,
+                            system_instruction=system_instruction,
+                            **_entry_fields_for_prompt(entry)
                         )
-                except Exception as ex:
+                        db.set_label(
+                            et,
+                            eid,
+                            label,
+                            reasoning=reasoning,
+                            profile_id=profile_id,
+                            label_source=SOURCE_GEMINI,
+                        )
+                        labeled += 1
+                        if progress_cb:
+                            progress_cb(
+                                min(pct, 94),
+                                "Gemini %d/%d: %s #%s" % (i + 1, total, et, eid),
+                                "  -> Label: %s\n  -> Reasoning: %s" % (label, reasoning)
+                            )
+                        last_ex = None
+                        break
+                    except Exception as ex:
+                        last_ex = ex
+                        if attempt == 0 and _transient_io_error(ex):
+                            time.sleep(0.5)
+                            continue
+                        break
+                if last_ex is not None:
                     failed.append(
                         {
                             "entry_type": et,
                             "entry_id": eid,
-                            "error": str(ex)[:500],
+                            "error": str(last_ex)[:500],
                         }
                     )
 
