@@ -1,6 +1,7 @@
 #!/bin/bash
 # Regenerate install/Magnitu.app/Contents/Resources/Magnitu.icns from
-# install/magnitu_app_icon_source.svg (macOS only; uses qlmanage, sips, iconutil).
+# install/magnitu_app_icon_source.svg (200×200 artwork scaled in a 1024 artboard;
+# should match static/magnitu-logo.svg). macOS only: qlmanage, sips, iconutil.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SVG="$SCRIPT_DIR/magnitu_app_icon_source.svg"
