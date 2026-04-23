@@ -2,84 +2,104 @@
 {% block title %}Gemini — Magnitu{% endblock %}
 
 {% block content %}
-<div class="gemini-page">
-    <h1 class="page-title">Gemini synthetic labeling</h1>
-    <p class="page-subtitle">
-        Target profile: <strong>{{ target_model_title }}</strong>
-        {% if active_model %}
-            · Active model v{{ active_model.version }}
-        {% else %}
-            · <em>No trained model yet</em> (batch still runs; Smart Queue falls back to newest unlabeled)
+<div class="settings-page gemini-page">
+    <div class="dashboard-section">
+        <h2>Gemini synthetic labeling</h2>
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+            Target profile: <strong>{{ target_model_title }}</strong>
+            {% if active_model %}
+                · Active model v{{ active_model.version }}
+            {% else %}
+                · <em>No trained model yet</em> (batch still runs; Smart Queue falls back to newest unlabeled)
+            {% endif %}
+        </p>
+        {% if active_model_basename %}
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+            Loaded classifier: <code>{{ active_model_basename }}</code>
+            (same paths the Label queue uses for scoring).
+        </p>
         {% endif %}
-    </p>
-    {% if active_model_basename %}
-    <p class="help-text subtle">
-        Loaded classifier: <code>{{ active_model_basename }}</code>
-        (same paths the Label queue uses for scoring).
-    </p>
-    {% endif %}
-    <p class="help-text">{{ gemini_queue_help }}</p>
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">{{ gemini_queue_help }}</p>
 
-    <div class="gemini-form">
-        <label class="field-label">Batch size (max 100)</label>
-        <input type="number" id="geminiLimit" min="1" max="100" value="50" class="field-input" />
-
-        <label class="field-label">Source filter</label>
-        <select id="geminiSource" class="field-input">
-            <option value="all">All types</option>
-            <option value="lex">Legislation only</option>
-            <option value="news">News only</option>
-        </select>
-
-        <label class="checkbox-row">
-            <input type="checkbox" id="geminiReplace" />
-            Re-label entries previously labeled by Gemini (retry failed rows)
-        </label>
-
-        <label class="field-label">Processing mode</label>
-        <select id="geminiMode" class="field-input">
-            <option value="single" {% if config.gemini_mode == 'single' %}selected{% endif %}>One by one (Progressive log)</option>
-            <option value="batch" {% if config.gemini_mode == 'batch' %}selected{% endif %}>Prompt batching (10x faster, cheaper)</option>
-        </select>
-
-        <p class="help-text subtle">
-            <strong>Prompt batching</strong> sends 10 articles in a single LLM request. It is significantly cheaper and faster, but log updates arrive in chunks.
-        </p>
-
-        <p class="help-text subtle">
-            Labels are saved locally with reasoning and <code>source: Gemini</code> in exports.
-            Seismo is not updated per row; use <strong>Push to {{ profile.display_name }}</strong> on the Label page when ready.
-        </p>
-
-        <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
-    </div>
-
-    <div class="gemini-form persona-card">
-        <div class="persona-header">
-            <h3 class="section-title">Persona & Instructions</h3>
-            <p class="help-text subtle">Define how Gemini should think when labeling entries for this profile.</p>
+        <div class="settings-form">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Batch size (max 100)</label>
+                    <input type="number" id="geminiLimit" min="1" max="100" value="50">
+                    <div class="form-help">How many items to run in this job (1–100).</div>
+                </div>
+                <div class="form-group">
+                    <label>Source filter</label>
+                    <select id="geminiSource" style="padding: 10px 14px; border: 2px solid #000000; font-size: 14px; font-family: inherit; background: #ffffff; color: #000000;">
+                        <option value="all">All types</option>
+                        <option value="lex">Legislation only</option>
+                        <option value="news">News only</option>
+                    </select>
+                    <div class="form-help">Restrict the Smart Queue to legislation or news feeds, or use all types.</div>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="geminiReplace" />
+                        Re-label entries previously labeled by Gemini (retry failed rows)
+                    </label>
+                    <div class="form-help">When off, only unlabeled rows are processed. When on, Gemini-labeled rows can be re-run for retries.</div>
+                </div>
+                <div class="form-group">
+                    <label>Processing mode</label>
+                    <select id="geminiMode" style="padding: 10px 14px; border: 2px solid #000000; font-size: 14px; font-family: inherit; background: #ffffff; color: #000000;">
+                        <option value="single" {% if config.gemini_mode == 'single' %}selected{% endif %}>One by one (Progressive log)</option>
+                        <option value="batch" {% if config.gemini_mode == 'batch' %}selected{% endif %}>Prompt batching (10x faster, cheaper)</option>
+                    </select>
+                    <div class="form-help">Single mode streams one entry at a time. Prompt batching groups rows per API call (faster, coarser log).</div>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <div class="form-help">
+                        <strong>Prompt batching</strong> sends 10 articles in a single LLM request. It is significantly cheaper and faster, but log updates arrive in chunks.
+                    </div>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <div class="form-help">
+                        Labels are saved locally with reasoning and <code>source: Gemini</code> in exports.
+                        Seismo is not updated per row; use <strong>Push to {{ profile.display_name }}</strong> on the Label page when ready.
+                    </div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
+            </div>
         </div>
-        <textarea id="geminiPersona" class="field-input persona-textarea" rows="10">{{ gemini_persona }}</textarea>
-        <div class="persona-actions">
-            <button type="button" class="btn btn-secondary btn-sm" id="geminiPersonaResetBtn">Reset to Default</button>
-            <button type="button" class="btn btn-primary btn-sm" id="geminiPersonaSaveBtn">Save Persona</button>
+
+        <h2 style="margin: 20px 0 12px 0;">Persona &amp; Instructions</h2>
+        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">Define how Gemini should think when labeling entries for this profile.</p>
+        <div class="settings-form">
+            <div class="settings-grid">
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label>Persona</label>
+                    <textarea id="geminiPersona" rows="10" style="width:100%; font-family:monospace;">{{ gemini_persona }}</textarea>
+                    <div class="form-help">System-style instructions and tone for this profile. Saved per profile; used for Gemini runs only.</div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" id="geminiPersonaResetBtn">Reset to Default</button>
+                <button type="button" class="btn btn-primary" id="geminiPersonaSaveBtn">Save Persona</button>
+            </div>
         </div>
-    </div>
 
-    <div class="task-progress" id="taskProgress" style="display:none;">
-        <div class="task-progress-label" id="taskProgressLabel">Working...</div>
-        <div class="task-progress-track">
-            <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+        <div class="task-progress" id="taskProgress" style="display:none;">
+            <div class="task-progress-label" id="taskProgressLabel">Working...</div>
+            <div class="task-progress-track">
+                <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+            </div>
+            <div class="task-progress-meta" id="taskProgressMeta">0%</div>
         </div>
-        <div class="task-progress-meta" id="taskProgressMeta">0%</div>
-    </div>
 
-    <div id="geminiLog" class="gemini-log-window" style="display:none;">
-        <div class="gemini-log-header">Diagnostic Log</div>
-        <div id="geminiLogContent" class="gemini-log-content"></div>
-    </div>
+        <div id="geminiLog" class="gemini-log-window" style="display:none;">
+            <div class="gemini-log-header">Diagnostic Log</div>
+            <div id="geminiLogContent" class="gemini-log-content"></div>
+        </div>
 
-    <div id="geminiResult" class="gemini-result" style="display:none;"></div>
+        <div id="geminiResult" class="gemini-result" style="display:none;"></div>
+    </div>
 </div>
 {% endblock %}
 
@@ -158,7 +178,7 @@
         html += '<li>Failed: <strong>' + ((res.failed || []).length) + '</strong></li>';
         html += '</ul>';
         if (res.note) {
-            html += '<p class="help-text">' + escHtml(res.note) + '</p>';
+            html += '<p class="form-help">' + escHtml(res.note) + '</p>';
         }
         if (res.failed && res.failed.length) {
             html += '<h4>Failures (re-run with re-label Gemini to retry those IDs)</h4><ul class="fail-list">';
