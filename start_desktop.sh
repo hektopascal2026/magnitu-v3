@@ -42,4 +42,7 @@ if ! "$PY" -c "import webview" 2>/dev/null; then
     echo ""
 fi
 
+# shellcheck source=install/macos_repair_venv_arch.sh
+. "$DIR/install/macos_repair_venv_arch.sh"
+
 exec "$PY" "$DIR/desktop.py"

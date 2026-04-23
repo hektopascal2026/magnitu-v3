@@ -161,6 +161,10 @@ print(','.join(missing))
 else
     echo "  Dependencies OK (cached)."
 fi
+
+# shellcheck source=install/macos_repair_venv_arch.sh
+. "$DIR/install/macos_repair_venv_arch.sh"
+
 echo ""
 
 echo "  Starting on $URL ..."

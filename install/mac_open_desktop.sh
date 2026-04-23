@@ -138,6 +138,9 @@ if [ "$NEED_DESKTOP" = "1" ] || ! "$PY" -c "import webview" 2>/dev/null; then
     touch "$STAMP_DESKTOP"
 fi
 
+# shellcheck source=./macos_repair_venv_arch.sh
+. "$REPO/install/macos_repair_venv_arch.sh"
+
 # Do not use exec: retain EXIT trap so Python errors still open the log.
 set +e
 "$PY" "$REPO/desktop.py"
