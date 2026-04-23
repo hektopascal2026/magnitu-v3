@@ -552,6 +552,30 @@ except Exception as e:
     fail(str(e))
 
 
+t = test("refresh_profile_accent for mothership-only profile clears DB accent (no get_status)")
+try:
+    calls = {"clear": 0, "get_status": 0}
+
+    def fake_clear(pid):
+        calls["clear"] += 1
+        assert pid == 7
+
+    def fake_get_status(_seismo_target=None):
+        calls["get_status"] += 1
+        return {"status": "ok", "accent_color": "#aabbcc"}
+
+    with patch.object(db, "clear_profile_accent_color", side_effect=fake_clear):
+        with patch.object(sync, "get_status", side_effect=fake_get_status):
+            sync.refresh_profile_accent(
+                {"id": 7, "seismo_url": "", "api_key": ""}
+            )
+    assert calls["clear"] == 1, "mothership profile should clear stored satellite accent"
+    assert calls["get_status"] == 0, "must not read accent from global mothership"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
 # ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════

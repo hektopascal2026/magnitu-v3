@@ -496,6 +496,16 @@ def set_profile_accent_color(profile_id: int, accent_hex: str) -> None:
     conn.close()
 
 
+def clear_profile_accent_color(profile_id: int) -> None:
+    """Remove stored Seismo accent; UI falls back to default Magnitu red (mothership)."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE profiles SET accent_color = NULL WHERE id = ?", (profile_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_profile_gemini_persona(profile_id: int) -> Optional[str]:
     conn = get_db()
     row = conn.execute(

@@ -958,7 +958,14 @@ async def update_profile_api(profile_id: int, request: Request):
         conn.commit()
         conn.close()
 
-    return {"success": True, "profile": db.get_profile_by_id(profile_id)}
+    # Satellite accent only applies while URL+key are set; clear when switching to
+    # mothership-only so the default red returns after disconnect.
+    updated = db.get_profile_by_id(profile_id)
+    if updated and sync.profile_satellite_blank(updated):
+        db.clear_profile_accent_color(profile_id)
+        updated = db.get_profile_by_id(profile_id)
+
+    return {"success": True, "profile": updated}
 
 
 @app.post("/api/profiles/{profile_id}/activate")

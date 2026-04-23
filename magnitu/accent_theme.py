@@ -1,5 +1,7 @@
 """
 Optional Seismo satellite accent color (magnitu_status.accent_color).
+Mothership-only profiles (no per-profile satellite) always use the default
+Magnitu red (#FF6B6B); that accent is not read from the global mothership.
 
 Magnitu only applies colours after strict validation; unknown or missing
 values fall back to default (black) styling — no impact on core behaviour.

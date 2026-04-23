@@ -346,12 +346,20 @@ def test_connection(seismo_target: Optional[Dict] = None) -> tuple:
 def refresh_profile_accent(profile: Optional[Dict]) -> None:
     """Fetch ``magnitu_status`` from the profile push target and persist accent_color.
 
-    Uses ``_profile_target`` (satellite URL/key; falls back to global mothership
-    when blank). Called after Push and from satellite connection test — never raises.
+    Uses ``_profile_target`` (satellite URL/key) when the profile has its own
+    satellite. Mothership-only profiles (URL and key both blank) keep Magnitu's
+    default red — we clear any previously stored satellite accent and do not
+    copy accent from global mothership Seismo. Called after Push — never raises.
     """
     if not profile:
         return
     profile_id = int(profile["id"])
+    if profile_satellite_blank(profile):
+        try:
+            db.clear_profile_accent_color(profile_id)
+        except Exception as ex:
+            logger.warning("Accent clear (mothership profile) failed: %s", ex)
+        return
     try:
         target = _profile_target(profile)
     except ValueError as ex:
@@ -366,6 +374,10 @@ def refresh_profile_accent(profile: Optional[Dict]) -> None:
 
 def maybe_profile_accent_from_status(status: dict, profile_id: int) -> None:
     """If magnitu_status includes a valid accent_color, store it for the profile.
+
+    Only used for profiles with a satellite URL+key (e.g. after Test satellite or
+    push); mothership-only profiles use default Magnitu red and clear stored
+    accent via :func:`refresh_profile_accent`.
 
     Never raises; ignores missing/invalid fields (backward compatible).
     """
