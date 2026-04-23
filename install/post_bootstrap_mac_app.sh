@@ -4,9 +4,21 @@
 # the canonical path ~/Applications/magnitu3.
 set -e
 
+# Argument $1 = repo root (as bootstrap passes). If omitted, infer from this script
+# (so:  cd ~/Applications/magnitu3 && bash install/post_bootstrap_mac_app.sh  works).
 INSTALL_DIR="${1:-}"
-if [ -z "$INSTALL_DIR" ] || [ ! -d "$INSTALL_DIR" ]; then
-    echo "  post_bootstrap_mac_app: missing or bad install directory"
+if [ -z "$INSTALL_DIR" ] || [ ! -d "$INSTALL_DIR" ] || [ ! -f "$INSTALL_DIR/main.py" ]; then
+    _sdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0})" 2>/dev/null && pwd)" || _sdir=""
+    if [ -n "$_sdir" ] && [ -f "$_sdir/../main.py" ]; then
+        INSTALL_DIR="$(cd "$_sdir/.." && pwd)"
+    else
+        INSTALL_DIR="${HOME}/Applications/magnitu3"
+    fi
+fi
+if [ ! -d "$INSTALL_DIR" ] || [ ! -f "$INSTALL_DIR/main.py" ]; then
+    echo "  post_bootstrap_mac_app: missing or bad install directory: $INSTALL_DIR"
+    echo "  Usage:  cd ~/Applications/magnitu3 && bash install/post_bootstrap_mac_app.sh"
+    echo "     or:  bash install/post_bootstrap_mac_app.sh  /path/to/magnitu-v3"
     exit 0
 fi
 
@@ -23,7 +35,8 @@ CANON_REAL=$(cd "$CANON" && pwd)
 if [ "$INST" != "$CANON_REAL" ]; then
     echo ""
     echo "  (Skipping Magnitu.app shortcuts: this install is not at $CANON.)"
-    echo "        For Desktop / Applications links, use that path and re-run:  bash install/post_bootstrap_mac_app.sh"
+    echo "        For Desktop / Applications links, move the clone to $CANON then run:"
+    echo "          cd $CANON && bash install/post_bootstrap_mac_app.sh"
     exit 0
 fi
 

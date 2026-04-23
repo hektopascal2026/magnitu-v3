@@ -9,6 +9,7 @@ Environment (optional):
 """
 import atexit
 import os
+import platform
 import signal
 import socket
 import subprocess
@@ -21,12 +22,30 @@ from typing import Any, Callable, List, Optional
 Proc = Any
 
 
-def _repair_venv_pydantic_if_macos(cwd: str) -> None:
-    """Reinstall pydantic for this interpreter if wheels are the wrong arch (e.g. arm64 .so, x86_64 venv)."""
+def _python_cmd() -> List[str]:
+    """Run the venv Python as arm64 on Apple Silicon (universal2 can pick x86 from Finder)."""
+    exe = os.path.normpath(os.path.realpath(sys.executable))
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        return ["arch", "-arm64", exe]
+    return [exe]
+
+
+def _repair_venv_native_wheels_if_macos(cwd: str) -> None:
+    """Reinstall from requirements if pydantic/numpy (etc.) are wrong arch for this Python (mixed arm64/x86_64 venv)."""
     if sys.platform != "darwin":
         return
+    probe = r"""
+import importlib, sys
+for name in ("pydantic_core", "numpy"):
+    try:
+        importlib.import_module(name)
+    except Exception as e:
+        if "incompatible architecture" in str(e):
+            sys.exit(3)
+        raise
+"""
     r = subprocess.run(
-        [sys.executable, "-c", "import pydantic_core"],
+        _python_cmd() + ["-c", probe],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -34,27 +53,46 @@ def _repair_venv_pydantic_if_macos(cwd: str) -> None:
     if r.returncode == 0:
         return
     err = (r.stderr or "") + (r.stdout or "")
-    if "incompatible architecture" not in err:
+    if r.returncode != 3 and "incompatible architecture" not in err:
         return
-    print(
-        "  Reinstalling pydantic for this Mac's architecture (one-time repair)...",
-        file=sys.stderr,
-    )
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "-q",
-            "--no-cache-dir",
-            "--force-reinstall",
-            "pydantic",
-            "pydantic-core",
-        ],
-        cwd=cwd,
-        check=False,
-    )
+    req = os.path.join(cwd, "requirements.txt")
+    if os.path.isfile(req):
+        print(
+            "  Reinstalling Python dependencies for this Mac's architecture (one-time, may take a few minutes)...",
+            file=sys.stderr,
+        )
+        subprocess.run(
+            _python_cmd()
+            + [
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "--no-cache-dir",
+                "--force-reinstall",
+                "-r",
+                req,
+            ],
+            cwd=cwd,
+            check=False,
+        )
+    else:
+        subprocess.run(
+            _python_cmd()
+            + [
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "--no-cache-dir",
+                "--force-reinstall",
+                "numpy",
+                "pydantic",
+                "pydantic-core",
+            ],
+            cwd=cwd,
+            check=False,
+        )
 
 
 def _server_listening(host: str, port: int) -> bool:
@@ -103,7 +141,7 @@ def main() -> None:
 
     from config import BASE_DIR
 
-    _repair_venv_pydantic_if_macos(str(BASE_DIR))
+    _repair_venv_native_wheels_if_macos(str(BASE_DIR))
 
     host = os.getenv("MAGNITU_HOST", "127.0.0.1")
     preferred = int(os.getenv("MAGNITU_PORT", "8000"))
@@ -129,8 +167,7 @@ def main() -> None:
         port = _pick_listening_port(host, preferred)
         if port != preferred:
             print(f"  Port {preferred} was busy — using {port}", file=sys.stderr)
-        cmd: List[str] = [
-            sys.executable,
+        cmd: List[str] = _python_cmd() + [
             "-m",
             "uvicorn",
             "main:app",

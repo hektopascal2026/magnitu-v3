@@ -50,8 +50,10 @@ Start: ./start.sh in your clone  →  http://127.0.0.1:8000
     Edit install/magnitu_app_icon_source.svg if needed, then run:
       bash install/build_mac_icon.sh
     Finder may cache the old icon; move the app or log out/in to refresh.
-  - If the clone lives elsewhere, run manually:  bash install/post_bootstrap_mac_app.sh
-    only after moving the repo to ~/Applications/magnitu3, or use Terminal only.
+  - If links were skipped, from the repo:  cd ~/Applications/magnitu3
+      bash install/post_bootstrap_mac_app.sh
+    (pass no args when your cwd is the clone, or: bash install/post_bootstrap_mac_app.sh  /path/to/magnitu3)
+    Shortcuts need the clone at ~/Applications/magnitu3; other paths are skipped.
 
 Update:
 

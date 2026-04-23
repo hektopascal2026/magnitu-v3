@@ -11,4 +11,9 @@ if [ ! -x "$REPO/install/mac_open_desktop.sh" ]; then
 	fi
 	exit 1
 fi
-exec /bin/bash "$REPO/install/mac_open_desktop.sh"
+# Prefer native arm64 bash so the whole chain (python, arch) matches arm64 site-packages
+if [ "$(uname -m)" = "arm64" ]; then
+	exec arch -arm64 /bin/bash "$REPO/install/mac_open_desktop.sh"
+else
+	exec /bin/bash "$REPO/install/mac_open_desktop.sh"
+fi

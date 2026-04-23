@@ -73,9 +73,15 @@ cd "$REPO"
 DIR="$REPO"
 export DIR
 
-PY="$REPO/.venv/bin/python"
-CONFIG_FILE=$("$PY" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$REPO'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
-if [ ! -x "$PY" ] || [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
+VENV_PY="$REPO/.venv/bin/python"
+PY="$VENV_PY"
+export PY
+export MAGNITU_VENV_PY="$VENV_PY"
+# shellcheck source=./macos_venv_invoker.sh
+. "$REPO/install/macos_venv_invoker.sh"
+
+CONFIG_FILE=$(magnitu_venv -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$REPO'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
+if [ ! -x "$VENV_PY" ] || [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
     msg_alert "Magnitu" "Run the installer first: bash install/bootstrap.sh in your magnitu3 folder in Terminal."
     exit 1
 fi
@@ -114,7 +120,7 @@ fi
 # says we should sync, `pip install -q` is quick when the env is already satisfied.
 if [ "$NEED_CHECK" = "1" ]; then
     echo "  Python dependencies: syncing (stale stamp or new commits)..."
-    if ! "$PY" -m pip install -q -r "$REQ" 2>&1; then
+    if ! magnitu_venv -m pip install -q -r "$REQ" 2>&1; then
         msg_alert "Magnitu" "pip install failed. Check the log (opening), then in Terminal: pip install -r requirements.txt"
         exit 1
     fi
@@ -127,8 +133,8 @@ if [ ! -f "$STAMP_DESKTOP" ]; then
 elif [ -f "$REQD" ] && [ "$REQD" -nt "$STAMP_DESKTOP" ]; then
     NEED_DESKTOP=1
 fi
-if [ "$NEED_DESKTOP" = "1" ] || ! "$PY" -c "import webview" 2>/dev/null; then
-    if ! "$PY" -m pip install -q -r "$REQD" 2>&1; then
+if [ "$NEED_DESKTOP" = "1" ] || ! magnitu_venv -c "import webview" 2>/dev/null; then
+    if ! magnitu_venv -m pip install -q -r "$REQD" 2>&1; then
         msg_alert "Magnitu" "Could not install requirements-desktop.txt. See the log (opening), then: pip install -r requirements-desktop.txt"
         exit 1
     fi
@@ -137,7 +143,7 @@ fi
 
 # Do not use exec: retain EXIT trap so Python errors still open the log.
 set +e
-"$PY" "$REPO/desktop.py"
+magnitu_venv "$REPO/desktop.py"
 rc=$?
 set -e
 exit "$rc"

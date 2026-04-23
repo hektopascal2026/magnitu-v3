@@ -25,7 +25,12 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT=8000
 HOST="127.0.0.1"
 URL="http://$HOST:$PORT"
-PY="$DIR/.venv/bin/python"
+VENV_PY="$DIR/.venv/bin/python"
+PY="$VENV_PY"
+export PY
+export MAGNITU_VENV_PY="$VENV_PY"
+# shellcheck source=install/macos_venv_invoker.sh
+. "$DIR/install/macos_venv_invoker.sh"
 
 clear 2>/dev/null || true
 echo ""
@@ -68,14 +73,14 @@ if lsof -ti:$PORT > /dev/null 2>&1; then
         exit 0
     fi
 fi
-if [ ! -f "$PY" ]; then
+if [ ! -f "$VENV_PY" ]; then
     echo "  Not set up yet. Running installer..."
     echo ""
     /bin/bash "$DIR/install/bootstrap.sh"
     exit $?
 fi
 
-CONFIG_FILE=$("$PY" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$DIR'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
+CONFIG_FILE=$(magnitu_venv -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$DIR'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
 if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
     echo "  No config found. Running installer..."
     echo ""
@@ -111,7 +116,7 @@ fi
 
 if [ "$NEED_CHECK" = "1" ]; then
     echo "  Checking dependencies..."
-    MISSING=$("$PY" -c "
+    MISSING=$(magnitu_venv -c "
 missing = []
 for mod in ['uvicorn', 'fastapi', 'httpx', 'sklearn', 'torch', 'transformers']:
     try:
@@ -126,17 +131,17 @@ print(','.join(missing))
             echo "  Missing packages: $MISSING"
         fi
         echo "  Installing dependencies (this may take a few minutes)..."
-        if ! "$PY" -m pip install -q -r "$REQ" 2>&1; then
+        if ! magnitu_venv -m pip install -q -r "$REQ" 2>&1; then
             echo ""
             echo "  ERROR: pip install failed. Check your internet connection"
             echo "  and try running manually:"
-            echo "    $PY -m pip install -r $REQ"
+            echo "    $VENV_PY -m pip install -r $REQ"
             echo ""
             exit 1
         fi
 
         # Verify again after install
-        STILL_MISSING=$("$PY" -c "
+        STILL_MISSING=$(magnitu_venv -c "
 missing = []
 for mod in ['uvicorn', 'fastapi', 'httpx', 'sklearn', 'torch', 'transformers']:
     try:
@@ -150,7 +155,7 @@ print(','.join(missing))
             echo ""
             echo "  ERROR: These packages failed to install: $STILL_MISSING"
             echo "  Try installing manually:"
-            echo "    $PY -m pip install $STILL_MISSING"
+            echo "    $VENV_PY -m pip install $STILL_MISSING"
             echo ""
             exit 1
         fi
@@ -183,7 +188,7 @@ echo ""
 ) &
 
 # Run server (foreground — Ctrl+C stops it)
-"$PY" -m uvicorn main:app --host "$HOST" --port $PORT
+magnitu_venv -m uvicorn main:app --host "$HOST" --port $PORT
 
 echo ""
 echo "  Magnitu stopped."
