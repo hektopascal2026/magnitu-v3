@@ -34,15 +34,15 @@
                         {% set is_workspace = active_profile and (p.id == active_profile.id) %}
                         {% set st = nav_profile_styles[p.id] if p.id in nav_profile_styles else {} %}
                         {% if is_workspace %}
-                            <span class="profile-pill profile-pill-indicator-active">{{ p.display_name }}</span>
+                            <span class="profile-pill-indicator-active">{{ p.display_name }}</span>
                         {% else %}
-                            <span class="profile-pill profile-pill-indicator-muted">{{ p.display_name }}</span>
+                            <span class="profile-pill-indicator-muted">{{ p.display_name }}</span>
                         {% endif %}
                     {% endfor %}
                 </span>
                 {% elif profile %}
                 <span class="profile-switcher profile-switcher-indicator" title="Active workspace">
-                    <span class="profile-pill profile-pill-indicator-active">{{ profile.display_name }}</span>
+                    <span class="profile-pill-indicator-active">{{ profile.display_name }}</span>
                 </span>
                 <span class="top-bar-subtitle" style="margin-left: 10px;">
                     {% if active_model %}v{{ active_model.version }}{% endif %} &middot; {{ label_count }} labels
