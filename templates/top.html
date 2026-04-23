@@ -104,9 +104,29 @@
                         {% endif %}
                     </h3>
 
-                    <!-- Description -->
-                    {% if e.description %}
-                        <div class="entry-content">{{ e.description[:200] }}{% if e.description|length > 200 %}...{% endif %}</div>
+                    <!-- Description + body (e.g. eingereichter Text for lex) -->
+                    {% set desc_trim = (e.description or "")|trim %}
+                    {% set cont_trim = (e.content or "")|trim %}
+                    {% set is_lex = e.source_type and e.source_type.startswith('lex') %}
+                    {% if desc_trim or cont_trim %}
+                        {% if desc_trim and cont_trim and desc_trim == cont_trim %}
+                            <div class="entry-body-block">
+                                {% if is_lex %}
+                                    <div class="entry-body-label">Eingereichter Text</div>
+                                {% endif %}
+                                <div class="entry-content">{{ cont_trim[:400] }}{% if cont_trim|length > 400 %}...{% endif %}</div>
+                            </div>
+                        {% else %}
+                            {% if desc_trim %}
+                                <div class="entry-content">{{ desc_trim[:200] }}{% if desc_trim|length > 200 %}...{% endif %}</div>
+                            {% endif %}
+                            {% if cont_trim and cont_trim != desc_trim %}
+                                <div class="entry-body-block">
+                                    <div class="entry-body-label">{% if is_lex %}Eingereichter Text{% else %}Text{% endif %}</div>
+                                    <div class="entry-content entry-body-text">{{ cont_trim[:400] }}{% if cont_trim|length > 400 %}...{% endif %}</div>
+                                </div>
+                            {% endif %}
+                        {% endif %}
                     {% endif %}
 
                     <!-- Footer: reclassify+why left, source+date right -->

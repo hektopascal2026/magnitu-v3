@@ -121,8 +121,28 @@
                     {% endif %}
                 </h3>
 
-                {% if entry.description %}
-                    <div class="entry-content">{{ entry.description[:300] }}{% if entry.description|length > 300 %}...{% endif %}</div>
+                {% set desc_trim = (entry.description or "")|trim %}
+                {% set cont_trim = (entry.content or "")|trim %}
+                {% set is_lex = entry.source_type and entry.source_type.startswith('lex') %}
+                {% if desc_trim or cont_trim %}
+                    {% if desc_trim and cont_trim and desc_trim == cont_trim %}
+                        <div class="entry-body-block">
+                            {% if is_lex %}
+                                <div class="entry-body-label">Eingereichter Text</div>
+                            {% endif %}
+                            <div class="entry-content">{{ cont_trim[:600] }}{% if cont_trim|length > 600 %}...{% endif %}</div>
+                        </div>
+                    {% else %}
+                        {% if desc_trim %}
+                            <div class="entry-content">{{ desc_trim[:300] }}{% if desc_trim|length > 300 %}...{% endif %}</div>
+                        {% endif %}
+                        {% if cont_trim and cont_trim != desc_trim %}
+                            <div class="entry-body-block">
+                                <div class="entry-body-label">{% if is_lex %}Eingereichter Text{% else %}Text{% endif %}</div>
+                                <div class="entry-content entry-body-text">{{ cont_trim[:600] }}{% if cont_trim|length > 600 %}...{% endif %}</div>
+                            </div>
+                        {% endif %}
+                    {% endif %}
                 {% endif %}
 
                 {% if entry.source_name %}

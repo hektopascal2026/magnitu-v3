@@ -66,6 +66,29 @@ def _transient_io_error(ex: BaseException) -> bool:
     return False
 
 
+def _cancelled_result(
+    *,
+    candidates: List[Dict],
+    to_process: List[Dict],
+    skipped_filter: int,
+    labeled: int,
+    failed: List[Dict[str, Any]],
+    skipped_mid: int,
+) -> Dict[str, Any]:
+    return {
+        "success": True,
+        "cancelled": True,
+        "labeled": labeled,
+        "skipped": skipped_filter + skipped_mid,
+        "skipped_mid_run": skipped_mid,
+        "failed": failed,
+        "candidates_total": len(candidates),
+        "queued": len(to_process),
+        "message": "Cancelled (partial: %d labeled)" % labeled,
+        "note": "Labeling was stopped. Entries already labeled in this run are saved; the rest were not processed.",
+    }
+
+
 def run_gemini_synthetic_batch_job(
     profile_id: int,
     *,
@@ -75,6 +98,7 @@ def run_gemini_synthetic_batch_job(
     system_instruction: Optional[str] = None,
     mode: str = "single",
     progress_cb: Optional[Callable[[int, str, Optional[str]], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """Process up to ``batch_limit`` smart-queue entries with Gemini; persist via ``db.set_label``.
 
@@ -128,6 +152,22 @@ def run_gemini_synthetic_batch_job(
             # Process in chunks of 10
             chunk_size = 10
             for i in range(0, len(to_process), chunk_size):
+                if cancel_check and cancel_check():
+                    if progress_cb:
+                        progress_cb(
+                            100,
+                            "Cancelled by user (%d of %d labeled)."
+                            % (labeled, total),
+                            "Cancelled. Labels already written are kept.",
+                        )
+                    return _cancelled_result(
+                        candidates=candidates,
+                        to_process=to_process,
+                        skipped_filter=skipped_filter,
+                        labeled=labeled,
+                        failed=failed,
+                        skipped_mid=skipped_mid,
+                    )
                 chunk = to_process[i : i + chunk_size]
                 if progress_cb:
                     pct = 5 + int(90 * i / max(total, 1))
@@ -197,6 +237,22 @@ def run_gemini_synthetic_batch_job(
         else:
             # Original single-entry mode
             for i, entry in enumerate(to_process):
+                if cancel_check and cancel_check():
+                    if progress_cb:
+                        progress_cb(
+                            100,
+                            "Cancelled by user (%d of %d labeled)."
+                            % (labeled, total),
+                            "Cancelled. Labels already written are kept.",
+                        )
+                    return _cancelled_result(
+                        candidates=candidates,
+                        to_process=to_process,
+                        skipped_filter=skipped_filter,
+                        labeled=labeled,
+                        failed=failed,
+                        skipped_mid=skipped_mid,
+                    )
                 et, eid = entry["entry_type"], int(entry["entry_id"])
                 if progress_cb:
                     pct = 5 + int(90 * i / max(total, 1))

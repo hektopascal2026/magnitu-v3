@@ -125,6 +125,7 @@ def _create_job(job_type: str) -> str:
             "updated_at": datetime.utcnow().isoformat(),
             "result": None, "error": None,
             "logs": [],
+            "cancel_requested": False,
         }
     return job_id
 
@@ -155,8 +156,18 @@ def _run_job(job_id: str, target):
                 update["logs"] = [log]
             _update_job(job_id, **update)
         result = target(progress_cb)
-        _update_job(job_id, status="success", progress=100,
-                    message="Done", result=result, error=None)
+        if isinstance(result, dict) and result.get("cancelled"):
+            _update_job(
+                job_id,
+                status="cancelled",
+                progress=100,
+                message=result.get("message", "Cancelled"),
+                result=result,
+                error=None,
+            )
+        else:
+            _update_job(job_id, status="success", progress=100,
+                        message="Done", result=result, error=None)
     except Exception as e:
         _update_job(job_id, status="error", message=str(e), error=str(e))
 
@@ -703,6 +714,11 @@ async def gemini_batch_start(slug: str, request: Request):
     db.merge_profile_training_settings(profile_id, {"gemini_mode": mode})
 
     job_id = _create_job("gemini_synthetic_batch")
+    def _gemini_cancelled() -> bool:
+        with _JOB_LOCK:
+            j = _JOBS.get(job_id)
+            return bool(j and j.get("cancel_requested"))
+
     t = threading.Thread(
         target=lambda: _run_job(
             job_id,
@@ -713,6 +729,7 @@ async def gemini_batch_start(slug: str, request: Request):
                 replace_gemini=replace_gemini,
                 mode=mode,
                 progress_cb=cb,
+                cancel_check=_gemini_cancelled,
             ),
         ),
         daemon=True,
@@ -1262,6 +1279,24 @@ async def job_status(job_id: str):
     if not job:
         raise HTTPException(404, "Job not found")
     return job
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def job_cancel(job_id: str):
+    """Request cancellation of a background job. The worker stops after the
+    current item or API batch; work already written (e.g. labels) is kept."""
+    with _JOB_LOCK:
+        job = _JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        st = (job.get("status") or "").strip()
+        if st not in ("queued", "running"):
+            return {
+                "success": False,
+                "detail": "Job is not running (status: %s)" % st,
+            }
+        job["cancel_requested"] = True
+    return {"success": True}
 
 
 @app.post("/p/{slug}/api/sync/labels")

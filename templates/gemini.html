@@ -5,7 +5,7 @@
 <div class="settings-page gemini-page">
     <div class="dashboard-section">
         <h2>Gemini synthetic labeling</h2>
-        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+        <p class="section-subtitle">
             Target profile: <strong>{{ target_model_title }}</strong>
             {% if active_model %}
                 · Active model v{{ active_model.version }}
@@ -14,12 +14,14 @@
             {% endif %}
         </p>
         {% if active_model_basename %}
-        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
-            Loaded classifier: <code>{{ active_model_basename }}</code>
-            (same paths the Label queue uses for scoring).
+        <p class="section-subtitle">
+            Loaded classifier: <code>{{ active_model_basename }}</code> (same paths the Label queue uses for scoring).
         </p>
         {% endif %}
-        <p style="color: #666; font-size: 13px; margin-bottom: 16px;">{{ gemini_queue_help }}</p>
+        <details>
+            <summary style="cursor:pointer; color:#666;">How the queue works</summary>
+            <p class="form-help">{{ gemini_queue_help }}</p>
+        </details>
 
         <div class="settings-form">
             <div class="settings-grid">
@@ -38,41 +40,49 @@
                     <div class="form-help">Restrict the Smart Queue to legislation or news feeds, or use all types.</div>
                 </div>
                 <div class="form-group">
+                    <label>Processing mode</label>
+                    <select id="geminiMode" style="padding: 10px 14px; border: 2px solid #000000; font-size: 14px; font-family: inherit; background: #ffffff; color: #000000;">
+                        <option value="single" {% if config.gemini_mode == 'single' %}selected{% endif %}>One by one (Progressive log)</option>
+                        <option value="batch" {% if config.gemini_mode == 'batch' %}selected{% endif %}>Prompt batching (10x faster, cheaper)</option>
+                    </select>
+                    <div class="form-help">
+                        <strong>One by one</strong> streams a single entry at a time; log lines update as each finishes.
+                        <strong>Prompt batching</strong> groups multiple rows in fewer API calls (about 10 articles per request): cheaper and faster, but the Processing Log updates in chunks rather than per row.
+                    </div>
+                </div>
+                <div class="form-group">
                     <label>
                         <input type="checkbox" id="geminiReplace" />
                         Re-label entries previously labeled by Gemini (retry failed rows)
                     </label>
                     <div class="form-help">When off, only unlabeled rows are processed. When on, Gemini-labeled rows can be re-run for retries.</div>
                 </div>
-                <div class="form-group">
-                    <label>Processing mode</label>
-                    <select id="geminiMode" style="padding: 10px 14px; border: 2px solid #000000; font-size: 14px; font-family: inherit; background: #ffffff; color: #000000;">
-                        <option value="single" {% if config.gemini_mode == 'single' %}selected{% endif %}>One by one (Progressive log)</option>
-                        <option value="batch" {% if config.gemini_mode == 'batch' %}selected{% endif %}>Prompt batching (10x faster, cheaper)</option>
-                    </select>
-                    <div class="form-help">Single mode streams one entry at a time. Prompt batching groups rows per API call (faster, coarser log).</div>
-                </div>
-                <div class="form-group" style="grid-column: 1 / -1;">
-                    <div class="form-help">
-                        <strong>Prompt batching</strong> sends 10 articles in a single LLM request. It is significantly cheaper and faster, but log updates arrive in chunks.
-                    </div>
-                </div>
-                <div class="form-group" style="grid-column: 1 / -1;">
-                    <div class="form-help">
-                        Labels are saved locally with reasoning and <code>source: Gemini</code> in exports.
-                        Seismo is not updated per row; use <strong>Push to {{ profile.display_name }}</strong> on the Label page when ready.
-                    </div>
-                </div>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
+                <span style="font-size: 13px; color: #666; margin-left: 15px;">
+                    Labels are saved locally with reasoning and <code>source: Gemini</code> in exports. Seismo is not updated per row; use
+                    <strong>Push to {{ profile.display_name }}</strong> on the Label page when ready.
+                </span>
             </div>
         </div>
     </div>
 
     <div class="dashboard-section" id="log-section">
         <h2>Processing Log</h2>
+        <div class="task-progress" id="taskProgress" style="display:none;">
+            <div class="task-progress-label" id="taskProgressLabel">Working...</div>
+            <div class="task-progress-track">
+                <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+            </div>
+            <div class="task-progress-meta" id="taskProgressMeta">0%</div>
+        </div>
+        <div class="form-actions" id="geminiJobActions" style="display:none;">
+            <button type="button" class="btn" id="geminiCancelBtn">Cancel labeling</button>
+            <span class="form-help">Stops after the current row or API batch. Entries already labeled stay saved.</span>
+        </div>
         <pre id="geminiLogOutput"></pre>
+        <div id="geminiResult" class="gemini-result" style="display:none;"></div>
     </div>
 
     <div class="dashboard-section">
@@ -91,16 +101,6 @@
                 <button type="button" class="btn btn-primary" id="geminiPersonaSaveBtn">Save Persona</button>
             </div>
         </div>
-
-        <div class="task-progress" id="taskProgress" style="display:none;">
-            <div class="task-progress-label" id="taskProgressLabel">Working...</div>
-            <div class="task-progress-track">
-                <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
-            </div>
-            <div class="task-progress-meta" id="taskProgressMeta">0%</div>
-        </div>
-
-        <div id="geminiResult" class="gemini-result" style="display:none;"></div>
     </div>
 </div>
 {% endblock %}
@@ -115,7 +115,11 @@
     var taskProgressMeta = document.getElementById('taskProgressMeta');
     var resultEl = document.getElementById('geminiResult');
     var logOutputEl = document.getElementById('geminiLogOutput');
+    var jobActions = document.getElementById('geminiJobActions');
+    var cancelBtn = document.getElementById('geminiCancelBtn');
     var seenLogCount = 0;
+    var activeJobId = null;
+    var pollTimer = null;
 
     function appendLog(message, isError, isHighlight) {
         if (isError === undefined) isError = false;
@@ -141,14 +145,28 @@
 
     function setProgress(visible, label, pct, meta) {
         taskProgress.style.display = visible ? 'block' : 'none';
+        if (jobActions) {
+            jobActions.style.display = (visible && activeJobId) ? 'flex' : 'none';
+        }
+        if (cancelBtn) {
+            if (!visible || !activeJobId) cancelBtn.disabled = false;
+        }
         if (!visible) return;
         taskProgressLabel.textContent = label || 'Working...';
         taskProgressFill.style.width = (pct || 0) + '%';
         taskProgressMeta.textContent = meta || ((pct || 0) + '%');
     }
 
+    function stopPolling() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    }
+
     function pollJob(jobId, onDone, onFail) {
-        var timer = setInterval(function() {
+        stopPolling();
+        pollTimer = setInterval(function() {
             fetch('/api/jobs/' + jobId)
                 .then(function(r) { return r.json(); })
                 .then(function(job) {
@@ -167,16 +185,16 @@
                         seenLogCount = job.logs.length;
                     }
 
-                    if (job.status === 'success') {
-                        clearInterval(timer);
-                        onDone(job.result || {});
+                    if (job.status === 'success' || job.status === 'cancelled') {
+                        stopPolling();
+                        onDone(job.result || {}, job.status === 'cancelled');
                     } else if (job.status === 'error') {
-                        clearInterval(timer);
+                        stopPolling();
                         onFail(job.error || 'Unknown error');
                     }
                 })
                 .catch(function(err) {
-                    clearInterval(timer);
+                    stopPolling();
                     onFail(err.message);
                 });
         }, 1000);
@@ -190,7 +208,8 @@
 
     function showResult(res) {
         resultEl.style.display = 'block';
-        var html = '<h3>Results</h3><ul>';
+        var title = res.cancelled ? 'Run stopped (cancelled)' : 'Results';
+        var html = '<h3>' + escHtml(title) + '</h3><ul>';
         html += '<li>Labeled: <strong>' + (res.labeled || 0) + '</strong></li>';
         html += '<li>Skipped: <strong>' + (res.skipped || 0) + '</strong></li>';
         html += '<li>Failed: <strong>' + ((res.failed || []).length) + '</strong></li>';
@@ -206,10 +225,29 @@
             });
             html += '</ul>';
         }
-        if ((res.labeled || 0) > 0 && (res.failed || []).length === 0) {
+        if (!res.cancelled && (res.labeled || 0) > 0 && (res.failed || []).length === 0) {
             html += '<p>When you have enough labels, open <a href="' + escHtml(P) + '/">Label</a> to <strong>Train</strong>.</p>';
         }
         resultEl.innerHTML = html;
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            if (!activeJobId) return;
+            cancelBtn.disabled = true;
+            fetch('/api/jobs/' + activeJobId + '/cancel', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d.success) {
+                        cancelBtn.disabled = false;
+                        flash(d.detail || 'Could not cancel the job', 'error');
+                    }
+                })
+                .catch(function() {
+                    cancelBtn.disabled = false;
+                    flash('Could not request cancel', 'error');
+                });
+        });
     }
 
     document.getElementById('geminiStartBtn').addEventListener('click', function() {
@@ -221,6 +259,8 @@
         var mode = document.getElementById('geminiMode').value;
 
         btn.disabled = true;
+        stopPolling();
+        activeJobId = null;
         resultEl.style.display = 'none';
         if (logOutputEl) {
             logOutputEl.innerHTML = '';
@@ -244,16 +284,35 @@
                 if (!data.success || !data.job_id) {
                     throw new Error(data.detail || data.error || 'Failed to start job');
                 }
+                activeJobId = data.job_id;
+                setProgress(true, 'Starting Gemini job...', 1, '1%');
                 pollJob(
                     data.job_id,
-                    function(result) {
-                        setProgress(true, 'Done', 100, '100%');
+                    function(result, wasCancelled) {
+                        activeJobId = null;
+                        if (cancelBtn) cancelBtn.disabled = false;
+                        setProgress(
+                            true,
+                            wasCancelled ? 'Cancelled' : 'Done',
+                            100,
+                            '100%'
+                        );
                         showResult(result);
-                        flash('Gemini batch finished: ' + (result.labeled || 0) + ' labeled.', 'success');
+                        if (wasCancelled) {
+                            flash(
+                                'Labeling cancelled. ' + (result.labeled || 0) + ' entries kept.',
+                                'success'
+                            );
+                        } else {
+                            flash('Gemini batch finished: ' + (result.labeled || 0) + ' labeled.', 'success');
+                        }
                         btn.disabled = false;
                         setTimeout(function() { setProgress(false); }, 2000);
                     },
                     function(errMsg) {
+                        stopPolling();
+                        activeJobId = null;
+                        if (cancelBtn) cancelBtn.disabled = false;
                         appendLog('FATAL ERROR: ' + errMsg, true, false);
 
                         flash('Gemini batch failed: ' + errMsg, 'error');
@@ -263,6 +322,9 @@
                 );
             })
             .catch(function(err) {
+                stopPolling();
+                activeJobId = null;
+                if (cancelBtn) cancelBtn.disabled = false;
                 appendLog('FATAL ERROR: ' + err.message, true, false);
 
                 flash('Error: ' + err.message, 'error');
