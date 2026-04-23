@@ -117,6 +117,9 @@
                             var line = document.createElement('div');
                             line.className = 'log-line';
                             var txt = job.logs[i];
+                            if (txt.indexOf('Processing ') === 0 && logContentEl.children.length > 0) {
+                                line.classList.add('log-block-start');
+                            }
                             if (txt.includes('-> Label: investigation_lead')) line.classList.add('log-lead');
                             else if (txt.includes('-> Label: noise')) line.classList.add('log-noise');
                             line.textContent = txt;
