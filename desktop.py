@@ -21,6 +21,42 @@ from typing import Any, Callable, List, Optional
 Proc = Any
 
 
+def _repair_venv_pydantic_if_macos(cwd: str) -> None:
+    """Reinstall pydantic for this interpreter if wheels are the wrong arch (e.g. arm64 .so, x86_64 venv)."""
+    if sys.platform != "darwin":
+        return
+    r = subprocess.run(
+        [sys.executable, "-c", "import pydantic_core"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode == 0:
+        return
+    err = (r.stderr or "") + (r.stdout or "")
+    if "incompatible architecture" not in err:
+        return
+    print(
+        "  Reinstalling pydantic for this Mac's architecture (one-time repair)...",
+        file=sys.stderr,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--no-cache-dir",
+            "--force-reinstall",
+            "pydantic",
+            "pydantic-core",
+        ],
+        cwd=cwd,
+        check=False,
+    )
+
+
 def _server_listening(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.35):
@@ -66,6 +102,8 @@ def main() -> None:
         sys.exit(1)
 
     from config import BASE_DIR
+
+    _repair_venv_pydantic_if_macos(str(BASE_DIR))
 
     host = os.getenv("MAGNITU_HOST", "127.0.0.1")
     preferred = int(os.getenv("MAGNITU_PORT", "8000"))

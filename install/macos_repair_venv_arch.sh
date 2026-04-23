@@ -12,7 +12,7 @@ REPAIR_ERR="$(mktemp -t magnitu-venv-repair.XXXXXX)"
 if ! "$PY" -c "import pydantic_core" 2>"$REPAIR_ERR"; then
     if grep -q "incompatible architecture" "$REPAIR_ERR" 2>/dev/null; then
         echo "  Repairing: a native package (e.g. pydantic_core) does not match this Python — reinstalling for the current architecture..."
-        if ! "$PY" -m pip install -q --no-cache-dir --force-reinstall "pydantic-core" 2>&1; then
+        if ! "$PY" -m pip install -q --no-cache-dir --force-reinstall "pydantic" "pydantic-core" 2>&1; then
             echo "  (Automatic fix failed. Remove the .venv folder, then in Terminal: arch -arm64 bash install/bootstrap.sh )"
         fi
     fi

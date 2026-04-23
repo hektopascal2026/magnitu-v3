@@ -70,6 +70,8 @@ if [ ! -d "$REPO" ] || [ ! -f "$REPO/main.py" ]; then
     exit 1
 fi
 cd "$REPO"
+DIR="$REPO"
+export DIR
 
 PY="$REPO/.venv/bin/python"
 CONFIG_FILE=$("$PY" -c "import os,sys; os.environ.pop('MAGNITU_TEST',None); sys.path.insert(0,r'''$REPO'''); import config; print(config.CONFIG_PATH)" 2>/dev/null) || CONFIG_FILE=""
@@ -82,6 +84,10 @@ STAMP="$REPO/.venv/.deps_ok"
 STAMP_DESKTOP="$REPO/.venv/.deps_desktop_ok"
 REQ="$REPO/requirements.txt"
 REQD="$REPO/requirements-desktop.txt"
+
+# Fix arm64/x86_64 pydantic wheels *before* any path imports uvicorn/torch (fast to fail otherwise).
+# shellcheck source=./macos_repair_venv_arch.sh
+. "$REPO/install/macos_repair_venv_arch.sh"
 
 # shellcheck source=mag_git_sync.sh
 . "$REPO/install/mag_git_sync.sh"
@@ -104,22 +110,13 @@ elif [ -f "$REQ" ] && [ "$REQ" -nt "$STAMP" ]; then
     NEED_CHECK=1
 fi
 
+# No slow "import torch/transformers" probe here: it added 10–30s+ per app launch. If the stamp
+# says we should sync, `pip install -q` is quick when the env is already satisfied.
 if [ "$NEED_CHECK" = "1" ]; then
-    MISSING=$("$PY" -c "
-missing = []
-for mod in ['uvicorn', 'fastapi', 'httpx', 'sklearn', 'torch', 'transformers']:
-    try:
-        __import__(mod)
-    except ImportError:
-        missing.append(mod)
-print(','.join(missing))
-" 2>/dev/null) || true
-
-    if [ -n "$MISSING" ] || [ "$DEPS_CHANGED" = "1" ]; then
-        if ! "$PY" -m pip install -q -r "$REQ" 2>&1; then
-            msg_alert "Magnitu" "pip install failed. Check the log (opening), then in Terminal: pip install -r requirements.txt"
-            exit 1
-        fi
+    echo "  Python dependencies: syncing (stale stamp or new commits)..."
+    if ! "$PY" -m pip install -q -r "$REQ" 2>&1; then
+        msg_alert "Magnitu" "pip install failed. Check the log (opening), then in Terminal: pip install -r requirements.txt"
+        exit 1
     fi
     touch "$STAMP"
 fi
@@ -137,9 +134,6 @@ if [ "$NEED_DESKTOP" = "1" ] || ! "$PY" -c "import webview" 2>/dev/null; then
     fi
     touch "$STAMP_DESKTOP"
 fi
-
-# shellcheck source=./macos_repair_venv_arch.sh
-. "$REPO/install/macos_repair_venv_arch.sh"
 
 # Do not use exec: retain EXIT trap so Python errors still open the log.
 set +e
