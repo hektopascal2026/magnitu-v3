@@ -10,9 +10,10 @@ import db
 import sampler
 from magnitu.gemini import GeminiClient
 from magnitu.gemini_config import GeminiConfig
+from magnitu.prompts import MAGNITU_LABELS
 from magnitu.synthetic_scorer import (
     call_gemini_for_synthetic_label,
-    call_gemini_for_synthetic_label_batch
+    call_gemini_for_synthetic_label_batch,
 )
 
 SOURCE_GEMINI = "Gemini"
@@ -163,7 +164,7 @@ def run_gemini_synthetic_batch_job(
                             if res:
                                 label = res.get("label")
                                 reasoning = res.get("reasoning", "")
-                                if label in sampler.MAGNITU_LABELS and reasoning:
+                                if label in MAGNITU_LABELS and reasoning:
                                     db.set_label(
                                         et, eid, label,
                                         reasoning=reasoning,
