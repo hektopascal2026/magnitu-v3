@@ -9,7 +9,7 @@ if [[ "$OSTYPE" != darwin* ]]; then
 fi
 [ -n "${PY:-}" ] && [ -x "$PY" ] || return 0 2>/dev/null || true
 
-_INV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0})" 2>/dev/null && pwd)" || _INV_DIR=""
+_INV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || _INV_DIR=""
 # shellcheck source=./macos_venv_invoker.sh
 [ -n "$_INV_DIR" ] && [ -f "$_INV_DIR/macos_venv_invoker.sh" ] && . "$_INV_DIR/macos_venv_invoker.sh"
 [ "$(type -t magnitu_venv 2>/dev/null)" = function ] || return 0 2>/dev/null || true
