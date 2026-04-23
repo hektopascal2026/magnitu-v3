@@ -8,7 +8,7 @@ set -e
 # (so:  cd ~/Applications/magnitu3 && bash install/post_bootstrap_mac_app.sh  works).
 INSTALL_DIR="${1:-}"
 if [ -z "$INSTALL_DIR" ] || [ ! -d "$INSTALL_DIR" ] || [ ! -f "$INSTALL_DIR/main.py" ]; then
-    _sdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0})" 2>/dev/null && pwd)" || _sdir=""
+    _sdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || _sdir=""
     if [ -n "$_sdir" ] && [ -f "$_sdir/../main.py" ]; then
         INSTALL_DIR="$(cd "$_sdir/.." && pwd)"
     else
