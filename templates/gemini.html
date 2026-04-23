@@ -68,8 +68,15 @@
                 <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
             </div>
         </div>
+    </div>
 
-        <h2 style="margin: 20px 0 12px 0;">Persona &amp; Instructions</h2>
+    <div class="dashboard-section" id="log-section">
+        <h2>Processing Log</h2>
+        <pre id="geminiLogOutput"></pre>
+    </div>
+
+    <div class="dashboard-section">
+        <h2>Persona &amp; Instructions</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">Define how Gemini should think when labeling entries for this profile.</p>
         <div class="settings-form">
             <div class="settings-grid">
@@ -93,11 +100,6 @@
             <div class="task-progress-meta" id="taskProgressMeta">0%</div>
         </div>
 
-        <div id="geminiLog" class="gemini-log-window" style="display:none;">
-            <div class="gemini-log-header">Diagnostic Log</div>
-            <div id="geminiLogContent" class="gemini-log-content"></div>
-        </div>
-
         <div id="geminiResult" class="gemini-result" style="display:none;"></div>
     </div>
 </div>
@@ -112,9 +114,30 @@
     var taskProgressFill = document.getElementById('taskProgressFill');
     var taskProgressMeta = document.getElementById('taskProgressMeta');
     var resultEl = document.getElementById('geminiResult');
-    var logEl = document.getElementById('geminiLog');
-    var logContentEl = document.getElementById('geminiLogContent');
+    var logOutputEl = document.getElementById('geminiLogOutput');
     var seenLogCount = 0;
+
+    function appendLog(message, isError, isHighlight) {
+        if (isError === undefined) isError = false;
+        if (isHighlight === undefined) isHighlight = false;
+        if (!logOutputEl) return;
+        if (isError) {
+            var sErr = document.createElement('span');
+            sErr.style.color = '#f44336';
+            sErr.textContent = String(message);
+            logOutputEl.appendChild(sErr);
+        } else if (isHighlight) {
+            var sHi = document.createElement('span');
+            sHi.style.color = '#ff5252';
+            sHi.style.fontWeight = 'bold';
+            sHi.textContent = String(message);
+            logOutputEl.appendChild(sHi);
+        } else {
+            logOutputEl.appendChild(document.createTextNode(String(message)));
+        }
+        logOutputEl.appendChild(document.createTextNode('\n'));
+        logOutputEl.scrollTop = logOutputEl.scrollHeight;
+    }
 
     function setProgress(visible, label, pct, meta) {
         taskProgress.style.display = visible ? 'block' : 'none';
@@ -132,21 +155,16 @@
                     setProgress(true, job.message || 'Working...', job.progress || 0, (job.progress || 0) + '%');
                     
                     if (job.logs && job.logs.length > seenLogCount) {
-                        logEl.style.display = 'block';
                         for (var i = seenLogCount; i < job.logs.length; i++) {
-                            var line = document.createElement('div');
-                            line.className = 'log-line';
                             var txt = job.logs[i];
-                            if (txt.indexOf('Processing ') === 0 && logContentEl.children.length > 0) {
-                                line.classList.add('log-block-start');
+                            if (i > 0 && txt.indexOf('Processing ') === 0) {
+                                logOutputEl.appendChild(document.createTextNode('\n'));
                             }
-                            if (txt.includes('-> Label: investigation_lead')) line.classList.add('log-lead');
-                            else if (txt.includes('-> Label: noise')) line.classList.add('log-noise');
-                            line.textContent = txt;
-                            logContentEl.appendChild(line);
+                            var isErr = txt.indexOf('FATAL ERROR:') === 0 || txt.indexOf('FATAL:') === 0;
+                            var isHi = txt.indexOf('-> Label: investigation_lead') >= 0;
+                            appendLog(txt, isErr, isHi);
                         }
                         seenLogCount = job.logs.length;
-                        logContentEl.scrollTop = logContentEl.scrollHeight;
                     }
 
                     if (job.status === 'success') {
@@ -204,10 +222,12 @@
 
         btn.disabled = true;
         resultEl.style.display = 'none';
-        logEl.style.display = 'block';
-        logContentEl.innerHTML = '<div class="log-line">Initializing job...</div>';
+        if (logOutputEl) {
+            logOutputEl.innerHTML = '';
+        }
         seenLogCount = 0;
         setProgress(true, 'Starting Gemini job...', 1, '1%');
+        appendLog('Initializing job...', false, false);
 
         fetch(P + '/api/gemini/batch', {
             method: 'POST',
@@ -234,11 +254,7 @@
                         setTimeout(function() { setProgress(false); }, 2000);
                     },
                     function(errMsg) {
-                        var errLine = document.createElement('div');
-                        errLine.className = 'log-line log-error';
-                        errLine.textContent = 'FATAL ERROR: ' + errMsg;
-                        logContentEl.appendChild(errLine);
-                        logContentEl.scrollTop = logContentEl.scrollHeight;
+                        appendLog('FATAL ERROR: ' + errMsg, true, false);
 
                         flash('Gemini batch failed: ' + errMsg, 'error');
                         btn.disabled = false;
@@ -247,11 +263,7 @@
                 );
             })
             .catch(function(err) {
-                var errLine = document.createElement('div');
-                errLine.className = 'log-line log-error';
-                errLine.textContent = 'FATAL ERROR: ' + err.message;
-                logContentEl.appendChild(errLine);
-                logContentEl.scrollTop = logContentEl.scrollHeight;
+                appendLog('FATAL ERROR: ' + err.message, true, false);
 
                 flash('Error: ' + err.message, 'error');
                 btn.disabled = false;
