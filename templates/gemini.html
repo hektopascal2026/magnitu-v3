@@ -6,16 +6,17 @@
     <div id="geminiLogPanel" class="gemini-log-panel" style="display:none;">
         <div class="dashboard-section gemini-log-section">
             <h2>Processing Log</h2>
-            <div class="task-progress" id="taskProgress" style="display:none;">
+            <div class="task-progress gemini-task-progress" id="taskProgress" style="display:none;">
                 <div class="task-progress-label" id="taskProgressLabel">Working...</div>
-                <div class="task-progress-track">
-                    <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+                <div class="gemini-progress-row">
+                    <div class="gemini-progress-bar-column">
+                        <div class="task-progress-track gemini-progress-track">
+                            <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+                        </div>
+                        <div class="task-progress-meta" id="taskProgressMeta">0%</div>
+                    </div>
+                    <button type="button" class="btn gemini-cancel-inline" id="geminiCancelBtn" title="Stop after the current row or batch and discard all Gemini labels from this run">Cancel labeling</button>
                 </div>
-                <div class="task-progress-meta" id="taskProgressMeta">0%</div>
-            </div>
-            <div class="form-actions" id="geminiJobActions" style="display:none;">
-                <button type="button" class="btn" id="geminiCancelBtn">Cancel labeling</button>
-                <span class="form-help">Stops after the current row or API batch. Pending labels stay revocable until Accept or Discard.</span>
             </div>
             <pre id="geminiLogOutput" class="gemini-log-output"></pre>
             <div class="gemini-batch-commit">
@@ -105,7 +106,6 @@
     var taskProgressMeta = document.getElementById('taskProgressMeta');
     var resultEl = document.getElementById('geminiResult');
     var logOutputEl = document.getElementById('geminiLogOutput');
-    var jobActions = document.getElementById('geminiJobActions');
     var cancelBtn = document.getElementById('geminiCancelBtn');
     var acceptBtn = document.getElementById('geminiAcceptBtn');
     var discardBtn = document.getElementById('geminiDiscardBtn');
@@ -165,10 +165,8 @@
 
     function setProgress(visible, label, pct, meta) {
         taskProgress.style.display = visible ? 'block' : 'none';
-        if (jobActions) {
-            jobActions.style.display = (visible && activeJobId) ? 'flex' : 'none';
-        }
         if (cancelBtn) {
+            cancelBtn.style.display = visible && activeJobId ? 'inline-flex' : 'none';
             if (!visible || !activeJobId) cancelBtn.disabled = false;
         }
         if (!visible) return;
@@ -240,6 +238,9 @@
         resultEl.style.display = 'block';
         var title = res.cancelled ? 'Run stopped (cancelled)' : (job && job.status === 'error') ? 'Finished with errors' : 'Results';
         var html = '<h3>' + escHtml(title) + '</h3><ul>';
+        if (res.cancelled) {
+            html += '<li>Discarded on cancel: <strong>' + escHtml(String(res.discarded_on_cancel != null ? res.discarded_on_cancel : 0)) + '</strong></li>';
+        }
         html += '<li>Labeled (pending review): <strong>' + (res.labeled || 0) + '</strong></li>';
         html += '<li>Skipped: <strong>' + (res.skipped || 0) + '</strong></li>';
         html += '<li>Failed: <strong>' + ((res.failed || []).length) + '</strong></li>';
@@ -386,7 +387,7 @@
                         showResult(res, job);
                         if (wasCancelled) {
                             flash(
-                                'Labeling cancelled. Review Accept or Discard for pending labels.',
+                                'Labeling cancelled. Pending Gemini labels from this run were discarded.',
                                 'success'
                             );
                         } else if (job.status === 'error') {

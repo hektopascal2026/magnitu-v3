@@ -392,6 +392,28 @@ body {
     cursor: not-allowed;
 }
 
+.gemini-task-progress .gemini-progress-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.gemini-progress-bar-column {
+    flex: 1;
+    min-width: 0;
+}
+
+.gemini-task-progress .gemini-progress-track {
+    margin-bottom: 4px;
+}
+
+.gemini-cancel-inline {
+    flex-shrink: 0;
+    align-self: center;
+    white-space: nowrap;
+}
+
 .gemini-btn-chosen {
     outline: 3px solid var(--accent-bg, #000000);
     outline-offset: 2px;

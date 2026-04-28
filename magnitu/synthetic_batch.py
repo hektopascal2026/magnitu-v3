@@ -71,23 +71,27 @@ def _cancelled_result(
     candidates: List[Dict],
     to_process: List[Dict],
     skipped_filter: int,
-    labeled: int,
+    labeled_written_before_cancel: int,
+    discarded_on_cancel: int,
     failed: List[Dict[str, Any]],
     skipped_mid: int,
     gemini_job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Return payload after user cancel: pending rows are already discarded in DB."""
     out: Dict[str, Any] = {
         "success": True,
         "cancelled": True,
-        "labeled": labeled,
+        "labeled": 0,
+        "labeled_written_before_cancel": labeled_written_before_cancel,
+        "discarded_on_cancel": discarded_on_cancel,
         "skipped": skipped_filter + skipped_mid,
         "skipped_mid_run": skipped_mid,
         "failed": failed,
         "candidates_total": len(candidates),
         "queued": len(to_process),
-        "message": "Cancelled (partial: %d labeled)" % labeled,
+        "message": "Cancelled — discarded %d pending label(s)." % discarded_on_cancel,
         "note": (
-            "Labeling was stopped. Pending Gemini labels need Accept or Discard on this page."
+            "Labeling was stopped. Gemini labels from this run were removed."
         ),
     }
     if gemini_job_id:
@@ -167,28 +171,34 @@ def run_gemini_synthetic_batch_job(
     skipped_mid = 0
     labeled = 0
 
+    def _return_cancelled() -> Dict[str, Any]:
+        discarded = 0
+        if gemini_job_id:
+            discarded = db.discard_gemini_pending_labels(profile_id, gemini_job_id)
+        if progress_cb:
+            progress_cb(
+                100,
+                "Cancelled — discarded %d pending label(s)." % discarded,
+                "Gemini labels from this run were removed.",
+            )
+        return _cancelled_result(
+            candidates=candidates,
+            to_process=to_process,
+            skipped_filter=skipped_filter,
+            labeled_written_before_cancel=labeled,
+            discarded_on_cancel=discarded,
+            failed=failed,
+            skipped_mid=skipped_mid,
+            gemini_job_id=gemini_job_id,
+        )
+
     with GeminiClient(cfg) as client:
         if mode == "batch":
             # Process in chunks of 10
             chunk_size = 10
             for i in range(0, len(to_process), chunk_size):
                 if cancel_check and cancel_check():
-                    if progress_cb:
-                        progress_cb(
-                            100,
-                            "Cancelled by user (%d of %d labeled)."
-                            % (labeled, total),
-                            "Cancelled. Labels already written are kept.",
-                        )
-                    return _cancelled_result(
-                        candidates=candidates,
-                        to_process=to_process,
-                        skipped_filter=skipped_filter,
-                        labeled=labeled,
-                        failed=failed,
-                        skipped_mid=skipped_mid,
-                        gemini_job_id=gemini_job_id,
-                    )
+                    return _return_cancelled()
                 chunk = to_process[i : i + chunk_size]
                 if progress_cb:
                     pct = 5 + int(90 * i / max(total, 1))
@@ -262,22 +272,7 @@ def run_gemini_synthetic_batch_job(
             # Original single-entry mode
             for i, entry in enumerate(to_process):
                 if cancel_check and cancel_check():
-                    if progress_cb:
-                        progress_cb(
-                            100,
-                            "Cancelled by user (%d of %d labeled)."
-                            % (labeled, total),
-                            "Cancelled. Labels already written are kept.",
-                        )
-                    return _cancelled_result(
-                        candidates=candidates,
-                        to_process=to_process,
-                        skipped_filter=skipped_filter,
-                        labeled=labeled,
-                        failed=failed,
-                        skipped_mid=skipped_mid,
-                        gemini_job_id=gemini_job_id,
-                    )
+                    return _return_cancelled()
                 et, eid = entry["entry_type"], int(entry["entry_id"])
                 if progress_cb:
                     pct = 5 + int(90 * i / max(total, 1))
