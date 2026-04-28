@@ -18,7 +18,7 @@ import warnings
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.cors import CORSMiddleware
@@ -65,6 +65,21 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+_TOUCH_ICON = BASE_DIR / "static" / "apple-touch-icon.png"
+_TOUCH_ICON_PRE = BASE_DIR / "static" / "apple-touch-icon-precomposed.png"
+
+
+@app.get("/apple-touch-icon.png")
+async def apple_touch_icon():
+    """Safari probes this URL at site root; serve asset so access logs stay clean."""
+    return FileResponse(_TOUCH_ICON, media_type="image/png")
+
+
+@app.get("/apple-touch-icon-precomposed.png")
+async def apple_touch_icon_precomposed():
+    """Legacy Safari fallback for home-screen icons."""
+    return FileResponse(_TOUCH_ICON_PRE, media_type="image/png")
 
 
 @app.middleware("http")

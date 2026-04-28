@@ -87,6 +87,24 @@ This is the intended path when Seismo manages **lightweight satellites** (topic-
 
 Optional **accent** for the Magnitu header tab: Seismo may expose `accent_color` on **`magnitu_status`** (`#rrggbb` / `#rgb`). Magnitu stores it after **Test satellite** or **Push**. Satellites must mirror entry IDs with the mothership so labels and scores line up.
 
+### Seismo UI: what Magnitu sees (highlights vs training labels)
+
+On a **satellite** (or mothership), the **Magnitu highlights** page lists entries whose score is Magnitu-sourced and above the alert threshold. Entry cards can show a **star** (favourite). Keep these two ideas separate:
+
+| Action in Seismo | Stored in | Synced by Magnitu? |
+|------------------|-----------|-------------------|
+| **Star** on timeline / highlights | `entry_favourites` — **local to that Seismo instance** | **No.** Favourites never use the `magnitu_*` API. Starring on a satellite updates only that satellite’s database. |
+| **Training labels** (`investigation_lead`, `important`, `background`, `noise`) on the **Label** tab | `magnitu_labels` — local DB table on that instance | **Yes**, via **`magnitu_labels`** GET (pull) and POST (push), scoped to the profile’s push target. |
+
+So: work you want in Magnitu’s training loop (pull → train → push) belongs in the **Label** tab, not in stars on Highlights.
+
+**HTTP routing in this repo (`sync.py`):**
+
+- **Pull entries** — always the **global** mothership URL + API key from Settings (shared entry pool for every profile).
+- **Pull labels**, **push scores**, **push recipe**, **push labels** — use the **profile’s** push target: when **both** `seismo_url` and `api_key` are set on the profile, every one of those calls goes to that pair (typically your **satellite**). When **both** are blank, Magnitu uses the global mothership for those operations. Setting **only one** of URL or key is rejected (`ValueError`) so a satellite URL is never mixed with a mothership key, or the reverse.
+
+After **seismo-generator** builds a satellite, paste the printed **push URL** and **API key** into **that** Magnitu profile. Then **Sync** pulls labels from that satellite (entries still come from the global mothership), and **Push** writes scores, recipe, and labels back to the same instance.
+
 ## Install from scratch (native)
 
 **Requirements:** macOS or Linux, **Python 3.9+**, **git**, and a reachable **Seismo** instance with a **Magnitu API key** (Seismo → *Settings* → *Magnitu*). On macOS, **Xcode Command Line Tools** provide Python and git; `install/bootstrap.sh` can prompt you to install them if missing.
