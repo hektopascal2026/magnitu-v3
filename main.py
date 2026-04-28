@@ -559,18 +559,6 @@ def _extract_legal_patterns(limit: int = 12, profile_id: int = 1) -> dict:
     return {"positive": positives[:limit], "negative": negatives[:limit]}
 
 
-def _today_label_count(profile_id: int = 1) -> int:
-    from datetime import date
-    today = date.today().isoformat()
-    conn = db.get_db()
-    count = conn.execute(
-        "SELECT COUNT(*) FROM labels WHERE profile_id=? AND date(updated_at)=?",
-        (profile_id, today)
-    ).fetchone()[0]
-    conn.close()
-    return count
-
-
 # ─── Global pages ────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -638,8 +626,17 @@ async def labeling_page(request: Request, slug: str, source: str = "all"):
         entry["_reasoning"] = label_data["reasoning"] if label_data else ""
 
     ctx["entries"] = entries
-    ctx["unlabeled_count"] = len([e for e in entries if e["_label"] is None])
-    ctx["today_labels"] = _today_label_count(profile_id)
+
+    am = ctx.get("active_model")
+    mt_labels = int(am.get("label_count") or 0) if am else 0
+    lc = ctx["label_count"]
+    ctx["model_trained_label_count"] = mt_labels
+    if lc > 0:
+        ctx["model_coverage_pct"] = round(
+            min(100.0, (float(mt_labels) / float(lc)) * 100.0), 1
+        )
+    else:
+        ctx["model_coverage_pct"] = 0.0
 
     reasons = {}
     for e in entries:

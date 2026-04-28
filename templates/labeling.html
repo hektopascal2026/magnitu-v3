@@ -4,14 +4,12 @@
 {% block content %}
 <!-- Progress Bar -->
 <div class="progress-section">
-    <div class="progress-stats">
-        <span class="progress-today">Today: <strong id="todayCount">{{ today_labels }}</strong></span>
-        <span class="progress-total">Total: <strong>{{ label_count }}</strong></span>
-        <span class="progress-remaining">Queue: <strong id="queueCount">{{ unlabeled_count }}</strong></span>
+    <div class="progress-stats" title="Local is labels stored in Magnitu for this profile. In the model is how many labeled rows the active classifier was trained on (retrain after new labels to refresh).">
+        <span class="progress-local">Local: <strong id="localLabelCount">{{ label_count }}</strong></span>
+        <span class="progress-model">In the model: <strong id="modelTrainedLabelCount">{{ model_trained_label_count }}</strong></span>
     </div>
-    <div class="progress-bar">
-        {% set pct = (label_count / (label_count + unlabeled_count) * 100) if (label_count + unlabeled_count) > 0 else 0 %}
-        <div class="progress-fill" style="width: {{ pct | round(1) }}%"></div>
+    <div class="progress-bar" title="Share of local labels represented in the active trained model">
+        <div class="progress-fill" id="modelCoverageFill" style="width: {{ model_coverage_pct }}%"></div>
     </div>
     <div class="progress-actions">
         <button class="btn btn-primary" id="syncPullBtn" title="Pull new entries from mothership Seismo + merge labels">Pull</button>
@@ -183,7 +181,7 @@
         {% endfor %}
     {% else %}
         <div class="empty-state">
-            <p>No entries in the queue. Click <strong>Pull</strong> to fetch entries from Seismo.</p>
+            <p>No entries loaded yet. Click <strong>Pull</strong> to fetch entries from Seismo.</p>
         </div>
     {% endif %}
 </div>
@@ -197,14 +195,20 @@
     var PUSH_BTN_LABEL = {{ ('Push to ' ~ (profile.display_name if profile else 'Seismo')) | tojson }};
     var focusedCard = null;
     var cards = document.querySelectorAll('.entry-card');
-    var todayEl = document.getElementById('todayCount');
-    var queueEl = document.getElementById('queueCount');
-    var todayCount = {{ today_labels }};
-    var queueCount = {{ unlabeled_count }};
+    var localEl = document.getElementById('localLabelCount');
+    var coverageFill = document.getElementById('modelCoverageFill');
+    var localCount = {{ label_count }};
+    var modelCount = {{ model_trained_label_count }};
     var taskProgress = document.getElementById('taskProgress');
     var taskProgressLabel = document.getElementById('taskProgressLabel');
     var taskProgressFill = document.getElementById('taskProgressFill');
     var taskProgressMeta = document.getElementById('taskProgressMeta');
+
+    function updateModelCoverageBar() {
+        if (!coverageFill) return;
+        var pct = localCount > 0 ? Math.min(100, (modelCount / localCount) * 100) : 0;
+        coverageFill.style.width = pct.toFixed(1) + '%';
+    }
 
     // Focus first unlabeled card
     function focusFirstUnlabeled() {
@@ -290,12 +294,11 @@
                     badge.className = 'entry-current-label label-' + label;
                     badge.textContent = label.replace(/_/g, ' ');
 
-                    // Update counters
+                    // Update local label count (model count updates after Train + reload)
                     if (!wasLabeled) {
-                        todayCount++;
-                        queueCount = Math.max(0, queueCount - 1);
-                        todayEl.textContent = todayCount;
-                        queueEl.textContent = queueCount;
+                        localCount++;
+                        if (localEl) localEl.textContent = localCount;
+                        updateModelCoverageBar();
                     }
 
                     // Auto-advance to next unlabeled card
@@ -362,10 +365,9 @@
                         });
                         var badge = focusedCard.querySelector('.entry-current-label');
                         if (badge) badge.remove();
-                        queueCount++;
-                        todayCount = Math.max(0, todayCount - 1);
-                        todayEl.textContent = todayCount;
-                        queueEl.textContent = queueCount;
+                        localCount = Math.max(0, localCount - 1);
+                        if (localEl) localEl.textContent = localCount;
+                        updateModelCoverageBar();
                     }
                 });
         }
