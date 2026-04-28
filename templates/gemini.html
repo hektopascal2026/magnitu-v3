@@ -13,11 +13,6 @@
                 · <em>No trained model yet</em> (batch still runs; Smart Queue falls back to newest unlabeled)
             {% endif %}
         </p>
-        {% if active_model_basename %}
-        <p class="section-subtitle">
-            Loaded classifier: <code>{{ active_model_basename }}</code> (same paths the Label queue uses for scoring).
-        </p>
-        {% endif %}
         <details>
             <summary style="cursor:pointer; color:#666;">How the queue works</summary>
             <p class="form-help">{{ gemini_queue_help }}</p>
@@ -27,7 +22,7 @@
             <div class="settings-grid">
                 <div class="form-group">
                     <label>Batch size (max 100)</label>
-                    <input type="number" id="geminiLimit" min="1" max="100" value="50">
+                    <input type="number" id="geminiLimit" min="1" max="100" value="10">
                     <div class="form-help">How many items to run in this job (1–100).</div>
                 </div>
                 <div class="form-group">
@@ -46,24 +41,12 @@
                         <option value="batch" {% if config.gemini_mode == 'batch' %}selected{% endif %}>Prompt batching (10x faster, cheaper)</option>
                     </select>
                     <div class="form-help">
-                        <strong>One by one</strong> streams a single entry at a time; log lines update as each finishes.
-                        <strong>Prompt batching</strong> groups multiple rows in fewer API calls (about 10 articles per request): cheaper and faster, but the Processing Log updates in chunks rather than per row.
+                        One by one Gemini rates one entry at a time. Batching: Gemini does ca. 10 entries at a time (cheaper and faster).
                     </div>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="geminiReplace" />
-                        Re-label entries previously labeled by Gemini (retry failed rows)
-                    </label>
-                    <div class="form-help">When off, only unlabeled rows are processed. When on, Gemini-labeled rows can be re-run for retries.</div>
                 </div>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-primary" id="geminiStartBtn">Run batch (background)</button>
-                <span style="font-size: 13px; color: #666; margin-left: 15px;">
-                    Labels are saved locally with reasoning and <code>source: Gemini</code> in exports. Seismo is not updated per row; use
-                    <strong>Push to {{ profile.display_name }}</strong> on the Label page when ready.
-                </span>
             </div>
         </div>
     </div>
@@ -218,7 +201,7 @@
             html += '<p class="form-help">' + escHtml(res.note) + '</p>';
         }
         if (res.failed && res.failed.length) {
-            html += '<h4>Failures (re-run with re-label Gemini to retry those IDs)</h4><ul class="fail-list">';
+            html += '<h4>Failures</h4><ul class="fail-list">';
             res.failed.forEach(function(f) {
                 html += '<li><code>' + escHtml(f.entry_type) + '</code> #' + escHtml(f.entry_id) +
                     ' — ' + escHtml(f.error || '') + '</li>';
@@ -252,10 +235,9 @@
 
     document.getElementById('geminiStartBtn').addEventListener('click', function() {
         var btn = this;
-        var limit = parseInt(document.getElementById('geminiLimit').value, 10) || 50;
+        var limit = parseInt(document.getElementById('geminiLimit').value, 10) || 10;
         limit = Math.max(1, Math.min(100, limit));
         var source = document.getElementById('geminiSource').value;
-        var replaceGemini = document.getElementById('geminiReplace').checked;
         var mode = document.getElementById('geminiMode').value;
 
         btn.disabled = true;
@@ -275,7 +257,6 @@
             body: JSON.stringify({
                 limit: limit,
                 source: source,
-                replace_gemini: replaceGemini,
                 mode: mode
             })
         })

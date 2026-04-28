@@ -659,16 +659,10 @@ async def gemini_page(request: Request, slug: str):
     else:
         ctx["target_model_title"] = profile.get("display_name", slug)
     ctx["gemini_queue_help"] = (
-        "Batches use the same Smart Queue as Label, prioritising **uncertain** and **new** "
-        "rows, then conflict/diverse picks to reach your limit. Unlabeled entries only, unless "
-        "you check re-label for rows previously labeled by Gemini (retry failures)."
+        "Batches use the same Smart Queue as Label, prioritising uncertain and new rows, "
+        "then conflict/diverse picks to reach your limit. Only unlabeled entries are processed."
     )
-    paths = pipeline.get_active_model_paths(profile_id)
-    ctx["active_model_paths"] = paths
-    ctx["active_model_basename"] = ""
-    if paths and paths.get("model_path"):
-        ctx["active_model_basename"] = Path(paths["model_path"]).name
-    
+
     # Ensure persona is available (already in _base_context, but let's be explicit)
     if not ctx.get("gemini_persona"):
         ctx["gemini_persona"] = db.get_profile_gemini_persona(profile_id) or ctx["default_gemini_persona"]
@@ -707,13 +701,13 @@ async def gemini_batch_start(slug: str, request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    raw_limit = body.get("limit", 50)
+    raw_limit = body.get("limit", 10)
     try:
         batch_limit = int(raw_limit)
     except (TypeError, ValueError):
-        batch_limit = 50
+        batch_limit = 10
     batch_limit = max(1, min(batch_limit, 100))
-    replace_gemini = bool(body.get("replace_gemini", False))
+    replace_gemini = False
     source = str(body.get("source", "all")).strip().lower()
     entry_type = None
     if source == "lex":
