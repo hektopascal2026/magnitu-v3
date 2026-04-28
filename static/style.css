@@ -358,6 +358,45 @@ body {
     transition: width 0.3s ease;
 }
 
+/* Gemini — processing log (above main card) */
+.gemini-log-panel {
+    margin-bottom: 16px;
+}
+
+.gemini-log-section pre.gemini-log-output {
+    margin: 10px 0 12px 0;
+    padding: 12px 14px;
+    min-height: 140px;
+    max-height: 320px;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #e8e8e8;
+    background: #1a1a1a;
+    border: 2px solid #000000;
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.gemini-batch-commit {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.gemini-batch-commit .btn:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+
+.gemini-btn-chosen {
+    outline: 3px solid var(--accent-bg, #000000);
+    outline-offset: 2px;
+}
+
 .task-progress-meta {
     font-size: 12px;
     margin-top: 4px;

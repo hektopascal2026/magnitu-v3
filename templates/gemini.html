@@ -3,6 +3,29 @@
 
 {% block content %}
 <div class="settings-page gemini-page">
+    <div id="geminiLogPanel" class="gemini-log-panel" style="display:none;">
+        <div class="dashboard-section gemini-log-section">
+            <h2>Processing Log</h2>
+            <div class="task-progress" id="taskProgress" style="display:none;">
+                <div class="task-progress-label" id="taskProgressLabel">Working...</div>
+                <div class="task-progress-track">
+                    <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
+                </div>
+                <div class="task-progress-meta" id="taskProgressMeta">0%</div>
+            </div>
+            <div class="form-actions" id="geminiJobActions" style="display:none;">
+                <button type="button" class="btn" id="geminiCancelBtn">Cancel labeling</button>
+                <span class="form-help">Stops after the current row or API batch. Pending labels stay revocable until Accept or Discard.</span>
+            </div>
+            <pre id="geminiLogOutput" class="gemini-log-output"></pre>
+            <div class="gemini-batch-commit">
+                <button type="button" class="btn btn-primary" id="geminiAcceptBtn" disabled title="Confirm Gemini labels for training and Push">Accept</button>
+                <button type="button" class="btn" id="geminiDiscardBtn" disabled title="Remove Gemini labels from this run">Discard</button>
+            </div>
+            <div id="geminiResult" class="gemini-result" style="display:none;"></div>
+        </div>
+    </div>
+
     <div class="dashboard-section">
         <h2>Gemini synthetic labeling</h2>
         <p class="section-subtitle">
@@ -51,23 +74,6 @@
         </div>
     </div>
 
-    <div class="dashboard-section" id="log-section">
-        <h2>Processing Log</h2>
-        <div class="task-progress" id="taskProgress" style="display:none;">
-            <div class="task-progress-label" id="taskProgressLabel">Working...</div>
-            <div class="task-progress-track">
-                <div class="task-progress-fill" id="taskProgressFill" style="width:0%;"></div>
-            </div>
-            <div class="task-progress-meta" id="taskProgressMeta">0%</div>
-        </div>
-        <div class="form-actions" id="geminiJobActions" style="display:none;">
-            <button type="button" class="btn" id="geminiCancelBtn">Cancel labeling</button>
-            <span class="form-help">Stops after the current row or API batch. Entries already labeled stay saved.</span>
-        </div>
-        <pre id="geminiLogOutput"></pre>
-        <div id="geminiResult" class="gemini-result" style="display:none;"></div>
-    </div>
-
     <div class="dashboard-section">
         <h2>Persona &amp; Instructions</h2>
         <p style="color: #666; font-size: 13px; margin-bottom: 16px;">Define how Gemini should think when labeling entries for this profile.</p>
@@ -92,6 +98,7 @@
 <script>
 (function() {
     var P = {{ ('/p/' ~ profile.slug) | tojson }};
+    var logPanel = document.getElementById('geminiLogPanel');
     var taskProgress = document.getElementById('taskProgress');
     var taskProgressLabel = document.getElementById('taskProgressLabel');
     var taskProgressFill = document.getElementById('taskProgressFill');
@@ -100,9 +107,39 @@
     var logOutputEl = document.getElementById('geminiLogOutput');
     var jobActions = document.getElementById('geminiJobActions');
     var cancelBtn = document.getElementById('geminiCancelBtn');
+    var acceptBtn = document.getElementById('geminiAcceptBtn');
+    var discardBtn = document.getElementById('geminiDiscardBtn');
     var seenLogCount = 0;
     var activeJobId = null;
+    var completedJobId = null;
     var pollTimer = null;
+
+    function showGeminiLogPanel() {
+        if (logPanel) logPanel.style.display = 'block';
+        if (logPanel) logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function hideGeminiLogPanel() {
+        if (logPanel) logPanel.style.display = 'none';
+        setProgress(false);
+        if (acceptBtn) {
+            acceptBtn.disabled = true;
+            acceptBtn.classList.remove('gemini-btn-chosen');
+        }
+        if (discardBtn) {
+            discardBtn.disabled = true;
+            discardBtn.classList.remove('gemini-btn-chosen');
+        }
+        completedJobId = null;
+        if (resultEl) resultEl.style.display = 'none';
+    }
+
+    function setTerminalCommitButtons(job) {
+        var pc = job.pending_gemini_count != null ? Number(job.pending_gemini_count) : 0;
+        var enable = pc > 0;
+        if (acceptBtn) acceptBtn.disabled = !enable;
+        if (discardBtn) discardBtn.disabled = !enable;
+    }
 
     function appendLog(message, isError, isHighlight) {
         if (isError === undefined) isError = false;
@@ -110,12 +147,12 @@
         if (!logOutputEl) return;
         if (isError) {
             var sErr = document.createElement('span');
-            sErr.style.color = '#f44336';
+            sErr.style.color = '#ff8a80';
             sErr.textContent = String(message);
             logOutputEl.appendChild(sErr);
         } else if (isHighlight) {
             var sHi = document.createElement('span');
-            sHi.style.color = '#ff5252';
+            sHi.style.color = '#ffab91';
             sHi.style.fontWeight = 'bold';
             sHi.textContent = String(message);
             logOutputEl.appendChild(sHi);
@@ -147,14 +184,14 @@
         }
     }
 
-    function pollJob(jobId, onDone, onFail) {
+    function pollJob(jobId, onTerminal) {
         stopPolling();
         pollTimer = setInterval(function() {
             fetch('/api/jobs/' + jobId)
                 .then(function(r) { return r.json(); })
                 .then(function(job) {
                     setProgress(true, job.message || 'Working...', job.progress || 0, (job.progress || 0) + '%');
-                    
+
                     if (job.logs && job.logs.length > seenLogCount) {
                         for (var i = seenLogCount; i < job.logs.length; i++) {
                             var txt = job.logs[i];
@@ -168,17 +205,27 @@
                         seenLogCount = job.logs.length;
                     }
 
-                    if (job.status === 'success' || job.status === 'cancelled') {
+                    if (job.status === 'success' || job.status === 'cancelled' || job.status === 'error') {
                         stopPolling();
-                        onDone(job.result || {}, job.status === 'cancelled');
-                    } else if (job.status === 'error') {
-                        stopPolling();
-                        onFail(job.error || 'Unknown error');
+                        completedJobId = jobId;
+                        activeJobId = null;
+                        if (cancelBtn) cancelBtn.disabled = false;
+                        if (job.status === 'error') {
+                            appendLog('FATAL ERROR: ' + (job.error || 'Unknown error'), true, false);
+                        }
+                        setProgress(true, job.message || 'Done', job.progress || 100, '100%');
+                        setTerminalCommitButtons(job);
+                        onTerminal(job);
                     }
                 })
                 .catch(function(err) {
                     stopPolling();
-                    onFail(err.message);
+                    completedJobId = null;
+                    activeJobId = null;
+                    if (cancelBtn) cancelBtn.disabled = false;
+                    appendLog('FATAL ERROR: ' + err.message, true, false);
+                    setProgress(false);
+                    flash('Could not read job status: ' + err.message, 'error');
                 });
         }, 1000);
     }
@@ -189,11 +236,11 @@
         return d.innerHTML;
     }
 
-    function showResult(res) {
+    function showResult(res, job) {
         resultEl.style.display = 'block';
-        var title = res.cancelled ? 'Run stopped (cancelled)' : 'Results';
+        var title = res.cancelled ? 'Run stopped (cancelled)' : (job && job.status === 'error') ? 'Finished with errors' : 'Results';
         var html = '<h3>' + escHtml(title) + '</h3><ul>';
-        html += '<li>Labeled: <strong>' + (res.labeled || 0) + '</strong></li>';
+        html += '<li>Labeled (pending review): <strong>' + (res.labeled || 0) + '</strong></li>';
         html += '<li>Skipped: <strong>' + (res.skipped || 0) + '</strong></li>';
         html += '<li>Failed: <strong>' + ((res.failed || []).length) + '</strong></li>';
         html += '</ul>';
@@ -208,8 +255,9 @@
             });
             html += '</ul>';
         }
-        if (!res.cancelled && (res.labeled || 0) > 0 && (res.failed || []).length === 0) {
-            html += '<p>When you have enough labels, open <a href="' + escHtml(P) + '/">Label</a> to <strong>Train</strong>.</p>';
+        var pc = job && job.pending_gemini_count != null ? Number(job.pending_gemini_count) : 0;
+        if (pc > 0) {
+            html += '<p class="form-help">Choose <strong>Accept</strong> to keep these labels (Train / Push), or <strong>Discard</strong> to remove them.</p>';
         }
         resultEl.innerHTML = html;
     }
@@ -233,6 +281,59 @@
         });
     }
 
+    function postCommit(kind) {
+        var jid = completedJobId;
+        if (!jid) return Promise.reject(new Error('No job'));
+        var url = P + '/api/gemini/batch/' + encodeURIComponent(jid) + '/' + kind;
+        return fetch(url, { method: 'POST' }).then(function(r) {
+            return r.json().then(function(j) {
+                if (!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+                if (!j.success) throw new Error(j.detail || 'Request failed');
+                return j;
+            });
+        });
+    }
+
+    if (acceptBtn) {
+        acceptBtn.addEventListener('click', function() {
+            if (acceptBtn.disabled || !completedJobId) return;
+            acceptBtn.disabled = true;
+            if (discardBtn) discardBtn.disabled = true;
+            acceptBtn.classList.add('gemini-btn-chosen');
+            postCommit('accept')
+                .then(function(d) {
+                    flash('Accepted ' + (d.confirmed || 0) + ' label(s). You can Train on the Label page.', 'success');
+                    setTimeout(hideGeminiLogPanel, 2000);
+                })
+                .catch(function(err) {
+                    flash(err.message || 'Accept failed', 'error');
+                    acceptBtn.disabled = false;
+                    if (discardBtn) discardBtn.disabled = false;
+                    acceptBtn.classList.remove('gemini-btn-chosen');
+                });
+        });
+    }
+
+    if (discardBtn) {
+        discardBtn.addEventListener('click', function() {
+            if (discardBtn.disabled || !completedJobId) return;
+            discardBtn.disabled = true;
+            if (acceptBtn) acceptBtn.disabled = true;
+            discardBtn.classList.add('gemini-btn-chosen');
+            postCommit('discard')
+                .then(function(d) {
+                    flash('Discarded ' + (d.removed || 0) + ' label(s).', 'success');
+                    setTimeout(hideGeminiLogPanel, 2000);
+                })
+                .catch(function(err) {
+                    flash(err.message || 'Discard failed', 'error');
+                    discardBtn.disabled = false;
+                    if (acceptBtn) acceptBtn.disabled = false;
+                    discardBtn.classList.remove('gemini-btn-chosen');
+                });
+        });
+    }
+
     document.getElementById('geminiStartBtn').addEventListener('click', function() {
         var btn = this;
         var limit = parseInt(document.getElementById('geminiLimit').value, 10) || 10;
@@ -243,11 +344,21 @@
         btn.disabled = true;
         stopPolling();
         activeJobId = null;
+        completedJobId = null;
+        if (acceptBtn) {
+            acceptBtn.disabled = true;
+            acceptBtn.classList.remove('gemini-btn-chosen');
+        }
+        if (discardBtn) {
+            discardBtn.disabled = true;
+            discardBtn.classList.remove('gemini-btn-chosen');
+        }
         resultEl.style.display = 'none';
         if (logOutputEl) {
             logOutputEl.innerHTML = '';
         }
         seenLogCount = 0;
+        showGeminiLogPanel();
         setProgress(true, 'Starting Gemini job...', 1, '1%');
         appendLog('Initializing job...', false, false);
 
@@ -269,42 +380,34 @@
                 setProgress(true, 'Starting Gemini job...', 1, '1%');
                 pollJob(
                     data.job_id,
-                    function(result, wasCancelled) {
-                        activeJobId = null;
-                        if (cancelBtn) cancelBtn.disabled = false;
-                        setProgress(
-                            true,
-                            wasCancelled ? 'Cancelled' : 'Done',
-                            100,
-                            '100%'
-                        );
-                        showResult(result);
+                    function(job) {
+                        var res = job.result || {};
+                        var wasCancelled = job.status === 'cancelled';
+                        showResult(res, job);
                         if (wasCancelled) {
                             flash(
-                                'Labeling cancelled. ' + (result.labeled || 0) + ' entries kept.',
+                                'Labeling cancelled. Review Accept or Discard for pending labels.',
                                 'success'
                             );
+                        } else if (job.status === 'error') {
+                            flash(job.error || 'Gemini batch failed.', 'error');
                         } else {
-                            flash('Gemini batch finished: ' + (result.labeled || 0) + ' labeled.', 'success');
+                            flash('Gemini batch finished. Review Accept or Discard.', 'success');
                         }
                         btn.disabled = false;
-                        setTimeout(function() { setProgress(false); }, 2000);
-                    },
-                    function(errMsg) {
-                        stopPolling();
-                        activeJobId = null;
-                        if (cancelBtn) cancelBtn.disabled = false;
-                        appendLog('FATAL ERROR: ' + errMsg, true, false);
-
-                        flash('Gemini batch failed: ' + errMsg, 'error');
-                        btn.disabled = false;
-                        setProgress(false);
+                        setTimeout(function() {
+                            var pc = job.pending_gemini_count != null ? Number(job.pending_gemini_count) : 0;
+                            if (pc === 0) {
+                                setProgress(false);
+                            }
+                        }, 2500);
                     }
                 );
             })
             .catch(function(err) {
                 stopPolling();
                 activeJobId = null;
+                completedJobId = null;
                 if (cancelBtn) cancelBtn.disabled = false;
                 appendLog('FATAL ERROR: ' + err.message, true, false);
 

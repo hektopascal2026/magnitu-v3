@@ -110,6 +110,12 @@ def _migrate_db(conn: sqlite3.Connection):
     if "label_source" not in label_cols:
         conn.execute("ALTER TABLE labels ADD COLUMN label_source TEXT DEFAULT ''")
 
+    label_cols = {row[1] for row in conn.execute("PRAGMA table_info(labels)").fetchall()}
+    if "pending_gemini_job_id" not in label_cols:
+        conn.execute(
+            "ALTER TABLE labels ADD COLUMN pending_gemini_job_id TEXT DEFAULT NULL"
+        )
+
     cursor = conn.execute("PRAGMA table_info(models)")
     model_cols = {row[1] for row in cursor.fetchall()}
     if "architecture" not in model_cols:
@@ -751,19 +757,25 @@ def get_entry_count() -> int:
 
 def set_label(entry_type: str, entry_id: int, label: str,
               reasoning: str = "", profile_id: int = 1,
-              label_source: str = ""):
+              label_source: str = "",
+              pending_gemini_job_id: Optional[str] = None):
     """Set or update a label for an entry within a profile.
 
     label_source: empty for manual labels; \"Gemini\" for synthetic (kept local; not sent to Seismo).
+    pending_gemini_job_id: when set, label awaits Accept on the Gemini page before counting as confirmed.
     """
+    pend = pending_gemini_job_id if (pending_gemini_job_id or "").strip() else None
     conn = get_db()
     conn.execute("""
-        INSERT INTO labels (profile_id, entry_type, entry_id, label, reasoning, label_source)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO labels (profile_id, entry_type, entry_id, label, reasoning, label_source,
+                           pending_gemini_job_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(profile_id, entry_type, entry_id) DO UPDATE SET
             label=excluded.label, reasoning=excluded.reasoning,
-            label_source=excluded.label_source, updated_at=datetime('now')
-    """, (profile_id, entry_type, entry_id, label, reasoning, label_source or ""))
+            label_source=excluded.label_source,
+            pending_gemini_job_id=excluded.pending_gemini_job_id,
+            updated_at=datetime('now')
+    """, (profile_id, entry_type, entry_id, label, reasoning, label_source or "", pend))
     conn.commit()
     conn.close()
 
@@ -776,6 +788,80 @@ def remove_label(entry_type: str, entry_id: int, profile_id: int = 1):
     )
     conn.commit()
     conn.close()
+
+
+def count_pending_gemini_labels(profile_id: int, job_id: str) -> int:
+    """Rows written by a Gemini batch job still awaiting Accept or Discard."""
+    jid = (job_id or "").strip()
+    if not jid:
+        return 0
+    conn = get_db()
+    n = conn.execute(
+        """
+        SELECT COUNT(*) FROM labels
+        WHERE profile_id = ? AND pending_gemini_job_id = ?
+        """,
+        (profile_id, jid),
+    ).fetchone()[0]
+    conn.close()
+    return int(n)
+
+
+def confirm_gemini_pending_labels(profile_id: int, job_id: str) -> int:
+    """Clear pending marker so Gemini labels count toward training and Push."""
+    jid = (job_id or "").strip()
+    if not jid:
+        return 0
+    conn = get_db()
+    cur = conn.execute(
+        """
+        UPDATE labels SET pending_gemini_job_id = NULL, updated_at = datetime('now')
+        WHERE profile_id = ? AND pending_gemini_job_id = ?
+        """,
+        (profile_id, jid),
+    )
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n
+
+
+def discard_gemini_pending_labels(profile_id: int, job_id: str) -> int:
+    """Remove labels from a Gemini batch run (job id must match pending_gemini_job_id)."""
+    jid = (job_id or "").strip()
+    if not jid:
+        return 0
+    conn = get_db()
+    cur = conn.execute(
+        """
+        DELETE FROM labels WHERE profile_id = ? AND pending_gemini_job_id = ?
+        """,
+        (profile_id, jid),
+    )
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n
+
+
+def get_all_labeled_entry_keys(profile_id: int = 1) -> set:
+    """Set of (entry_type, entry_id) for any label row, including pending Gemini (UI filters)."""
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT entry_type, entry_id FROM labels WHERE profile_id = ?
+        """,
+        (profile_id,),
+    ).fetchall()
+    conn.close()
+    out = set()
+    for r in rows:
+        try:
+            eid = int(r["entry_id"])
+        except (TypeError, ValueError):
+            eid = r["entry_id"]
+        out.add((r["entry_type"], eid))
+    return out
 
 
 def get_label(entry_type: str, entry_id: int, profile_id: int = 1) -> Optional[str]:
@@ -806,8 +892,17 @@ def get_label_with_reasoning(entry_type: str, entry_id: int,
     }
 
 
+def _labels_confirmed_sql(alias: str = "") -> str:
+    """SQL fragment: row counts as confirmed (not awaiting Gemini Accept)."""
+    p = ("%s." % alias) if alias else ""
+    return (
+        "(%spending_gemini_job_id IS NULL OR "
+        "TRIM(COALESCE(%spending_gemini_job_id,''))='')" % (p, p)
+    )
+
+
 def get_all_labels(profile_id: int = 1) -> List[dict]:
-    """Get all labels with entry data for this profile."""
+    """Get all confirmed labels with entry data for this profile (excludes pending Gemini batch rows)."""
     conn = get_db()
     rows = conn.execute("""
         SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at, l.updated_at,
@@ -815,7 +910,7 @@ def get_all_labels(profile_id: int = 1) -> List[dict]:
                e.title, e.description, e.content, e.source_type, e.source_name, e.source_category
         FROM labels l
         JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
-        WHERE l.profile_id = ?
+        WHERE l.profile_id = ? AND """ + _labels_confirmed_sql("l") + """
         ORDER BY l.updated_at DESC
     """, (profile_id,)).fetchall()
     conn.close()
@@ -823,13 +918,13 @@ def get_all_labels(profile_id: int = 1) -> List[dict]:
 
 
 def get_all_labels_raw(profile_id: int = 1) -> List[dict]:
-    """Get all labels without joining entries (for syncing)."""
+    """Get all confirmed labels without joining entries (for syncing and training)."""
     conn = get_db()
     rows = conn.execute("""
         SELECT entry_type, entry_id, label, reasoning,
                COALESCE(label_source, '') AS label_source, created_at, updated_at
         FROM labels
-        WHERE profile_id = ?
+        WHERE profile_id = ? AND """ + _labels_confirmed_sql("") + """
         ORDER BY updated_at DESC
     """, (profile_id,)).fetchall()
     conn.close()
@@ -837,9 +932,11 @@ def get_all_labels_raw(profile_id: int = 1) -> List[dict]:
 
 
 def get_label_count(profile_id: int = 1) -> int:
+    """Count of confirmed labels (excludes rows awaiting Gemini Accept)."""
     conn = get_db()
     count = conn.execute(
-        "SELECT COUNT(*) FROM labels WHERE profile_id = ?", (profile_id,)
+        "SELECT COUNT(*) FROM labels WHERE profile_id = ? AND " + _labels_confirmed_sql(),
+        (profile_id,),
     ).fetchone()[0]
     conn.close()
     return count
@@ -849,7 +946,7 @@ def get_label_distribution(profile_id: int = 1) -> dict:
     conn = get_db()
     rows = conn.execute("""
         SELECT label, COUNT(*) as count FROM labels
-        WHERE profile_id = ?
+        WHERE profile_id = ? AND """ + _labels_confirmed_sql() + """
         GROUP BY label ORDER BY count DESC
     """, (profile_id,)).fetchall()
     conn.close()

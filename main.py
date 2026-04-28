@@ -720,6 +720,8 @@ async def gemini_batch_start(slug: str, request: Request):
     db.merge_profile_training_settings(profile_id, {"gemini_mode": mode})
 
     job_id = _create_job("gemini_synthetic_batch")
+    _update_job(job_id, profile_id=profile_id)
+
     def _gemini_cancelled() -> bool:
         with _JOB_LOCK:
             j = _JOBS.get(job_id)
@@ -736,6 +738,7 @@ async def gemini_batch_start(slug: str, request: Request):
                 mode=mode,
                 progress_cb=cb,
                 cancel_check=_gemini_cancelled,
+                gemini_job_id=job_id,
             ),
         ),
         daemon=True,
@@ -780,8 +783,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
     if view == "recent":
         entries = db.get_recent_entries(days=7)
         scored = pipeline.score_entries(entries, profile_id=profile_id)
-        all_labels = {(l["entry_type"], l["entry_id"])
-                      for l in db.get_all_labels_raw(profile_id)}
+        all_labels = db.get_all_labeled_entry_keys(profile_id)
         labeled_ids = set()
         for e in entries:
             if (e["entry_type"], e["entry_id"]) in all_labels:
@@ -1284,7 +1286,29 @@ async def job_status(job_id: str):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return job
+    out = dict(job)
+    pid = job.get("profile_id")
+    if pid is not None and job.get("job_type") == "gemini_synthetic_batch":
+        out["pending_gemini_count"] = db.count_pending_gemini_labels(int(pid), job_id)
+    return out
+
+
+@app.post("/p/{slug}/api/gemini/batch/{job_id}/accept")
+async def gemini_batch_accept(slug: str, job_id: str):
+    """Confirm pending Gemini labels from a batch job (counts toward Train / Push)."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    n = db.confirm_gemini_pending_labels(profile_id, job_id)
+    return {"success": True, "confirmed": n}
+
+
+@app.post("/p/{slug}/api/gemini/batch/{job_id}/discard")
+async def gemini_batch_discard(slug: str, job_id: str):
+    """Remove pending Gemini labels from a batch job."""
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    n = db.discard_gemini_pending_labels(profile_id, job_id)
+    return {"success": True, "removed": n}
 
 
 @app.post("/api/jobs/{job_id}/cancel")

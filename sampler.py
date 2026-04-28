@@ -175,6 +175,7 @@ def _get_diverse(unlabeled: List[dict], limit: int = 5,
         FROM labels l
         JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
         WHERE l.profile_id = ?
+          AND (l.pending_gemini_job_id IS NULL OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
           AND e.source_category IS NOT NULL AND e.source_category != ''
         GROUP BY e.source_category
     """, (profile_id,)).fetchall()

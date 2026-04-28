@@ -74,8 +74,9 @@ def _cancelled_result(
     labeled: int,
     failed: List[Dict[str, Any]],
     skipped_mid: int,
+    gemini_job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    out: Dict[str, Any] = {
         "success": True,
         "cancelled": True,
         "labeled": labeled,
@@ -85,8 +86,23 @@ def _cancelled_result(
         "candidates_total": len(candidates),
         "queued": len(to_process),
         "message": "Cancelled (partial: %d labeled)" % labeled,
-        "note": "Labeling was stopped. Entries already labeled in this run are saved; the rest were not processed.",
+        "note": (
+            "Labeling was stopped. Pending Gemini labels need Accept or Discard on this page."
+        ),
     }
+    if gemini_job_id:
+        out["gemini_job_id"] = gemini_job_id
+    return out
+
+
+def _finish_gemini_result(
+    base: Dict[str, Any],
+    gemini_job_id: Optional[str],
+) -> Dict[str, Any]:
+    if gemini_job_id:
+        base = dict(base)
+        base["gemini_job_id"] = gemini_job_id
+    return base
 
 
 def run_gemini_synthetic_batch_job(
@@ -99,6 +115,7 @@ def run_gemini_synthetic_batch_job(
     mode: str = "single",
     progress_cb: Optional[Callable[[int, str, Optional[str]], None]] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
+    gemini_job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Process up to ``batch_limit`` smart-queue entries with Gemini; persist via ``db.set_label``.
 
@@ -129,16 +146,19 @@ def run_gemini_synthetic_batch_job(
     if total == 0:
         if progress_cb:
             progress_cb(100, "No eligible entries.")
-        return {
-            "success": True,
-            "labeled": 0,
-            "skipped": skipped_filter,
-            "skipped_mid_run": 0,
-            "failed": [],
-            "candidates_total": len(candidates),
-            "queued": 0,
-            "note": "No eligible entries (all already labeled or not replaceable).",
-        }
+        return _finish_gemini_result(
+            {
+                "success": True,
+                "labeled": 0,
+                "skipped": skipped_filter,
+                "skipped_mid_run": 0,
+                "failed": [],
+                "candidates_total": len(candidates),
+                "queued": 0,
+                "note": "No eligible entries (all already labeled or not replaceable).",
+            },
+            gemini_job_id,
+        )
 
     if progress_cb:
         progress_cb(3, "Starting Gemini batch (%d entries)..." % total)
@@ -167,6 +187,7 @@ def run_gemini_synthetic_batch_job(
                         labeled=labeled,
                         failed=failed,
                         skipped_mid=skipped_mid,
+                        gemini_job_id=gemini_job_id,
                     )
                 chunk = to_process[i : i + chunk_size]
                 if progress_cb:
@@ -206,10 +227,13 @@ def run_gemini_synthetic_batch_job(
                                 reasoning = res.get("reasoning", "")
                                 if label in MAGNITU_LABELS and reasoning:
                                     db.set_label(
-                                        et, eid, label,
+                                        et,
+                                        eid,
+                                        label,
                                         reasoning=reasoning,
                                         profile_id=profile_id,
-                                        label_source=SOURCE_GEMINI
+                                        label_source=SOURCE_GEMINI,
+                                        pending_gemini_job_id=gemini_job_id or None,
                                     )
                                     labeled += 1
                                     if progress_cb:
@@ -252,6 +276,7 @@ def run_gemini_synthetic_batch_job(
                         labeled=labeled,
                         failed=failed,
                         skipped_mid=skipped_mid,
+                        gemini_job_id=gemini_job_id,
                     )
                 et, eid = entry["entry_type"], int(entry["entry_id"])
                 if progress_cb:
@@ -280,6 +305,7 @@ def run_gemini_synthetic_batch_job(
                             reasoning=reasoning,
                             profile_id=profile_id,
                             label_source=SOURCE_GEMINI,
+                            pending_gemini_job_id=gemini_job_id or None,
                         )
                         labeled += 1
                         if progress_cb:
@@ -308,12 +334,15 @@ def run_gemini_synthetic_batch_job(
     if progress_cb:
         progress_cb(100, "Gemini batch finished.")
 
-    return {
-        "success": len(failed) == 0,
-        "labeled": labeled,
-        "skipped": skipped_filter + skipped_mid,
-        "skipped_mid_run": skipped_mid,
-        "failed": failed,
-        "candidates_total": len(candidates),
-        "queued": total,
-    }
+    return _finish_gemini_result(
+        {
+            "success": len(failed) == 0,
+            "labeled": labeled,
+            "skipped": skipped_filter + skipped_mid,
+            "skipped_mid_run": skipped_mid,
+            "failed": failed,
+            "candidates_total": len(candidates),
+            "queued": total,
+        },
+        gemini_job_id,
+    )
