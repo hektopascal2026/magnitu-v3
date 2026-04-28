@@ -7,9 +7,9 @@
 
     <!-- View Tabs -->
     <div class="top-view-tabs">
-        <a href="/top?view=recent" class="top-view-tab {% if view == 'recent' %}active{% endif %}">Recent Unlabeled</a>
-        <a href="/top?view=mismatches" class="top-view-tab {% if view == 'mismatches' %}active{% endif %}">Mismatches</a>
-        <a href="/top?view=all" class="top-view-tab {% if view == 'all' %}active{% endif %}">All-time</a>
+        <a href="/p/{{ profile.slug }}/top?view=recent" class="top-view-tab {% if view == 'recent' %}active{% endif %}">Recent Unlabeled</a>
+        <a href="/p/{{ profile.slug }}/top?view=mismatches" class="top-view-tab {% if view == 'mismatches' %}active{% endif %}">Mismatches</a>
+        <a href="/p/{{ profile.slug }}/top?view=all" class="top-view-tab {% if view == 'all' %}active{% endif %}">All-time</a>
     </div>
 
     <!-- View Description -->
@@ -35,7 +35,7 @@
         <div class="empty-state">
             <p>
                 {% if view == 'recent' %}
-                    No unlabeled entries from the last 7 days. Pull new entries from Seismo, or check the <a href="/top?view=all">all-time</a> view.
+                    No unlabeled entries from the last 7 days. Pull new entries from Seismo, or check the <a href="/p/{{ profile.slug }}/top?view=all">all-time</a> view.
                 {% elif view == 'mismatches' %}
                     No mismatches found — the model agrees with all your labels. Nice!
                 {% else %}
