@@ -207,6 +207,15 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     # Stabilize export so repeated tokens and source priors cannot dominate.
     keywords, source_weights = _stabilize_export_weights(keywords, source_weights)
 
+    # Floor weights for curated anchor concepts. _stabilize_export_weights caps
+    # every phrase at recipe_max_phrase_abs (default 0.24), which silently
+    # squashes the high IL priors LEGAL_TEMPLATE_PHRASES seeds in
+    # _boost_legal_templates (e.g. "member states only": 0.55 → 0.24). The
+    # floor pass restores those seeded values per (phrase, class) so Seismo's
+    # PHP softmax sees diagnostic concepts at their full editorial weight.
+    # Documented in seismo_0.5/README.md "Scoring tuning (May 2026)".
+    keywords = _apply_floor_weights(keywords)
+
     # Build recipe
     recipe = {
         "version": model_info["version"],
@@ -315,6 +324,40 @@ def _normalize_weights(keywords: dict, source_weights: dict) -> tuple:
         }
 
     return normalized_kw, normalized_sw
+
+
+def _apply_floor_weights(keywords: dict) -> dict:
+    """
+    Ensure every (phrase, class) pair in LEGAL_TEMPLATE_PHRASES ships at or
+    above its seeded value, overriding the recipe_max_phrase_abs export cap
+    for these curated anchor concepts only.
+
+    Why: LEGAL_TEMPLATE_PHRASES expresses the editorial premise that certain
+    legal-template phrases ("member states only", "third country",
+    "equivalence decision", …) are diagnostic for the international/trade/IR
+    angle that every important Swiss story carries. _stabilize_export_weights
+    caps them flat with every other phrase (default 0.24), which the May 2026
+    tuning round flagged as the root cause of recipe scores clustering around
+    the 0.5 no-signal attractor. The floor pass restores their editorial
+    weight after the rest of the pipeline runs as normal.
+
+    Scope: only LEGAL_TEMPLATE_PHRASES gets the floor. User-configured
+    legal_signal_patterns from config still pass through the cap — promote
+    a pattern into the curated list if it deserves the floor.
+
+    Symmetric across signs: applies to positive (investigation_lead,
+    important) priors and to noise/background priors. EU procedural
+    boilerplate ("implementing act", "corrigendum") gets sharper noise
+    suppression at the same time anchors get sharper IL signal.
+    """
+    for phrase, cls_wts in LEGAL_TEMPLATE_PHRASES.items():
+        if phrase not in keywords:
+            keywords[phrase] = {}
+        for cls, floor_wt in cls_wts.items():
+            current = float(keywords[phrase].get(cls, 0.0))
+            if current < floor_wt:
+                keywords[phrase][cls] = round(float(floor_wt), 4)
+    return keywords
 
 
 def _stabilize_export_weights(keywords: dict, source_weights: dict) -> tuple:
