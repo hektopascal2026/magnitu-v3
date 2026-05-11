@@ -34,9 +34,9 @@
 
 <!-- Source Filter -->
 <div class="source-filter">
-    <a href="/?source=all" class="source-filter-btn {% if source_filter == 'all' %}active{% endif %}">All</a>
-    <a href="/?source=lex" class="source-filter-btn {% if source_filter == 'lex' %}active{% endif %}">Legislation</a>
-    <a href="/?source=news" class="source-filter-btn {% if source_filter == 'news' %}active{% endif %}">News</a>
+    <a href="/p/{{ profile.slug }}/?source=all" class="source-filter-btn {% if source_filter == 'all' %}active{% endif %}">All</a>
+    <a href="/p/{{ profile.slug }}/?source=lex" class="source-filter-btn {% if source_filter == 'lex' %}active{% endif %}">Legislation</a>
+    <a href="/p/{{ profile.slug }}/?source=news" class="source-filter-btn {% if source_filter == 'news' %}active{% endif %}">News</a>
 </div>
 
 <!-- Label Distribution -->

@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import threading
 import uuid
 from datetime import datetime
@@ -604,17 +604,30 @@ async def profiles_page_redirect():
 
 # ─── Profile-scoped pages ─────────────────────────────────────────────────────
 
+def _entry_types_for_source(source: Optional[str]) -> Optional[List[str]]:
+    """Map a UI ``source`` filter to the underlying Seismo entry_types.
+
+    ``"lex"`` (Legislation tab) → Lex statutory texts **and** Leg parliamentary
+    calendar events (``lex_item`` + ``calendar_event``).
+    ``"news"`` (News tab) → RSS/Substack feed items **and** emails
+    (``feed_item`` + ``email``).
+    Anything else (``"all"`` or unknown) returns ``None`` for no filter.
+    """
+    s = (source or "").strip().lower()
+    if s == "lex":
+        return ["lex_item", "calendar_event"]
+    if s == "news":
+        return ["feed_item", "email"]
+    return None
+
+
 @app.get("/p/{slug}/", response_class=HTMLResponse)
 async def labeling_page(request: Request, slug: str, source: str = "all"):
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
     ctx = _base_context(request, profile)
-    entry_type = None
-    if source == "lex":
-        entry_type = "lex_item"
-    elif source == "news":
-        entry_type = "feed_item"
-    entries = sampler.get_smart_entries(limit=30, entry_type=entry_type,
+    entry_types = _entry_types_for_source(source)
+    entries = sampler.get_smart_entries(limit=30, entry_type=entry_types,
                                         profile_id=profile_id)
     ctx["source_filter"] = source
 
@@ -709,11 +722,7 @@ async def gemini_batch_start(slug: str, request: Request):
     batch_limit = max(1, min(batch_limit, 100))
     replace_gemini = False
     source = str(body.get("source", "all")).strip().lower()
-    entry_type = None
-    if source == "lex":
-        entry_type = "lex_item"
-    elif source == "news":
-        entry_type = "feed_item"
+    entry_type = _entry_types_for_source(source)
     mode = str(body.get("mode", "single")).strip().lower()
     if mode not in ("single", "batch"):
         mode = "single"
@@ -752,14 +761,10 @@ async def api_profile_entries(slug: str, source: str = "all", limit: int = 500):
     """JSON entries for the labeling queue (same sampling as the web UI). Used by magnitu-mini."""
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
-    entry_type = None
-    if source == "lex":
-        entry_type = "lex_item"
-    elif source == "news":
-        entry_type = "feed_item"
+    entry_types = _entry_types_for_source(source)
     lim = max(1, min(int(limit), 500))
     entries = sampler.get_smart_entries(
-        limit=lim, entry_type=entry_type, profile_id=profile_id
+        limit=lim, entry_type=entry_types, profile_id=profile_id
     )
     return {"entries": entries, "profile_slug": slug}
 

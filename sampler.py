@@ -6,7 +6,7 @@ and underrepresented source categories.
 """
 import math
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union, Sequence
 
 import numpy as np
 
@@ -233,10 +233,14 @@ def _get_chronological(unlabeled: List[dict], limit: int = 10) -> List[dict]:
 
 # ─── Main entry point ───
 
-def get_smart_entries(limit: int = 30, entry_type: str = None,
+def get_smart_entries(limit: int = 30,
+                      entry_type: Optional[Union[str, Sequence[str]]] = None,
                       profile_id: int = 1) -> List[dict]:
     """
     Get a mixed set of entries optimised for active learning for a profile.
+
+    ``entry_type`` accepts a single entry_type string, or a list/tuple of
+    entry_types — see ``db.get_unlabeled_entries``.
 
     If a model exists, returns a mix of:
     - ~10 uncertain (model is confused)
@@ -291,7 +295,7 @@ def get_smart_entries(limit: int = 30, entry_type: str = None,
 
 def get_gemini_synthetic_batch_entries(
     limit: int = 80,
-    entry_type: Optional[str] = None,
+    entry_type: Optional[Union[str, Sequence[str]]] = None,
     profile_id: int = 1,
 ) -> List[dict]:
     """Entries for Gemini synthetic batch: same smart pool as the Label page, prioritising

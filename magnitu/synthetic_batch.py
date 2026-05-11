@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import errno
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import db
 import sampler
@@ -113,7 +113,7 @@ def run_gemini_synthetic_batch_job(
     profile_id: int,
     *,
     batch_limit: int = 50,
-    entry_type: Optional[str] = None,
+    entry_type: Optional[Union[str, Sequence[str]]] = None,
     replace_gemini: bool = False,
     system_instruction: Optional[str] = None,
     mode: str = "single",

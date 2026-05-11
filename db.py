@@ -8,7 +8,7 @@ Entries and embeddings are shared across all profiles (computed once).
 import re
 import sqlite3
 import json
-from typing import Optional, List
+from typing import Optional, List, Union, Sequence
 from datetime import datetime
 from config import DB_PATH, load_config, save_config
 
@@ -673,9 +673,15 @@ def upsert_entries(entries: List[dict]):
     conn.close()
 
 
-def get_unlabeled_entries(limit: int = 30, entry_type: Optional[str] = None,
+def get_unlabeled_entries(limit: int = 30,
+                          entry_type: Optional[Union[str, Sequence[str]]] = None,
                           profile_id: int = 1) -> List[dict]:
-    """Get entries not yet labeled in this profile, newest first."""
+    """Get entries not yet labeled in this profile, newest first.
+
+    ``entry_type`` accepts a single entry_type string, or a list/tuple of
+    entry_types (e.g. ``["lex_item", "calendar_event"]`` for legislation,
+    ``["feed_item", "email"]`` for news).
+    """
     conn = get_db()
     sql = """
         SELECT e.* FROM entries e
@@ -686,8 +692,18 @@ def get_unlabeled_entries(limit: int = 30, entry_type: Optional[str] = None,
     """
     params: list = [profile_id]
     if entry_type:
-        sql += " AND e.entry_type = ?"
-        params.append(entry_type)
+        if isinstance(entry_type, (list, tuple, set, frozenset)):
+            types = [t for t in entry_type if t]
+            if len(types) == 1:
+                sql += " AND e.entry_type = ?"
+                params.append(types[0])
+            elif types:
+                placeholders = ",".join(["?"] * len(types))
+                sql += " AND e.entry_type IN ({})".format(placeholders)
+                params.extend(types)
+        else:
+            sql += " AND e.entry_type = ?"
+            params.append(entry_type)
     sql += " ORDER BY e.published_date DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
