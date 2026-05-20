@@ -1661,6 +1661,15 @@ def _migrate_config():
         )
         cfg["transformer_model_name"] = "xlm-roberta-base"
         changed = True
+    content_cap = pipeline.CONTENT_CAP
+    if cfg.get("embedding_content_cap") != content_cap:
+        import logging
+        logging.getLogger(__name__).info(
+            "Embedding content cap changed (%s → %s); re-embedding required.",
+            cfg.get("embedding_content_cap"), content_cap,
+        )
+        cfg["embedding_content_cap"] = content_cap
+        changed = True
     if changed:
         save_config(cfg)
         db.invalidate_all_embeddings()

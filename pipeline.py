@@ -381,7 +381,7 @@ def invalidate_embedder_cache():
     _embedder = None
 
 
-CONTENT_CAP = 500
+CONTENT_CAP = 1000
 SOURCE_NAME_CAP = 120
 SOURCE_CATEGORY_CAP = 80
 LEGAL_SIGNAL_CAP = 8  # max distinct signals to prepend per entry

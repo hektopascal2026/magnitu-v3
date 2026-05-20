@@ -173,7 +173,7 @@
     <div class="about-section">
         <h3>How Magnitu Reads Text</h3>
         <p><strong>Language Model:</strong> Magnitu uses a pre-trained transformer (default <code>{{ config.transformer_model_name or 'xlm-roberta-base' }}</code>). With 278 million parameters trained across 100 languages, it naturally understands what words mean—allowing terms like <em>"Untersuchung"</em> and <em>"investigation"</em> to produce similar vectors.</p>
-        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional fingerprint based on its title (emphasized by repeating it once), description, a 500-character body excerpt, and structured Seismo context (<code>source_type</code>, <code>source_name</code>, <code>source_category</code>). Embedding runs once per article during sync and is cached.</p>
+        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional fingerprint based on its title (emphasized by repeating it once), description, a 1,000-character body excerpt, and structured Seismo context (<code>source_type</code>, <code>source_name</code>, <code>source_category</code>). Embedding runs once per article during sync and is cached.</p>
 
         <h3>Training & Distillation</h3>
         <p><strong>The Classifier Head:</strong> Every time you train, Magnitu builds a Multi-Layer Perceptron (MLP) from scratch on your cached transformer embeddings. The language model provides the semantic understanding, while the MLP learns your priorities.</p>
@@ -200,7 +200,7 @@
         <div class="about-detail-grid">
             <div class="about-detail">
                 <span class="about-detail-label">Text Length</span>
-                <span class="about-detail-value">Keyword weights in the recipe are normalized to compensate. Local transformer body excerpts are capped at 500 characters.</span>
+                <span class="about-detail-value">Keyword weights in the recipe are normalized to compensate. Local transformer body excerpts are capped at 1,000 characters.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Source Bias</span>

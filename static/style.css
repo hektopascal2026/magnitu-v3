@@ -592,6 +592,29 @@ body {
     overflow-y: auto;
 }
 
+.entry-expand-btn {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: 11px;
+    font-weight: 600;
+    color: #555555;
+    cursor: pointer;
+    text-decoration: underline;
+    font-family: inherit;
+}
+
+.entry-expand-btn:hover {
+    color: #000000;
+}
+
+.entry-text-block.is-expanded .entry-text-full {
+    max-height: 24em;
+    overflow-y: auto;
+}
+
 .entry-source {
     font-size: 12px; /* small */
     color: #000000;
