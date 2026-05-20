@@ -139,7 +139,7 @@
             <div class="form-group">
                 <label>Mothership Seismo URL</label>
                 <input type="url" id="seismoUrl" value="{{ config.seismo_url }}"
-                       placeholder="https://your-domain.ch/seismo/index.php">
+                       placeholder="https://seismo.live/index.php">
                 <div class="form-help">Full URL to mothership index.php — source of all entries</div>
             </div>
             <div class="form-group">
@@ -164,7 +164,7 @@
         <h2>Push Target Override (Danger Zone) — {{ profile.display_name }}</h2>
         <p class="settings-danger-body" style="margin-bottom: 16px;">
             <strong>{{ profile.display_name }}</strong> is a Magnitu <em>profile</em> (model + labels), not a Seismo instance.
-            Only if needed, point this profile at a <strong>lightweight Seismo</strong> (satellite) that <strong>receives</strong> scores, recipes, and pushed labels.
+            Only if needed, point this profile at a <strong>Seismo path desk</strong> (satellite at <code>/&lt;slug&gt;/</code>) that <strong>receives</strong> scores, recipes, and pushed labels.
             Sync imports labels <strong>from that URL</strong> when URL and key are set (entries always come from mothership).
             When <strong>Test push target</strong> succeeds and Seismo returns <code>accent_color</code>, Magnitu uses it for the header tab colour (optional).
         </p>
@@ -172,7 +172,7 @@
         <div id="satelliteFallbackBanner" style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #cc8800; background: #fffbf0; font-size: 13px;">
             <strong>No separate Seismo for this profile.</strong>
             Push and Sync label-pull use <strong>global mothership</strong> (same URL as Mothership Connection).
-            To push to / pull labels from a dedicated lightweight Seismo instead, set URL + API key here before syncing.
+            To push to / pull labels from a dedicated desk instead, set URL + API key here (from that desk’s Seismo Settings → Magnitu) before syncing.
         </div>
         {% elif profile_push_incomplete %}
         <div style="padding: 12px 14px; margin-bottom: 14px; border: 2px solid #c60; background: #fff8f0; font-size: 13px;">
@@ -189,13 +189,13 @@
             <div class="form-group">
                 <label>Push target Seismo URL</label>
                 <input type="url" id="profileSeismoUrl" value="{{ profile.seismo_url or '' }}"
-                       placeholder="Lightweight Seismo index.php URL">
-                <div class="form-help">Must mirror mothership entries. If blank with blank key, mothership is used.</div>
+                       placeholder="https://your-host/security/index.php">
+                <div class="form-help">Path desk on Seismo 0.6 (Settings → Satellites + bin/seismo-satellite-provision.sh). Copy URL from the desk Settings → Magnitu. Blank URL + blank key → mothership.</div>
             </div>
             <div class="form-group">
                 <label>Push target API key</label>
                 <input type="text" id="profileApiKey" value="{{ profile.api_key or '' }}"
-                       placeholder="API key for this Seismo instance"
+                       placeholder="From desk Settings → Magnitu (not mothership key)"
                        style="font-family: monospace;">
             </div>
             <div class="form-actions">

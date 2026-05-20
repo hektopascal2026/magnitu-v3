@@ -202,6 +202,50 @@ except Exception as e:
     fail(str(e))
 
 
+t = test("push_scores splits large payloads into batches")
+try:
+    batch_cfg = dict(test_config)
+    batch_cfg["seismo_push_batch_size"] = 100
+    config.save_config(batch_cfg)
+
+    request_count = {"n": 0}
+    batch_sizes = []
+
+    def count_score_requests(method, url, params=None, **kwargs):
+        request_count["n"] += 1
+        batch_sizes.append(len(kwargs["json"]["scores"]))
+        return make_mock_response(200, {"success": True})
+
+    big_scores = [
+        {
+            "entry_type": "feed_item",
+            "entry_id": i,
+            "relevance_score": 0.5,
+            "predicted_label": "noise",
+        }
+        for i in range(250)
+    ]
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.side_effect = count_score_requests
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = lambda s, *a: None
+        mock_client_cls.return_value = mock_client
+
+        result = sync.push_scores(big_scores, model_version=3)
+
+    assert request_count["n"] == 3, "250 scores @100 should be 3 HTTP posts"
+    assert batch_sizes == [100, 100, 50]
+    assert result.get("batches") == 3
+    assert result.get("scores_pushed") == 250
+    config.save_config(test_config)
+    ok()
+except Exception as e:
+    config.save_config(test_config)
+    fail(str(e))
+
+
 # ═══════════════════════════════════════════
 #  3. Recipe payload shape matches Seismo contract
 # ═══════════════════════════════════════════

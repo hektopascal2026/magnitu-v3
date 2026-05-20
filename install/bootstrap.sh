@@ -19,7 +19,7 @@ if [ "$(uname -m)" = "arm64" ]; then
     fi
 fi
 
-DEFAULT_URL="https://www.hektopascal.org/seismo/index.php"
+DEFAULT_URL="https://seismo.live/index.php"
 
 # Determine install dir: if we're already inside the repo, use that
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"

@@ -198,25 +198,51 @@ def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
 
 # ─── Push (per-profile — each profile targets its own Seismo) ─────────────
 
+def _seismo_push_batch_size() -> int:
+    """Scores/labels per POST; keeps bodies under typical nginx limits."""
+    size = int(get_config().get("seismo_push_batch_size") or 100)
+    return max(1, size)
+
+
+def _chunk_list(items: List, size: int) -> List[List]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
 def push_scores(scores: List[Dict], model_version: int,
                 model_meta: Optional[Dict] = None,
                 profile: Optional[Dict] = None) -> dict:
-    """Push batch of scores to the profile's Seismo target.
+    """Push scores to the profile's Seismo target in HTTP-sized chunks.
 
     profile: profiles table row (has seismo_url, api_key). Uses mothership when
     both are blank; raises ``ValueError`` if only one is set.
     """
+    if not scores:
+        return {"success": True, "pushed": 0}
+
     target = _profile_target(profile)
-    payload = {"scores": scores, "model_version": model_version}
-    if model_meta:
-        payload["model_meta"] = model_meta
-    result = _request("POST", {"action": "magnitu_scores"}, json=payload,
-                      seismo_target=target).json()
     profile_id = profile["id"] if profile else None
-    db.log_sync("push", len(scores),
-                "scores pushed, model v{}".format(model_version),
-                profile_id=profile_id)
-    return result
+    batch_size = _seismo_push_batch_size()
+    chunks = _chunk_list(scores, batch_size)
+    last_result = {}
+
+    for idx, chunk in enumerate(chunks):
+        payload = {"scores": chunk, "model_version": model_version}
+        if model_meta:
+            payload["model_meta"] = model_meta
+        last_result = _request(
+            "POST", {"action": "magnitu_scores"}, json=payload, seismo_target=target
+        ).json()
+
+    db.log_sync(
+        "push", len(scores),
+        "scores pushed, model v{}, {} batch(es)".format(model_version, len(chunks)),
+        profile_id=profile_id,
+    )
+    if len(chunks) > 1 and isinstance(last_result, dict):
+        last_result = dict(last_result)
+        last_result["batches"] = len(chunks)
+        last_result["scores_pushed"] = len(scores)
+    return last_result
 
 
 def push_recipe(recipe: dict, profile: Optional[Dict] = None) -> dict:
@@ -258,21 +284,33 @@ def push_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> dict:
     if not labels_to_push:
         return {"success": True, "pushed": 0}
 
-    payload = {
-        "labels": [
-            {
-                "entry_type": lbl["entry_type"],
-                "entry_id":   lbl["entry_id"],
-                "label":      lbl["label"],
-                "reasoning":  lbl.get("reasoning", ""),
-                "labeled_at": lbl.get("updated_at") or lbl.get("created_at", ""),
-            }
-            for lbl in labels_to_push
-        ]
-    }
-    result = _request("POST", {"action": "magnitu_labels"}, json=payload,
-                      seismo_target=target).json()
-    db.log_sync("push", len(labels_to_push), "labels pushed", profile_id=profile_id)
+    label_rows = [
+        {
+            "entry_type": lbl["entry_type"],
+            "entry_id":   lbl["entry_id"],
+            "label":      lbl["label"],
+            "reasoning":  lbl.get("reasoning", ""),
+            "labeled_at": lbl.get("updated_at") or lbl.get("created_at", ""),
+        }
+        for lbl in labels_to_push
+    ]
+    batch_size = _seismo_push_batch_size()
+    chunks = _chunk_list(label_rows, batch_size)
+    result = {"success": True, "pushed": len(labels_to_push)}
+    for chunk in chunks:
+        result = _request(
+            "POST", {"action": "magnitu_labels"},
+            json={"labels": chunk}, seismo_target=target,
+        ).json()
+    if len(chunks) > 1 and isinstance(result, dict):
+        result = dict(result)
+        result["batches"] = len(chunks)
+        result["pushed"] = len(labels_to_push)
+    db.log_sync(
+        "push", len(labels_to_push),
+        "labels pushed, {} batch(es)".format(len(chunks)),
+        profile_id=profile_id,
+    )
     return result
 
 
