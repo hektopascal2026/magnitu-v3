@@ -762,6 +762,9 @@ async def dashboard_page(slug: str):
     return RedirectResponse("/p/{}/model".format(slug), status_code=302)
 
 
+TOP_PAGE_LIMIT = 30
+
+
 @app.get("/p/{slug}/top", response_class=HTMLResponse)
 async def top_page(request: Request, slug: str, view: str = "recent"):
     profile = _get_profile_or_404(slug)
@@ -771,6 +774,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
     if view not in ("recent", "mismatches", "predicted_noise", "all"):
         view = "recent"
     ctx["view"] = view
+    ctx["top_page_limit"] = TOP_PAGE_LIMIT
 
     if view == "recent":
         entries = db.get_recent_entries(days=7)
@@ -783,7 +787,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
         unlabeled_scored.sort(key=lambda s: s["relevance_score"], reverse=True)
         entry_map = {db.entry_key_from_mapping(e): e for e in entries}
         top_entries = []
-        for s in unlabeled_scored[:30]:
+        for s in unlabeled_scored[:TOP_PAGE_LIMIT]:
             entry = entry_map.get(db.entry_key_from_mapping(s))
             if not entry:
                 continue
@@ -817,7 +821,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
                 })
         mismatch_pool.sort(key=lambda x: x["score"]["relevance_score"], reverse=True)
         ctx["total_mismatches"] = len(mismatch_pool)
-        ctx["top_entries"] = mismatch_pool
+        ctx["top_entries"] = mismatch_pool[:TOP_PAGE_LIMIT]
         ctx["labeled_count"] = len(labeled_entries)
         ctx["correct_count"] = 0
         ctx["accuracy"] = None
@@ -857,7 +861,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
 
         noise_pool.sort(key=_noise_review_priority)
         ctx["total_predicted_noise"] = len(noise_pool)
-        ctx["top_entries"] = noise_pool[:30]
+        ctx["top_entries"] = noise_pool[:TOP_PAGE_LIMIT]
         ctx["labeled_count"] = sum(1 for x in noise_pool if x["user_label"])
         ctx["correct_count"] = sum(1 for x in noise_pool if x["user_label"] == "noise")
         ctx["accuracy"] = None
@@ -872,7 +876,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
 
         scored.sort(key=lambda s: s["relevance_score"], reverse=True)
         top_entries = []
-        for s in scored[:30]:
+        for s in scored[:TOP_PAGE_LIMIT]:
             key = db.entry_key_from_mapping(s)
             entry = entry_map.get(key)
             if not entry:
