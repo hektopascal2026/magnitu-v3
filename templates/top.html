@@ -9,6 +9,7 @@
     <div class="top-view-tabs">
         <a href="/p/{{ profile.slug }}/top?view=recent" class="top-view-tab {% if view == 'recent' %}active{% endif %}">Recent Unlabeled</a>
         <a href="/p/{{ profile.slug }}/top?view=mismatches" class="top-view-tab {% if view == 'mismatches' %}active{% endif %}">Mismatches</a>
+        <a href="/p/{{ profile.slug }}/top?view=predicted_noise" class="top-view-tab {% if view == 'predicted_noise' %}active{% endif %}">Predicted noise</a>
         <a href="/p/{{ profile.slug }}/top?view=all" class="top-view-tab {% if view == 'all' %}active{% endif %}">All-time</a>
     </div>
 
@@ -23,6 +24,11 @@
             Entries where your label disagrees with the model's prediction. Correcting these has the highest impact on model improvement.
             {% if total_mismatches is defined %}
                 <span class="top-view-meta">{{ total_mismatches }} mismatch{{ 'es' if total_mismatches != 1 else '' }} found.</span>
+            {% endif %}
+        {% elif view == 'predicted_noise' %}
+            Entries the model classifies as <strong>noise</strong>. Confirm with <strong>Noise</strong> or reclassify if the model is wrong — useful for cleaning up RSS fluff and reinforcing true negatives.
+            {% if total_predicted_noise is defined %}
+                <span class="top-view-meta">{{ total_predicted_noise }} predicted noise{{ '' if total_predicted_noise == 1 else '' }} in cache; showing up to 30 (unlabeled and disagreements first).</span>
             {% endif %}
         {% else %}
             The 30 highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
@@ -259,13 +265,26 @@
                     card.style.transition = 'opacity 0.3s';
                 }
 
-                // In mismatches view, check if the mismatch is resolved
-                if (currentView === 'mismatches' && label === predicted) {
+                // In mismatches view, any saved correction counts as reviewed
+                if (currentView === 'mismatches') {
                     card.classList.remove('mismatch');
+                    card.classList.add('mismatch-reviewed');
                     card.style.opacity = '0.4';
                     card.style.transition = 'opacity 0.3s';
                     var badge = card.querySelector('.mismatch-badge');
-                    if (badge) badge.innerHTML = '<span style="color:#00aa00;font-weight:700;">Resolved</span>';
+                    if (badge) {
+                        if (label === predicted) {
+                            badge.innerHTML = '<span style="color:#00aa00;font-weight:700;">Resolved</span>';
+                        } else {
+                            var yours = label.replace(/_/g, ' ');
+                            var model = (predicted || '').replace(/_/g, ' ');
+                            badge.innerHTML =
+                                '<span class="mismatch-yours">' + yours + '</span>' +
+                                '<span class="mismatch-arrow">&rarr;</span>' +
+                                '<span class="mismatch-model">' + model + '</span>' +
+                                '<span class="mismatch-reviewed-tag">Corrected</span>';
+                        }
+                    }
                 }
 
                 setTimeout(function() { panel.style.display = 'none'; }, 300);

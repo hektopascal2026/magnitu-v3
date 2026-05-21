@@ -1105,6 +1105,17 @@ kbd {
     border: 1.5px solid #000000;
 }
 
+.entry-card.mismatch-reviewed {
+    opacity: 0.4;
+    border-left-color: #B0B0B0;
+}
+
+.mismatch-reviewed-tag {
+    margin-left: 6px;
+    color: #00aa00;
+    font-weight: 700;
+}
+
 .section-desc {
     font-size: 14px; /* medium */
     color: #000000;
