@@ -766,13 +766,13 @@ TOP_PAGE_LIMIT = 30
 
 
 @app.get("/p/{slug}/top", response_class=HTMLResponse)
-async def top_page(request: Request, slug: str, view: str = "recent"):
+async def top_page(request: Request, slug: str, view: str = "mismatches"):
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
     ctx = _base_context(request, profile)
 
     if view not in ("recent", "mismatches", "predicted_noise", "all"):
-        view = "recent"
+        view = "mismatches"
     ctx["view"] = view
     ctx["top_page_limit"] = TOP_PAGE_LIMIT
 
