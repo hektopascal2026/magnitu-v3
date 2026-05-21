@@ -16,7 +16,7 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
 
 - **Multi-profile support**
   - Each profile trains its own model on its own labeled entries
-  - Each profile can push to a different (lightweight) Seismo instance
+  - Each profile can push to a different Seismo desk (path satellite or mothership)
   - All profiles share the same entries and embeddings — sync once, score differently
   - Profile switcher in the top bar; **Settings → Profiles** to add and manage profiles (`/profiles` redirects there)
   - URL structure: `/p/{slug}/` for labeling, model (overview + exports), settings
@@ -69,23 +69,24 @@ Mothership Seismo → Magnitu pull (all profiles share entries)
          Profile: Default    Profile: Security    Profile: Digital
          labels + model       labels + model      labels + model
               ↓                    ↓                   ↓
-         push to          push to lightweight  push to lightweight
-         mothership        Seismo "security"   Seismo "digital"
+         push to          push to path desk    push to path desk
+         mothership        /security/          /digital/
 ```
 
-To add a profile: **Settings** (for any profile) → **Profiles** → **Add profile** → name, optional **satellite** URL + API key.
+To add a profile: **Settings** (for any profile) → **Profiles** → **Add profile** → name, optional **push target** URL + API key.
 
-### Mothership → satellite → Magnitu (canonical flow)
+### Mothership → path satellite → Magnitu (canonical flow)
 
-This is the intended path when Seismo manages **lightweight satellites** (topic-specific PHP installs on separate webspace):
+Seismo **0.6** uses **path satellites**: one codebase, desks at `https://host/<slug>/`, shared entries DB, per-desk scores DB `seismo_<slug>`. See `SEISMO_MULTIPROFILE.md` for the full brief.
 
-1. **Seismo (mothership admin)** — Create a satellite (slug, display name, accent colour, etc.), download the generated JSON / deployment bundle.
-2. **Deploy** — Generate or copy satellite files onto the webspace; each satellite has its **own** MySQL database for scores, recipes, and Magnitu-related state. The mothership remains the **system of record for entries**; satellites mirror or read that feed per your Seismo setup.
-3. **Magnitu** — Add a **profile** whose **satellite URL** and **API key** point at that instance. Training (**Train**) builds that profile’s classifier locally (`.joblib` under your data dir); nothing uploads a “model binary” to PHP — Seismo receives **scores**, a **recipe**, and **labels** via the existing API.
-4. **Sync** — **Entries**: always fetched using **global Mothership Connection** in Settings (shared article pool for all profiles). **Labels**: fetched from **`magnitu_labels` on the satellite** when both satellite fields are set on the profile; if URL and key are blank, Magnitu falls back to mothership for label import (with a warning in the UI).
-5. **Push** — Sends scores, recipe, and labels **to that profile’s satellite**.
+1. **Seismo (mothership)** — **Settings → Satellites** → add slug (e.g. `security`), display name, optional accent. No JSON bundle or `seismo-generator`.
+2. **VPS** — `sudo bin/seismo-satellite-provision.sh <slug>` (creates `seismo_<slug>`, desk stub, seeds Magnitu API key).
+3. **Credentials** — Open `https://host/<slug>/` → **Settings → Magnitu** → copy **Seismo API URL** and **API key** for that desk.
+4. **Magnitu** — Add a **profile** (slug often matches the desk). Paste URL + key under **Push target** (e.g. `https://host/security/index.php`). Training stays local (`.joblib`); Seismo receives **scores**, **recipe**, and **labels** only.
+5. **Sync** — **Entries**: always from **global Mothership Connection**. **Labels**: from the desk when both push-target fields are set; otherwise mothership (UI warns).
+6. **Push** — Scores, recipe, and labels go to that profile’s push target.
 
-Optional **accent** for the Magnitu header tab: Seismo may expose `accent_color` on **`magnitu_status`** (`#rrggbb` / `#rgb`). Magnitu stores it after **Test satellite** or **Push**. Satellites must mirror entry IDs with the mothership so labels and scores line up.
+Optional **accent**: Seismo exposes `accent_color` on **`magnitu_status`** from the desk’s brand accent. Magnitu stores it after **Test push target** or **Push**. Entry IDs match the mothership (`entry_type` + `entry_id`) so labels and scores align.
 
 ### Seismo UI: what Magnitu sees (highlights vs training labels)
 
@@ -103,7 +104,7 @@ So: work you want in Magnitu’s training loop (pull → train → push) belongs
 - **Pull entries** — always the **global** mothership URL + API key from Settings (shared entry pool for every profile).
 - **Pull labels**, **push scores**, **push recipe**, **push labels** — use the **profile’s** push target: when **both** `seismo_url` and `api_key` are set on the profile, every one of those calls goes to that pair (typically your **satellite**). When **both** are blank, Magnitu uses the global mothership for those operations. Setting **only one** of URL or key is rejected (`ValueError`) so a satellite URL is never mixed with a mothership key, or the reverse.
 
-After **seismo-generator** builds a satellite, paste the printed **push URL** and **API key** into **that** Magnitu profile. Then **Sync** pulls labels from that satellite (entries still come from the global mothership), and **Push** writes scores, recipe, and labels back to the same instance.
+After provisioning, paste the desk **push URL** and **API key** (from that desk’s Seismo **Settings → Magnitu**) into **that** Magnitu profile’s push target. **Sync** pulls labels from the desk when configured; **Push** writes scores, recipe, and labels back to the same URL.
 
 ## Install from scratch (native)
 
@@ -276,4 +277,4 @@ Magnitu migrates existing installations automatically on startup:
 - Each trained classifier is saved with a **calibration JSON** sidecar (`.calibration.json`). `.magnitu` exports include it as `calibration.json` so imports keep the same scoring behaviour.
 - Seismo uses one active recipe per instance at a time. Last push wins.
 - If you see recipe/model mismatch, run **Full Sync → Train → Push**.
-- See `SEISMO_MULTIPROFILE.md` for the brief to give the Seismo developer when setting up lightweight Seismo instances.
+- See `SEISMO_MULTIPROFILE.md` for Seismo 0.6 path-satellite setup and Magnitu wiring.

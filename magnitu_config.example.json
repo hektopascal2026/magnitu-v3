@@ -14,5 +14,6 @@
   "label_time_decay_floor": 0.2,
   "reasoning_weight_boost": 1.0,
   "legal_signal_patterns": [],
-  "seismo_push_batch_size": 100
+  "seismo_push_batch_size": 75,
+  "seismo_push_max_body_bytes": 524288
 }

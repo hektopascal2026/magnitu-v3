@@ -114,6 +114,7 @@ def run_gemini_synthetic_batch_job(
     *,
     batch_limit: int = 50,
     entry_type: Optional[Union[str, Sequence[str]]] = None,
+    source_filter: Optional[str] = None,
     replace_gemini: bool = False,
     system_instruction: Optional[str] = None,
     mode: str = "single",
@@ -136,7 +137,10 @@ def run_gemini_synthetic_batch_job(
         raise ValueError(msg)
 
     candidates = sampler.get_gemini_synthetic_batch_entries(
-        limit=batch_limit, entry_type=entry_type, profile_id=profile_id
+        limit=batch_limit,
+        entry_type=entry_type,
+        source_filter=source_filter,
+        profile_id=profile_id,
     )
     to_process: List[Dict[str, Any]] = []
     for e in candidates:

@@ -110,7 +110,9 @@ DEFAULTS = {
     "gemini_model": "models/gemini-2.5-flash",
     "gemini_mode": "single",  # "single" or "batch"
     # Max scores/labels per Seismo POST (avoids nginx 413 on large pushes).
-    "seismo_push_batch_size": 100,
+    "seismo_push_batch_size": 75,
+    # Target max JSON body bytes per POST (nginx client_max_body_size is often 1m).
+    "seismo_push_max_body_bytes": 524288,
 }
 
 # Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).

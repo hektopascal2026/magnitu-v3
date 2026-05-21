@@ -12,13 +12,15 @@ key (or the reverse).
 
 Push (scores, recipe, labels to Seismo) uses the same rules via ``_profile_target``.
 """
+import json
 import logging
 import httpx
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 
 from config import get_config
 import db
 from magnitu.accent_theme import parse_accent_from_magnitu_status
+from magnitu.entry_sources import SEISMO_ENTRY_PULL_SPECS
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +107,38 @@ def pull_entries(
     if compute_embeddings and cfg.get("model_architecture") == "transformer":
         _compute_pending_embeddings()
     return len(entries)
+
+
+def pull_all_entry_types(
+    since: str = None,
+    compute_embeddings: bool = True,
+) -> int:
+    """Pull every Seismo entry type (feed, email, lex, leg calendar).
+
+    Incremental sync uses this instead of a single ``type=all`` request so leg
+    calendar events and large lex corpora are not truncated by ``limit``.
+    """
+    remote_entries = {}
+    try:
+        remote_entries = get_status().get("entries", {}) or {}
+    except Exception as exc:
+        logger.warning("Could not read magnitu_status for pull limits: %s", exc)
+
+    total = 0
+    for entry_type, status_key in SEISMO_ENTRY_PULL_SPECS:
+        expected = int(remote_entries.get(status_key, 0) or 0)
+        limit = max(500, expected + 100) if expected else 500
+        total += pull_entries(
+            since=since,
+            entry_type=entry_type,
+            limit=limit,
+            compute_embeddings=False,
+        )
+
+    cfg = get_config()
+    if compute_embeddings and cfg.get("model_architecture") == "transformer":
+        _compute_pending_embeddings()
+    return total
 
 
 def _compute_pending_embeddings():
@@ -199,13 +233,88 @@ def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
 # ─── Push (per-profile — each profile targets its own Seismo) ─────────────
 
 def _seismo_push_batch_size() -> int:
-    """Scores/labels per POST; keeps bodies under typical nginx limits."""
-    size = int(get_config().get("seismo_push_batch_size") or 100)
+    """Max items per POST (upper cap; body-size logic may lower further)."""
+    size = int(get_config().get("seismo_push_batch_size") or 75)
     return max(1, size)
+
+
+def _seismo_push_max_body_bytes() -> int:
+    """Stay under typical nginx client_max_body_size (often 1m)."""
+    size = int(get_config().get("seismo_push_max_body_bytes") or 524288)
+    return max(8192, size)
 
 
 def _chunk_list(items: List, size: int) -> List[List]:
     return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _estimate_batch_count(items: List[Dict], sample_payload: dict, max_items: int) -> int:
+    """Pick a batch size from a sample JSON body so posts stay under the byte cap."""
+    if not items:
+        return max_items
+    sample_n = min(len(items), 5)
+    sample_payload = dict(sample_payload)
+    list_key = next(k for k in sample_payload if isinstance(sample_payload.get(k), list))
+    sample_payload[list_key] = items[:sample_n]
+    body_len = len(json.dumps(sample_payload, separators=(",", ":")))
+    per_item = max(body_len / sample_n, 200)
+    by_bytes = int((_seismo_push_max_body_bytes() - 128) / per_item)
+    return max(1, min(max_items, by_bytes))
+
+
+def _post_json_batched_with_size(
+    action: str,
+    items: List[Dict],
+    build_payload: Callable[[List[Dict]], dict],
+    seismo_target: Optional[Dict],
+    batch_size: int,
+) -> tuple:
+    """POST items in batches; halve batch size and retry on HTTP 413."""
+    if not items:
+        return {"success": True, "pushed": 0}, 0
+
+    i = 0
+    batch_count = 0
+    last_result = {}
+
+    while i < len(items):
+        chunk = items[i:i + batch_size]
+        try:
+            last_result = _request(
+                "POST", {"action": action},
+                json=build_payload(chunk),
+                seismo_target=seismo_target,
+            ).json()
+            i += len(chunk)
+            batch_count += 1
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 413 and batch_size > 5:
+                batch_size = max(5, batch_size // 2)
+                logger.warning(
+                    "Seismo 413 on %s: retrying from offset %d with batch_size=%d",
+                    action, i, batch_size,
+                )
+                continue
+            raise
+
+    if batch_count > 1 and isinstance(last_result, dict):
+        last_result = dict(last_result)
+        last_result["batches"] = batch_count
+        last_result["items_pushed"] = len(items)
+    return last_result, batch_count
+
+
+def _post_json_batched(
+    action: str,
+    items: List[Dict],
+    build_payload: Callable[[List[Dict]], dict],
+    seismo_target: Optional[Dict],
+) -> tuple:
+    sample = build_payload(items[: min(1, len(items))])
+    batch_size = _estimate_batch_count(items, sample, _seismo_push_batch_size())
+    return _post_json_batched_with_size(
+        action, items, build_payload, seismo_target, batch_size
+    )
 
 
 def push_scores(scores: List[Dict], model_version: int,
@@ -221,26 +330,33 @@ def push_scores(scores: List[Dict], model_version: int,
 
     target = _profile_target(profile)
     profile_id = profile["id"] if profile else None
-    batch_size = _seismo_push_batch_size()
-    chunks = _chunk_list(scores, batch_size)
-    last_result = {}
+    meta_sent = {"done": False}
 
-    for idx, chunk in enumerate(chunks):
+    def build_payload(chunk: List[Dict]) -> dict:
         payload = {"scores": chunk, "model_version": model_version}
-        if model_meta:
+        if model_meta and not meta_sent["done"]:
             payload["model_meta"] = model_meta
-        last_result = _request(
-            "POST", {"action": "magnitu_scores"}, json=payload, seismo_target=target
-        ).json()
+            meta_sent["done"] = True
+        return payload
+
+    sample = {"scores": scores[: min(5, len(scores))], "model_version": model_version}
+    if model_meta:
+        sample["model_meta"] = model_meta
+
+    batch_size = _estimate_batch_count(
+        scores, sample, _seismo_push_batch_size()
+    )
+    last_result, batch_count = _post_json_batched_with_size(
+        "magnitu_scores", scores, build_payload, target, batch_size
+    )
 
     db.log_sync(
         "push", len(scores),
-        "scores pushed, model v{}, {} batch(es)".format(model_version, len(chunks)),
+        "scores pushed, model v{}, {} batch(es)".format(model_version, batch_count),
         profile_id=profile_id,
     )
-    if len(chunks) > 1 and isinstance(last_result, dict):
+    if isinstance(last_result, dict):
         last_result = dict(last_result)
-        last_result["batches"] = len(chunks)
         last_result["scores_pushed"] = len(scores)
     return last_result
 
@@ -294,21 +410,18 @@ def push_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> dict:
         }
         for lbl in labels_to_push
     ]
-    batch_size = _seismo_push_batch_size()
-    chunks = _chunk_list(label_rows, batch_size)
-    result = {"success": True, "pushed": len(labels_to_push)}
-    for chunk in chunks:
-        result = _request(
-            "POST", {"action": "magnitu_labels"},
-            json={"labels": chunk}, seismo_target=target,
-        ).json()
-    if len(chunks) > 1 and isinstance(result, dict):
+    def build_payload(chunk: List[Dict]) -> dict:
+        return {"labels": chunk}
+
+    result, batch_count = _post_json_batched(
+        "magnitu_labels", label_rows, build_payload, target
+    )
+    if isinstance(result, dict):
         result = dict(result)
-        result["batches"] = len(chunks)
         result["pushed"] = len(labels_to_push)
     db.log_sync(
         "push", len(labels_to_push),
-        "labels pushed, {} batch(es)".format(len(chunks)),
+        "labels pushed, {} batch(es)".format(batch_count),
         profile_id=profile_id,
     )
     return result

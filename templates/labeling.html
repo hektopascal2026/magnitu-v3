@@ -418,7 +418,8 @@
                         if (result.full_mode && result.entries_by_type) {
                             msg += ' (news ' + (result.entries_by_type.feed_item || 0) +
                                    ', email ' + (result.entries_by_type.email || 0) +
-                                   ', lex ' + (result.entries_by_type.lex_item || 0) + ')';
+                                   ', lex ' + (result.entries_by_type.lex_item || 0) +
+                                   ', leg ' + (result.entries_by_type.calendar_event || 0) + ')';
                         }
                         if (result.embeddings_computed > 0) {
                             msg += ', ' + result.embeddings_computed + ' embeddings computed';

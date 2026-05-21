@@ -623,7 +623,26 @@ body {
                 return r.json();
             });
         }
-        return seismoRequest('GET', 'magnitu_entries&type=' + currentFilter + '&limit=500');
+        return seismoRequest('GET', 'magnitu_entries&type=all&limit=5000').then(function(data) {
+            var entries = data.entries || [];
+            if (currentFilter === 'all') return { entries: entries };
+            var src = mapFilterToSource();
+            entries = entries.filter(function(e) {
+                if (src === 'lex') {
+                    if (e.entry_type === 'lex_item' || e.entry_type === 'calendar_event') return true;
+                    var st = (e.source_type || '').toLowerCase();
+                    return e.entry_type === 'feed_item' && (st.indexOf('leg_') === 0 || st === 'parl_press');
+                }
+                if (src === 'news') {
+                    if (e.entry_type === 'email') return true;
+                    if (e.entry_type !== 'feed_item') return false;
+                    var st2 = (e.source_type || '').toLowerCase();
+                    return st2.indexOf('leg_') !== 0 && st2 !== 'parl_press';
+                }
+                return true;
+            });
+            return { entries: entries };
+        });
     }
 
     function verifyLabelEndpoint() {

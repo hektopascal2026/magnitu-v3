@@ -5,7 +5,9 @@ alwaysApply: true
 
 # Seismo Integration
 
-Magnitu connects to **Seismo** (separate repo, PHP app hosted on netmind.ch). Seismo is a feed aggregator; Magnitu adds ML-powered relevance scoring.
+Magnitu connects to **Seismo** (separate repo, PHP app). Seismo is a feed aggregator; Magnitu adds ML-powered relevance scoring.
+
+**Seismo 0.6 path satellites:** one codebase, desks at `/<slug>/index.php`, shared entries DB, per-desk scores DB `seismo_<slug>`. Provision: mothership Settings → Satellites + `bin/seismo-satellite-provision.sh`. Magnitu pulls entries from mothership only; per-profile push target URL + key point at a desk (or mothership when blank). See `SEISMO_MULTIPROFILE.md`.
 
 ## API Contract (seismo is the server)
 
@@ -21,7 +23,7 @@ Optional backward-compatible field on the JSON response: **`accent_color`** — 
 
 ## Entry format received from seismo
 
-Each entry has: `entry_type` (feed_item|email|lex_item), `entry_id`, `title`, `description`, `content`, `link`, `author`, `published_date`, `source_name`, `source_category`, `source_type` (rss|substack|email|lex_eu|lex_ch).
+Each entry has: `entry_type` (feed_item|email|lex_item|calendar_event), `entry_id`, `title`, `description`, `content`, `link`, `author`, `published_date`, `source_name`, `source_category`, `source_type` (rss|substack|email|lex_*, leg_*).
 
 ## Score format pushed to seismo
 
@@ -42,7 +44,7 @@ Seismo's PHP tokenizes text, matches against keywords, sums weights per class, a
 ## Rules when changing Magnitu
 
 - Do NOT change the score/recipe JSON structure without updating seismo's PHP scoring engine
-- Do NOT change `entry_type` values — must match seismo's ENUM: `feed_item`, `email`, `lex_item`
+- Do NOT change `entry_type` values — must match Seismo: `feed_item`, `email`, `lex_item`, `calendar_event` (Leg)
 - The `source_type` values from seismo are: `rss`, `substack`, `email`, `lex_eu`, `lex_ch`
 - Sync module (`sync.py`) handles all API communication — keep it as the single point of contact
 - Python 3.9 compatibility required (no `X | Y` type unions, use `Optional[X]` / `typing`)

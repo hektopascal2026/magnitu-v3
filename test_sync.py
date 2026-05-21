@@ -115,7 +115,7 @@ except Exception as e:
 t = test("push_labels entry_type values match Seismo ENUM")
 try:
     for lbl in captured_kwargs["kwargs"]["json"]["labels"]:
-        assert lbl["entry_type"] in ("feed_item", "email", "lex_item"), \
+        assert lbl["entry_type"] in ("feed_item", "email", "lex_item", "calendar_event"), \
             "entry_type '{}' not in Seismo ENUM".format(lbl["entry_type"])
     ok()
 except Exception as e:
@@ -195,7 +195,7 @@ except Exception as e:
 t = test("push_scores entry_type values match Seismo ENUM")
 try:
     for s in captured_score["kwargs"]["json"]["scores"]:
-        assert s["entry_type"] in ("feed_item", "email", "lex_item"), \
+        assert s["entry_type"] in ("feed_item", "email", "lex_item", "calendar_event"), \
             "entry_type '{}' not in Seismo ENUM".format(s["entry_type"])
     ok()
 except Exception as e:
@@ -239,6 +239,7 @@ try:
     assert batch_sizes == [100, 100, 50]
     assert result.get("batches") == 3
     assert result.get("scores_pushed") == 250
+    assert result.get("items_pushed") == 250
     config.save_config(test_config)
     ok()
 except Exception as e:
