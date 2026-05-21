@@ -177,9 +177,10 @@ def _explain_transformer(entry: dict, model_info: dict) -> Optional[dict]:
 
     # Get or compute embedding
     conn = db.get_db()
+    et, eid = db.entry_key_from_mapping(entry)
     row = conn.execute(
         "SELECT embedding FROM entries WHERE entry_type = ? AND entry_id = ?",
-        (entry["entry_type"], entry["entry_id"])
+        (et, eid)
     ).fetchone()
     conn.close()
 

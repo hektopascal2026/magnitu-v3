@@ -17,24 +17,11 @@ import distiller
 
 # ─── Helpers ───
 
-def _normalize_entry_key(entry_type, entry_id):
-    """Stable identity for deduping (avoids int/str entry_id mismatches)."""
-    try:
-        eid = int(entry_id)
-    except (TypeError, ValueError):
-        eid = entry_id
-    return (str(entry_type or ""), eid)
-
-
-def _normalize_entry_dict_key(entry: dict):
-    return _normalize_entry_key(entry.get("entry_type"), entry.get("entry_id"))
-
-
 def _dedupe_entries_preserve_order(entries: List[dict]) -> List[dict]:
     seen = set()
     out = []
     for e in entries:
-        k = _normalize_entry_dict_key(e)
+        k = db.entry_key_from_mapping(e)
         if k not in seen:
             seen.add(k)
             out.append(e)
@@ -92,12 +79,12 @@ def _get_uncertain(unlabeled: List[dict], scores: List[dict], limit: int = 10) -
     scored_with_entropy = []
     score_map = {}
     for s in scores:
-        k = _normalize_entry_key(s["entry_type"], s["entry_id"])
+        k = db.entry_key_from_mapping(s)
         if k not in score_map:
             score_map[k] = s
 
     for entry in unlabeled:
-        key = _normalize_entry_dict_key(entry)
+        key = db.entry_key_from_mapping(entry)
         s = score_map.get(key)
         if not s or "probabilities" not in s:
             continue
@@ -139,13 +126,13 @@ def _get_conflicts(unlabeled: List[dict], scores: List[dict], limit: int = 5,
 
     score_map = {}
     for s in scores:
-        k = _normalize_entry_key(s["entry_type"], s["entry_id"])
+        k = db.entry_key_from_mapping(s)
         if k not in score_map:
             score_map[k] = s
     conflicts = []
 
     for entry in unlabeled:
-        key = _normalize_entry_dict_key(entry)
+        key = db.entry_key_from_mapping(entry)
         s = score_map.get(key)
         if not s:
             continue
@@ -235,6 +222,7 @@ def _get_chronological(unlabeled: List[dict], limit: int = 10) -> List[dict]:
 
 def get_smart_entries(limit: int = 30,
                       entry_type: Optional[Union[str, Sequence[str]]] = None,
+                      source_filter: Optional[str] = None,
                       profile_id: int = 1) -> List[dict]:
     """
     Get a mixed set of entries optimised for active learning for a profile.
@@ -250,8 +238,12 @@ def get_smart_entries(limit: int = 30,
 
     If no model exists, falls back to newest unlabeled (current behaviour).
     """
-    unlabeled = db.get_unlabeled_entries(limit=200, entry_type=entry_type,
-                                         profile_id=profile_id)
+    unlabeled = db.get_unlabeled_entries(
+        limit=200,
+        entry_type=entry_type,
+        source_filter=source_filter,
+        profile_id=profile_id,
+    )
     unlabeled = _dedupe_entries_preserve_order(unlabeled)
 
     if not unlabeled:
@@ -285,7 +277,7 @@ def get_smart_entries(limit: int = 30,
 
     for pool in [uncertain, conflicts, diverse, chronological]:
         for entry in pool:
-            key = _normalize_entry_dict_key(entry)
+            key = db.entry_key_from_mapping(entry)
             if key not in seen:
                 seen.add(key)
                 result.append(entry)
@@ -296,6 +288,7 @@ def get_smart_entries(limit: int = 30,
 def get_gemini_synthetic_batch_entries(
     limit: int = 80,
     entry_type: Optional[Union[str, Sequence[str]]] = None,
+    source_filter: Optional[str] = None,
     profile_id: int = 1,
 ) -> List[dict]:
     """Entries for Gemini synthetic batch: same smart pool as the Label page, prioritising
@@ -305,7 +298,10 @@ def get_gemini_synthetic_batch_entries(
     """
     lim = max(1, min(int(limit), 200))
     pool = get_smart_entries(
-        limit=max(120, lim * 2), entry_type=entry_type, profile_id=profile_id
+        limit=max(120, lim * 2),
+        entry_type=entry_type,
+        source_filter=source_filter,
+        profile_id=profile_id,
     )
 
     def rank(reason: str) -> int:

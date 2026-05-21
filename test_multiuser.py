@@ -94,10 +94,10 @@ def simulate_seismo_push(user_labels):
     """Simulate pushing labels to Seismo (last-write-wins per entry)."""
     global _seismo_labels
     existing_map = {
-        (l["entry_type"], l["entry_id"]): l for l in _seismo_labels
+        db.entry_key_from_mapping(l): l for l in _seismo_labels
     }
     for lbl in user_labels:
-        key = (lbl["entry_type"], lbl["entry_id"])
+        key = db.entry_key_from_mapping(lbl)
         existing = existing_map.get(key)
         if not existing or lbl["labeled_at"] >= existing.get("labeled_at", ""):
             existing_map[key] = lbl

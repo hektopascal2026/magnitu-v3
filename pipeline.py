@@ -739,7 +739,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
         "SELECT entry_type, entry_id, embedding FROM entries WHERE embedding IS NOT NULL"
     ).fetchall()
     for row in rows:
-        emb_map[(row["entry_type"], row["entry_id"])] = row["embedding"]
+        emb_map[db.entry_key_from_mapping(row)] = row["embedding"]
     conn.close()
 
     X_list = []
@@ -748,7 +748,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
     missing_embeddings = []
 
     for lbl in labeled:
-        key = (lbl["entry_type"], lbl["entry_id"])
+        key = db.entry_key_from_mapping(lbl)
         emb_bytes = emb_map.get(key)
         if emb_bytes:
             emb = bytes_to_embedding(emb_bytes, embedding_dim)
@@ -989,7 +989,7 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
         "SELECT entry_type, entry_id, embedding FROM entries WHERE embedding IS NOT NULL"
     ).fetchall()
     for row in rows:
-        emb_map[(row["entry_type"], row["entry_id"])] = row["embedding"]
+        emb_map[db.entry_key_from_mapping(row)] = row["embedding"]
     conn.close()
 
     embeddings = []
@@ -997,7 +997,7 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
     to_compute_indices = []
 
     for i, entry in enumerate(entries):
-        key = (entry["entry_type"], entry["entry_id"])
+        key = db.entry_key_from_mapping(entry)
         emb_bytes = emb_map.get(key)
         if emb_bytes:
             embeddings.append((i, bytes_to_embedding(emb_bytes, embedding_dim)))
@@ -1328,13 +1328,13 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
 
     # Build a lookup of transformer predictions keyed by (entry_type, entry_id)
     score_map = {
-        (s["entry_type"], s["entry_id"]): s["predicted_label"]
+        db.entry_key_from_mapping(s): s["predicted_label"]
         for s in scores
     }
 
     # Human labels override transformer predictions (profile-specific)
     human_labels = {
-        (lbl["entry_type"], lbl["entry_id"]): lbl["label"]
+        db.entry_key_from_mapping(lbl): lbl["label"]
         for lbl in db.get_all_labels(profile_id)
     }
 
@@ -1342,7 +1342,7 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
     scored_entries = []
     teacher_labels = []
     for entry in all_entries:
-        key = (entry["entry_type"], entry["entry_id"])
+        key = db.entry_key_from_mapping(entry)
         if key in human_labels:
             scored_entries.append(entry)
             teacher_labels.append(human_labels[key])

@@ -231,13 +231,9 @@ def _sync_pull_impl(
             remote_entries = {}
             remote_total = 0
 
-        type_specs = [
-            ("feed_item", "feed_items"),
-            ("email", "emails"),
-            ("lex_item", "lex_items"),
-            ("calendar_event", "calendar_events"),
-        ]
-        for idx, (entry_type, status_key) in enumerate(type_specs):
+        from magnitu.entry_sources import SEISMO_ENTRY_PULL_SPECS
+
+        for idx, (entry_type, status_key) in enumerate(SEISMO_ENTRY_PULL_SPECS):
             expected = int(remote_entries.get(status_key, 0) or 0)
             limit = max(1000, expected + 250)
             if progress_cb:
@@ -276,7 +272,7 @@ def _sync_pull_impl(
     else:
         if progress_cb:
             progress_cb(25, "Pulling latest entries...")
-        count = sync.pull_entries()
+        count = sync.pull_all_entry_types()
         embedding_rounds = 1
 
     if progress_cb:
@@ -374,10 +370,9 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
 
     if progress_cb:
         progress_cb(62, "Building explanations...")
-    score_by_key = {(s["entry_type"], s["entry_id"]): s for s in scores}
+    score_by_key = {db.entry_key_from_mapping(s): s for s in scores}
     for entry in all_entries:
-        key = (entry["entry_type"], entry["entry_id"])
-        score = score_by_key.get(key)
+        score = score_by_key.get(db.entry_key_from_mapping(entry))
         if not score:
             continue
         try:
@@ -604,21 +599,10 @@ async def profiles_page_redirect():
 
 # ─── Profile-scoped pages ─────────────────────────────────────────────────────
 
-def _entry_types_for_source(source: Optional[str]) -> Optional[List[str]]:
-    """Map a UI ``source`` filter to the underlying Seismo entry_types.
-
-    ``"lex"`` (Legislation tab) → Lex statutory texts **and** Leg parliamentary
-    calendar events (``lex_item`` + ``calendar_event``).
-    ``"news"`` (News tab) → RSS/Substack feed items **and** emails
-    (``feed_item`` + ``email``).
-    Anything else (``"all"`` or unknown) returns ``None`` for no filter.
-    """
-    s = (source or "").strip().lower()
-    if s == "lex":
-        return ["lex_item", "calendar_event"]
-    if s == "news":
-        return ["feed_item", "email"]
-    return None
+def _source_filter_for_ui(source: Optional[str]) -> Optional[str]:
+    """Map Label/Gemini ``source`` tab to db ``source_filter`` (``lex`` / ``news``)."""
+    from magnitu.entry_sources import normalize_source_filter
+    return normalize_source_filter(source)
 
 
 @app.get("/p/{slug}/", response_class=HTMLResponse)
@@ -626,9 +610,11 @@ async def labeling_page(request: Request, slug: str, source: str = "all"):
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
     ctx = _base_context(request, profile)
-    entry_types = _entry_types_for_source(source)
-    entries = sampler.get_smart_entries(limit=30, entry_type=entry_types,
-                                        profile_id=profile_id)
+    entries = sampler.get_smart_entries(
+        limit=30,
+        source_filter=_source_filter_for_ui(source),
+        profile_id=profile_id,
+    )
     ctx["source_filter"] = source
 
     for entry in entries:
@@ -722,7 +708,7 @@ async def gemini_batch_start(slug: str, request: Request):
     batch_limit = max(1, min(batch_limit, 100))
     replace_gemini = False
     source = str(body.get("source", "all")).strip().lower()
-    entry_type = _entry_types_for_source(source)
+    source_filter = _source_filter_for_ui(source)
     mode = str(body.get("mode", "single")).strip().lower()
     if mode not in ("single", "batch"):
         mode = "single"
@@ -742,7 +728,7 @@ async def gemini_batch_start(slug: str, request: Request):
             lambda cb: run_gemini_synthetic_batch_job(
                 profile_id,
                 batch_limit=batch_limit,
-                entry_type=entry_type,
+                source_filter=source_filter,
                 replace_gemini=replace_gemini,
                 mode=mode,
                 progress_cb=cb,
@@ -761,10 +747,11 @@ async def api_profile_entries(slug: str, source: str = "all", limit: int = 500):
     """JSON entries for the labeling queue (same sampling as the web UI). Used by magnitu-mini."""
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
-    entry_types = _entry_types_for_source(source)
     lim = max(1, min(int(limit), 500))
     entries = sampler.get_smart_entries(
-        limit=lim, entry_type=entry_types, profile_id=profile_id
+        limit=lim,
+        source_filter=_source_filter_for_ui(source),
+        profile_id=profile_id,
     )
     return {"entries": entries, "profile_slug": slug}
 
@@ -788,19 +775,16 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
     if view == "recent":
         entries = db.get_recent_entries(days=7)
         scored = pipeline.score_entries(entries, profile_id=profile_id)
-        all_labels = db.get_all_labeled_entry_keys(profile_id)
-        labeled_ids = set()
-        for e in entries:
-            if (e["entry_type"], e["entry_id"]) in all_labels:
-                labeled_ids.add((e["entry_type"], e["entry_id"]))
-        unlabeled_scored = [s for s in scored
-                            if (s["entry_type"], s["entry_id"]) not in labeled_ids]
+        labeled_ids = db.get_all_labeled_entry_keys(profile_id)
+        unlabeled_scored = [
+            s for s in scored
+            if db.entry_key_from_mapping(s) not in labeled_ids
+        ]
         unlabeled_scored.sort(key=lambda s: s["relevance_score"], reverse=True)
-        top_scored = unlabeled_scored[:30]
-        entry_map = {(e["entry_type"], e["entry_id"]): e for e in entries}
+        entry_map = {db.entry_key_from_mapping(e): e for e in entries}
         top_entries = []
-        for s in top_scored:
-            entry = entry_map.get((s["entry_type"], s["entry_id"]))
+        for s in unlabeled_scored[:30]:
+            entry = entry_map.get(db.entry_key_from_mapping(s))
             if not entry:
                 continue
             top_entries.append({
@@ -817,45 +801,39 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
     elif view == "mismatches":
         labeled_entries = db.get_labeled_entries(profile_id)
         scored = pipeline.score_entries(labeled_entries, profile_id=profile_id)
-        score_map = {(s["entry_type"], s["entry_id"]): s for s in scored}
-        top_entries = []
+        score_map = {db.entry_key_from_mapping(s): s for s in scored}
+        mismatch_pool = []
         for entry in labeled_entries:
-            key = (entry["entry_type"], entry["entry_id"])
+            key = db.entry_key_from_mapping(entry)
             s = score_map.get(key)
             if not s:
                 continue
             user_label = entry["user_label"]
-            predicted  = s["predicted_label"]
+            predicted = s["predicted_label"]
             if user_label != predicted:
-                top_entries.append({
+                mismatch_pool.append({
                     "entry": entry, "score": s,
                     "user_label": user_label, "match": False,
                 })
-        top_entries.sort(key=lambda x: x["score"]["relevance_score"], reverse=True)
-        ctx["top_entries"] = top_entries
-        ctx["total_mismatches"] = len(top_entries)
+        mismatch_pool.sort(key=lambda x: x["score"]["relevance_score"], reverse=True)
+        ctx["total_mismatches"] = len(mismatch_pool)
+        ctx["top_entries"] = mismatch_pool
         ctx["labeled_count"] = len(labeled_entries)
         ctx["correct_count"] = 0
         ctx["accuracy"] = None
 
     elif view == "predicted_noise":
-        def _entry_key(et, eid):
-            try:
-                return (et, int(eid))
-            except (TypeError, ValueError):
-                return (et, eid)
-
         entries = db.get_all_entries()
         scored = pipeline.score_entries(entries, profile_id=profile_id)
-        entry_map = {_entry_key(e["entry_type"], e["entry_id"]): e for e in entries}
+        entry_map = {db.entry_key_from_mapping(e): e for e in entries}
         labels_by_key = {}
         for lbl in db.get_all_labels_raw(profile_id):
-            labels_by_key[_entry_key(lbl["entry_type"], lbl["entry_id"])] = lbl["label"]
+            labels_by_key[db.entry_key_from_mapping(lbl)] = lbl["label"]
         noise_pool = []
         for s in scored:
             if s.get("predicted_label") != "noise":
                 continue
-            key = _entry_key(s["entry_type"], s["entry_id"])
+            key = db.entry_key_from_mapping(s)
             entry = entry_map.get(key)
             if not entry:
                 continue
@@ -878,30 +856,24 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
             return (tier, item["score"]["relevance_score"])
 
         noise_pool.sort(key=_noise_review_priority)
-        ctx["top_entries"] = noise_pool[:30]
         ctx["total_predicted_noise"] = len(noise_pool)
+        ctx["top_entries"] = noise_pool[:30]
         ctx["labeled_count"] = sum(1 for x in noise_pool if x["user_label"])
         ctx["correct_count"] = sum(1 for x in noise_pool if x["user_label"] == "noise")
         ctx["accuracy"] = None
 
     elif view == "all":
-        def _entry_key_all(et, eid):
-            try:
-                return (et, int(eid))
-            except (TypeError, ValueError):
-                return (et, eid)
-
         entries = db.get_all_entries()
         scored = pipeline.score_entries(entries, profile_id=profile_id)
-        entry_map = {_entry_key_all(e["entry_type"], e["entry_id"]): e for e in entries}
+        entry_map = {db.entry_key_from_mapping(e): e for e in entries}
         labels_by_key = {}
         for lbl in db.get_all_labels_raw(profile_id):
-            labels_by_key[_entry_key_all(lbl["entry_type"], lbl["entry_id"])] = lbl["label"]
+            labels_by_key[db.entry_key_from_mapping(lbl)] = lbl["label"]
 
         scored.sort(key=lambda s: s["relevance_score"], reverse=True)
         top_entries = []
         for s in scored[:30]:
-            key = _entry_key_all(s["entry_type"], s["entry_id"])
+            key = db.entry_key_from_mapping(s)
             entry = entry_map.get(key)
             if not entry:
                 continue

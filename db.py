@@ -8,7 +8,7 @@ Entries and embeddings are shared across all profiles (computed once).
 import re
 import sqlite3
 import json
-from typing import Optional, List, Union, Sequence
+from typing import Optional, List, Union, Sequence, Tuple, Any
 from datetime import datetime
 from config import DB_PATH, load_config, save_config
 
@@ -615,6 +615,27 @@ def clear_active_profile_if_deleted(deleted_profile_id: int) -> None:
 
 # ─── Entry operations ────────────────────────────────────────────────────────
 
+def entry_key(entry_type, entry_id) -> Tuple[str, Any]:
+    """
+    Canonical (entry_type, entry_id) for in-memory joins across entries,
+    scores, labels, and embeddings. Coerces numeric ids to int so 12345 and
+    "12345" match; normalizes entry_type to a stripped string.
+    """
+    et = str(entry_type or "").strip()
+    try:
+        eid = int(entry_id)
+    except (TypeError, ValueError):
+        eid = entry_id
+    return (et, eid)
+
+
+def entry_key_from_mapping(row) -> Tuple[str, Any]:
+    """Build entry_key from a dict or sqlite3.Row with entry_type / entry_id."""
+    if isinstance(row, dict):
+        return entry_key(row.get("entry_type"), row.get("entry_id"))
+    return entry_key(row["entry_type"], row["entry_id"])
+
+
 def upsert_entry(entry: dict):
     """Insert or update a cached entry from seismo.
     Invalidates cached embedding when text content changes."""
@@ -675,13 +696,19 @@ def upsert_entries(entries: List[dict]):
 
 def get_unlabeled_entries(limit: int = 30,
                           entry_type: Optional[Union[str, Sequence[str]]] = None,
+                          source_filter: Optional[str] = None,
                           profile_id: int = 1) -> List[dict]:
     """Get entries not yet labeled in this profile, newest first.
 
     ``entry_type`` accepts a single entry_type string, or a list/tuple of
-    entry_types (e.g. ``["lex_item", "calendar_event"]`` for legislation,
-    ``["feed_item", "email"]`` for news).
+    entry_types.
+
+    ``source_filter`` — ``lex`` (statutory + leg calendar + parl_press feeds),
+    ``news`` (RSS/email excluding leg feeds), or omitted for all types.
+    When set, ``entry_type`` is ignored.
     """
+    from magnitu.entry_sources import normalize_source_filter, sql_source_filter_clause
+
     conn = get_db()
     sql = """
         SELECT e.* FROM entries e
@@ -691,7 +718,12 @@ def get_unlabeled_entries(limit: int = 30,
         WHERE l.id IS NULL
     """
     params: list = [profile_id]
-    if entry_type:
+    sf = normalize_source_filter(source_filter)
+    if sf:
+        clause, clause_params = sql_source_filter_clause(sf)
+        sql += clause
+        params.extend(clause_params)
+    elif entry_type:
         if isinstance(entry_type, (list, tuple, set, frozenset)):
             types = [t for t in entry_type if t]
             if len(types) == 1:
@@ -708,19 +740,14 @@ def get_unlabeled_entries(limit: int = 30,
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    # One row per (entry_type, entry_id); tolerate type drift (int vs str id) from legacy/sync.
     out = []
     seen = set()
     for r in rows:
         d = dict(r)
-        try:
-            eid = int(d["entry_id"])
-        except (TypeError, ValueError, KeyError):
-            eid = d.get("entry_id")
-        k = (str(d.get("entry_type") or ""), eid)
+        k = entry_key_from_mapping(d)
         if k not in seen:
             seen.add(k)
-            d["entry_id"] = eid
+            d["entry_id"] = k[1]
             out.append(d)
     return out
 
@@ -870,14 +897,7 @@ def get_all_labeled_entry_keys(profile_id: int = 1) -> set:
         (profile_id,),
     ).fetchall()
     conn.close()
-    out = set()
-    for r in rows:
-        try:
-            eid = int(r["entry_id"])
-        except (TypeError, ValueError):
-            eid = r["entry_id"]
-        out.add((r["entry_type"], eid))
-    return out
+    return {entry_key_from_mapping(r) for r in rows}
 
 
 def get_label(entry_type: str, entry_id: int, profile_id: int = 1) -> Optional[str]:
@@ -1160,7 +1180,7 @@ def import_labels(labels_list: List[dict], profile_id: int = 1) -> dict:
             "SELECT entry_type, entry_id, label, updated_at FROM labels WHERE profile_id = ?",
             (profile_id,)
         ):
-            existing_map[(row["entry_type"], row["entry_id"])] = {
+            existing_map[entry_key_from_mapping(row)] = {
                 "label": row["label"], "updated_at": row["updated_at"] or ""
             }
 
@@ -1174,7 +1194,7 @@ def import_labels(labels_list: List[dict], profile_id: int = 1) -> dict:
                 continue
             reasoning = lbl.get("reasoning", "")
             label_src = (lbl.get("source") or lbl.get("label_source") or "").strip()
-            key = (entry_type, entry_id)
+            key = entry_key(entry_type, entry_id)
             existing = existing_map.get(key)
             if existing:
                 if lbl_updated > existing["updated_at"]:

@@ -530,7 +530,7 @@ def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
 
     # Build lookup of model scores keyed by (entry_type, entry_id)
     model_score_map = {
-        (s["entry_type"], s["entry_id"]): s["relevance_score"]
+        db.entry_key_from_mapping(s): s["relevance_score"]
         for s in full_scores
     }
 
@@ -544,7 +544,7 @@ def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
     paired_recipe = []
 
     for entry in entries:
-        key = (entry["entry_type"], entry["entry_id"])
+        key = db.entry_key_from_mapping(entry)
         if key not in model_score_map:
             continue
 
