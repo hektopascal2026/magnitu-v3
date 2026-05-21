@@ -18,20 +18,20 @@
         {% if view == 'recent' %}
             Highest-scored entries from the last 7 days that you haven't labeled yet. <strong>That's right</strong> accepts the model's class; <strong>That's wrong</strong> to pick another.
             {% if total_recent is defined %}
-                <span class="top-view-meta">{{ total_recent }} recent entries, {{ total_recent_unlabeled }} unlabeled{% if total_recent_unlabeled > top_page_limit %} (showing top {{ top_page_limit }}){% endif %}.</span>
+                <span class="top-view-meta">{{ total_recent }} recent entries, {{ total_recent_unlabeled }} unlabeled{% if total_recent_unlabeled > (top_page_limit|default(30)) %} (showing top {{ top_page_limit|default(30) }}){% endif %}.</span>
             {% endif %}
         {% elif view == 'mismatches' %}
             Entries where your label disagrees with the model's prediction. Use <strong>That's right</strong> if the model is correct, or <strong>That's wrong</strong> to set your label.
             {% if total_mismatches is defined %}
-                <span class="top-view-meta">{{ total_mismatches }} mismatch{{ 'es' if total_mismatches != 1 else '' }} found{% if total_mismatches > top_page_limit %} (showing {{ top_page_limit }}){% endif %}.</span>
+                <span class="top-view-meta">{{ total_mismatches }} mismatch{{ 'es' if total_mismatches != 1 else '' }} found{% if total_mismatches > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %}.</span>
             {% endif %}
         {% elif view == 'predicted_noise' %}
             Entries the model classifies as <strong>noise</strong>. <strong>That's right</strong> confirms noise; <strong>That's wrong</strong> if it should be lead, important, or background.
             {% if total_predicted_noise is defined %}
-                <span class="top-view-meta">{{ total_predicted_noise }} predicted as noise{% if total_predicted_noise > top_page_limit %} (showing {{ top_page_limit }}){% endif %}.</span>
+                <span class="top-view-meta">{{ total_predicted_noise }} predicted as noise{% if total_predicted_noise > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %}.</span>
             {% endif %}
         {% else %}
-            The {{ top_page_limit }} highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
+            The {{ top_page_limit|default(30) }} highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
         {% endif %}
     </p>
 

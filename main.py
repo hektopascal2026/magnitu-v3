@@ -53,6 +53,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+TOP_PAGE_LIMIT = 30
+
 app = FastAPI(title="Magnitu", version=VERSION)
 
 # Allow magnitu-mini (static HTML on another path/host) to call profile APIs
@@ -506,6 +508,7 @@ def _base_context(request: Request, profile: Optional[dict] = None) -> dict:
         "profile_accent_border": profile_accent_border,
         "gemini_persona": db.get_profile_gemini_persona(profile_id) if profile else None,
         "default_gemini_persona": DEFAULT_GEMINI_PERSONA,
+        "top_page_limit": TOP_PAGE_LIMIT,
     }
 
 
@@ -760,9 +763,6 @@ async def api_profile_entries(slug: str, source: str = "all", limit: int = 500):
 async def dashboard_page(slug: str):
     """Old path: overview is now the Model page."""
     return RedirectResponse("/p/{}/model".format(slug), status_code=302)
-
-
-TOP_PAGE_LIMIT = 30
 
 
 @app.get("/p/{slug}/top", response_class=HTMLResponse)
