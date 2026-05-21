@@ -59,6 +59,19 @@ Update:
 
   cd /path/to/your/magnitu-v3 && git pull
 
-Uninstall:
+Uninstall (macOS — full wipe, one command):
+
+  bash install/uninstall_mac.sh
+
+  Removes shortcuts, ~/Applications/magnitu3 (and other common clone paths),
+  ~/Library/Application Support/Magnitu, and logs. Type yes to confirm; shows
+  an alert when finished.
+
+  Send to another user: they can save install/uninstall_mac.sh and run:
+    bash ~/Downloads/uninstall_mac.sh
+  Or from an existing clone before deleting it:
+    cd ~/Applications/magnitu3 && bash install/uninstall_mac.sh
+
+Manual (clone only):
 
   rm -rf /path/to/your/clone
