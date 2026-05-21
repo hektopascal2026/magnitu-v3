@@ -121,7 +121,7 @@
 
                 {% set desc_trim = (entry.description or "")|trim %}
                 {% set cont_trim = (entry.content or "")|trim %}
-                {% set is_lex = entry.source_type and entry.source_type.startswith('lex') %}
+                {% set is_lex = entry.entry_type == 'calendar_event' or entry.entry_type == 'lex_item' or (entry.source_type and (entry.source_type.startswith('lex') or entry.source_type.startswith('leg_') or entry.source_type == 'parl_press')) %}
                 {% include "_entry_body.html" %}
 
                 {% if entry.source_name %}
