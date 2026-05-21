@@ -885,18 +885,30 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
         ctx["accuracy"] = None
 
     elif view == "all":
-        labeled_entries = db.get_labeled_entries(profile_id)
-        scored = pipeline.score_entries(labeled_entries, profile_id=profile_id)
-        score_map = {(s["entry_type"], s["entry_id"]): s for s in scored}
+        def _entry_key_all(et, eid):
+            try:
+                return (et, int(eid))
+            except (TypeError, ValueError):
+                return (et, eid)
+
+        entries = db.get_all_entries()
+        scored = pipeline.score_entries(entries, profile_id=profile_id)
+        entry_map = {_entry_key_all(e["entry_type"], e["entry_id"]): e for e in entries}
+        labels_by_key = {}
+        for lbl in db.get_all_labels_raw(profile_id):
+            labels_by_key[_entry_key_all(lbl["entry_type"], lbl["entry_id"])] = lbl["label"]
+
+        scored.sort(key=lambda s: s["relevance_score"], reverse=True)
         top_entries = []
-        for entry in labeled_entries:
-            key = (entry["entry_type"], entry["entry_id"])
-            s = score_map.get(key)
-            if not s:
+        for s in scored[:30]:
+            key = _entry_key_all(s["entry_type"], s["entry_id"])
+            entry = entry_map.get(key)
+            if not entry:
                 continue
-            user_label = entry["user_label"]
+            user_label = labels_by_key.get(key)
             top_entries.append({
-                "entry": entry, "score": s,
+                "entry": entry,
+                "score": s,
                 "user_label": user_label,
                 "match": user_label == s["predicted_label"] if user_label else None,
             })
