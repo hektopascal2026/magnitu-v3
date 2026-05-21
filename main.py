@@ -781,7 +781,7 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
     profile_id = profile["id"]
     ctx = _base_context(request, profile)
 
-    if view not in ("recent", "mismatches", "all"):
+    if view not in ("recent", "mismatches", "predicted_noise", "all"):
         view = "recent"
     ctx["view"] = view
 
@@ -833,8 +833,55 @@ async def top_page(request: Request, slug: str, view: str = "recent"):
                 })
         top_entries.sort(key=lambda x: x["score"]["relevance_score"], reverse=True)
         ctx["top_entries"] = top_entries
+        ctx["total_mismatches"] = len(top_entries)
         ctx["labeled_count"] = len(labeled_entries)
         ctx["correct_count"] = 0
+        ctx["accuracy"] = None
+
+    elif view == "predicted_noise":
+        def _entry_key(et, eid):
+            try:
+                return (et, int(eid))
+            except (TypeError, ValueError):
+                return (et, eid)
+
+        entries = db.get_all_entries()
+        scored = pipeline.score_entries(entries, profile_id=profile_id)
+        entry_map = {_entry_key(e["entry_type"], e["entry_id"]): e for e in entries}
+        labels_by_key = {}
+        for lbl in db.get_all_labels_raw(profile_id):
+            labels_by_key[_entry_key(lbl["entry_type"], lbl["entry_id"])] = lbl["label"]
+        noise_pool = []
+        for s in scored:
+            if s.get("predicted_label") != "noise":
+                continue
+            key = _entry_key(s["entry_type"], s["entry_id"])
+            entry = entry_map.get(key)
+            if not entry:
+                continue
+            user_label = labels_by_key.get(key)
+            noise_pool.append({
+                "entry": entry,
+                "score": s,
+                "user_label": user_label,
+                "match": user_label == "noise" if user_label else None,
+            })
+
+        def _noise_review_priority(item):
+            ul = item["user_label"]
+            if ul is None:
+                tier = 0
+            elif ul != "noise":
+                tier = 1
+            else:
+                tier = 2
+            return (tier, item["score"]["relevance_score"])
+
+        noise_pool.sort(key=_noise_review_priority)
+        ctx["top_entries"] = noise_pool[:30]
+        ctx["total_predicted_noise"] = len(noise_pool)
+        ctx["labeled_count"] = sum(1 for x in noise_pool if x["user_label"])
+        ctx["correct_count"] = sum(1 for x in noise_pool if x["user_label"] == "noise")
         ctx["accuracy"] = None
 
     elif view == "all":

@@ -1110,6 +1110,45 @@ kbd {
     border-left-color: #B0B0B0;
 }
 
+.noise-review-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.78rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #f0f4f8;
+    border: 1px solid #d0d7de;
+    margin-left: 4px;
+}
+
+.noise-review-model {
+    font-weight: 600;
+    color: #57606a;
+}
+
+.noise-review-pending {
+    color: #9a6700;
+    font-weight: 600;
+}
+
+.noise-review-confirmed,
+.noise-review-corrected {
+    color: #00aa00;
+    font-weight: 700;
+    font-size: 0.72rem;
+    margin-left: 4px;
+}
+
+.noise-review-yours {
+    font-weight: 600;
+    color: #24292f;
+}
+
+.noise-review-arrow {
+    color: #8c959f;
+}
+
 .mismatch-reviewed-tag {
     margin-left: 6px;
     color: #00aa00;
@@ -1188,6 +1227,7 @@ kbd {
     font-size: 12px;
 }
 
+.btn-agree-right,
 .btn-reclassify {
     padding: 4px 10px;
     font-size: 12px;
@@ -1198,6 +1238,16 @@ kbd {
     cursor: pointer;
     font-family: inherit;
     transition: all 0.1s;
+}
+
+.btn-agree-right {
+    background: #e8f5e9;
+    border-color: #2e7d32;
+    color: #1b5e20;
+}
+
+.btn-agree-right:hover {
+    box-shadow: 2px 2px 0px #2e7d32;
 }
 
 .btn-reclassify:hover {

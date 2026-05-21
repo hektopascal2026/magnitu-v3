@@ -16,19 +16,19 @@
     <!-- View Description -->
     <p class="section-desc">
         {% if view == 'recent' %}
-            Highest-scored entries from the last 7 days that you haven't labeled yet. Label these to validate the model on fresh data.
+            Highest-scored entries from the last 7 days that you haven't labeled yet. <strong>That's right</strong> accepts the model's class; <strong>That's wrong</strong> to pick another.
             {% if total_recent is defined %}
                 <span class="top-view-meta">{{ total_recent }} recent entries, {{ total_recent_unlabeled }} unlabeled.</span>
             {% endif %}
         {% elif view == 'mismatches' %}
-            Entries where your label disagrees with the model's prediction. Correcting these has the highest impact on model improvement.
+            Entries where your label disagrees with the model's prediction. Use <strong>That's right</strong> if the model is correct, or <strong>That's wrong</strong> to set your label.
             {% if total_mismatches is defined %}
                 <span class="top-view-meta">{{ total_mismatches }} mismatch{{ 'es' if total_mismatches != 1 else '' }} found.</span>
             {% endif %}
         {% elif view == 'predicted_noise' %}
-            Entries the model classifies as <strong>noise</strong>. Confirm with <strong>Noise</strong> or reclassify if the model is wrong — useful for cleaning up RSS fluff and reinforcing true negatives.
+            Entries the model classifies as <strong>noise</strong>. <strong>That's right</strong> confirms noise; <strong>That's wrong</strong> if it should be lead, important, or background.
             {% if total_predicted_noise is defined %}
-                <span class="top-view-meta">{{ total_predicted_noise }} predicted noise{{ '' if total_predicted_noise == 1 else '' }} in cache; showing up to 30 (unlabeled and disagreements first).</span>
+                <span class="top-view-meta">{{ total_predicted_noise }} predicted as noise; showing up to 30.</span>
             {% endif %}
         {% else %}
             The 30 highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
@@ -44,6 +44,8 @@
                     No unlabeled entries from the last 7 days. Pull new entries from Seismo, or check the <a href="/p/{{ profile.slug }}/top?view=all">all-time</a> view.
                 {% elif view == 'mismatches' %}
                     No mismatches found — the model agrees with all your labels. Nice!
+                {% elif view == 'predicted_noise' %}
+                    No entries predicted as noise. The model may be scoring everything as important or lead — label obvious fluff as <strong>noise</strong> on the labeling page, then retrain.
                 {% else %}
                     No entries scored. Pull entries from Seismo first.
                 {% endif %}
@@ -76,12 +78,13 @@
                 {% set e = item.entry %}
                 {% set s = item.score %}
                 <div class="entry-card {% if item.user_label %}labeled labeled-{{ item.user_label }}{% endif %} {% if item.match == false %}mismatch{% endif %}"
-                     data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}" data-predicted="{{ s.predicted_label }}">
+                     data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}"
+                     data-predicted="{{ s.predicted_label }}">
 
                     <!-- Header: source tag (lex only) left, rank|score box right -->
                     <div class="top-card-header">
                         <div class="top-card-header-left">
-                            {% if e.source_type and e.source_type.startswith('lex') %}
+                            {% if e.entry_type == 'calendar_event' or (e.source_type and (e.source_type.startswith('lex') or e.source_type.startswith('leg_') or e.source_type == 'parl_press')) %}
                                 <span class="entry-source-tag source-{{ e.source_type }}">{{ e.source_type }}</span>
                                 {% if e.source_category %}
                                     <span class="entry-category">{{ e.source_category }}</span>
@@ -92,6 +95,19 @@
                                     <span class="mismatch-yours">{{ item.user_label | replace('_', ' ') }}</span>
                                     <span class="mismatch-arrow">&rarr;</span>
                                     <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
+                                </span>
+                            {% elif view == 'predicted_noise' %}
+                                <span class="noise-review-badge">
+                                    <span class="noise-review-model">Model: noise</span>
+                                    {% if item.user_label %}
+                                        <span class="noise-review-arrow">&rarr;</span>
+                                        <span class="noise-review-yours">{{ item.user_label | replace('_', ' ') }}</span>
+                                        {% if item.user_label == 'noise' %}
+                                            <span class="noise-review-confirmed">Confirmed</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="noise-review-pending">Needs label</span>
+                                    {% endif %}
                                 </span>
                             {% endif %}
                         </div>
@@ -113,16 +129,22 @@
                     <!-- Description + body (e.g. eingereichter Text for lex) -->
                     {% set desc_trim = (e.description or "")|trim %}
                     {% set cont_trim = (e.content or "")|trim %}
-                    {% set is_lex = e.source_type and e.source_type.startswith('lex') %}
+                    {% set is_lex = e.entry_type == 'calendar_event' or (e.source_type and (e.source_type.startswith('lex') or e.source_type.startswith('leg_') or e.source_type == 'parl_press')) %}
                     {% set preview_desc = 200 %}
                     {% set preview_content = 400 %}
                     {% include "_entry_body.html" %}
 
-                    <!-- Footer: reclassify+why left, source+date right -->
+                    <!-- Footer: review actions + why left, source+date right -->
                     <div class="top-card-footer">
                         <div class="top-card-footer-left">
-                            <button class="btn-reclassify" title="Assign or change your label">{% if view == 'mismatches' %}Correct{% else %}Reclassify{% endif %}</button>
-                            <button class="btn-why" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}" title="Why did the model score this entry?">Why?</button>
+                            {% set needs_review = (not item.user_label) or (item.user_label != s.predicted_label) %}
+                            {% if needs_review %}
+                                <button type="button" class="btn-agree-right" title="The model's prediction is correct — save it as your label">That's right</button>
+                                <button type="button" class="btn-reclassify" title="The model is wrong — choose the correct label">That's wrong</button>
+                            {% else %}
+                                <button type="button" class="btn-reclassify" title="Change your label">Reclassify</button>
+                            {% endif %}
+                            <button type="button" class="btn-why" data-entry-type="{{ e.entry_type }}" data-entry-id="{{ e.entry_id }}" title="Why did the model score this entry?">Why?</button>
                         </div>
                         <div class="top-card-footer-right">
                             <span class="entry-source">{{ e.source_name or e.source_type }}</span>
@@ -176,8 +198,96 @@
         el.style.background = scoreColor(parseFloat(el.dataset.score));
     });
 
+    function postLabel(card, panel, label, onDone) {
+        var entryType = card.dataset.entryType || (panel && panel.querySelector('.label-btn') && panel.querySelector('.label-btn').dataset.entryType);
+        var entryId = card.dataset.entryId || (panel && panel.querySelector('.label-btn') && panel.querySelector('.label-btn').dataset.entryId);
+        if (!entryType || !entryId) return;
+        var formData = new FormData();
+        formData.append('entry_type', entryType);
+        formData.append('entry_id', entryId);
+        formData.append('label', label);
+        fetch(P + '/api/label', { method: 'POST', body: formData })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success) return;
+                if (onDone) onDone(label);
+            });
+    }
+
+    function afterLabelSaved(card, panel, label) {
+        var predicted = card.dataset.predicted;
+        if (panel) {
+            panel.querySelectorAll('.label-btn').forEach(function(b) {
+                b.classList.toggle('active', b.dataset.label === label);
+            });
+            setTimeout(function() { panel.style.display = 'none'; }, 300);
+        }
+        card.className = card.className.replace(/labeled-\S+/g, '');
+        if (!card.classList.contains('labeled')) card.classList.add('labeled');
+        card.classList.add('labeled-' + label);
+
+        if (currentView === 'recent') {
+            card.style.opacity = '0.4';
+            card.style.transition = 'opacity 0.3s';
+        }
+
+        if (currentView === 'predicted_noise') {
+            card.style.opacity = '0.4';
+            card.style.transition = 'opacity 0.3s';
+            var noiseBadge = card.querySelector('.noise-review-badge');
+            if (noiseBadge) {
+                if (label === 'noise') {
+                    noiseBadge.innerHTML =
+                        '<span class="noise-review-model">Model: noise</span>' +
+                        '<span style="color:#00aa00;font-weight:700;margin-left:6px;">Confirmed</span>';
+                } else {
+                    noiseBadge.innerHTML =
+                        '<span class="noise-review-model">Model: noise</span>' +
+                        '<span class="noise-review-arrow">&rarr;</span>' +
+                        '<span class="noise-review-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        '<span class="noise-review-corrected">Corrected</span>';
+                }
+            }
+        }
+
+        if (currentView === 'mismatches') {
+            card.classList.remove('mismatch');
+            card.classList.add('mismatch-reviewed');
+            card.style.opacity = '0.4';
+            card.style.transition = 'opacity 0.3s';
+            var badge = card.querySelector('.mismatch-badge');
+            if (badge) {
+                if (label === predicted) {
+                    badge.innerHTML = '<span style="color:#00aa00;font-weight:700;">Resolved — model was right</span>';
+                } else {
+                    badge.innerHTML =
+                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        '<span class="mismatch-arrow">&rarr;</span>' +
+                        '<span class="mismatch-model">' + (predicted || '').replace(/_/g, ' ') + '</span>' +
+                        '<span class="mismatch-reviewed-tag">Corrected</span>';
+                }
+            }
+        }
+
+        updateAccuracy();
+    }
+
     document.addEventListener('click', function(e) {
-        /* ── Reclassify toggle ── */
+        /* ── That's right: save the model's predicted label ── */
+        var agreeBtn = e.target.closest('.btn-agree-right');
+        if (agreeBtn) {
+            var card = agreeBtn.closest('.entry-card');
+            var panel = card.querySelector('.top-label-buttons');
+            var predicted = card.dataset.predicted;
+            if (!predicted) return;
+            document.querySelectorAll('.top-label-buttons').forEach(function(p) { p.style.display = 'none'; });
+            postLabel(card, panel, predicted, function(label) {
+                afterLabelSaved(card, panel, label);
+            });
+            return;
+        }
+
+        /* ── That's wrong / Reclassify: open label picker ── */
         var reclBtn = e.target.closest('.btn-reclassify');
         if (reclBtn) {
             var card = reclBtn.closest('.entry-card');
@@ -236,60 +346,12 @@
         var labelBtn = e.target.closest('.top-label-buttons .label-btn');
         if (!labelBtn) return;
 
-        var entryType = labelBtn.dataset.entryType;
-        var entryId = labelBtn.dataset.entryId;
         var label = labelBtn.dataset.label;
         var card = labelBtn.closest('.entry-card');
         var panel = labelBtn.closest('.top-label-buttons');
-        var predicted = card.dataset.predicted;
-
-        var formData = new FormData();
-        formData.append('entry_type', entryType);
-        formData.append('entry_id', entryId);
-        formData.append('label', label);
-
-        fetch(P + '/api/label', { method: 'POST', body: formData })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (!data.success) return;
-                panel.querySelectorAll('.label-btn').forEach(function(b) {
-                    b.classList.toggle('active', b.dataset.label === label);
-                });
-                card.className = card.className.replace(/labeled-\S+/g, '');
-                if (!card.classList.contains('labeled')) card.classList.add('labeled');
-                card.classList.add('labeled-' + label);
-
-                // In recent view, fade out labeled cards since they're "done"
-                if (currentView === 'recent') {
-                    card.style.opacity = '0.4';
-                    card.style.transition = 'opacity 0.3s';
-                }
-
-                // In mismatches view, any saved correction counts as reviewed
-                if (currentView === 'mismatches') {
-                    card.classList.remove('mismatch');
-                    card.classList.add('mismatch-reviewed');
-                    card.style.opacity = '0.4';
-                    card.style.transition = 'opacity 0.3s';
-                    var badge = card.querySelector('.mismatch-badge');
-                    if (badge) {
-                        if (label === predicted) {
-                            badge.innerHTML = '<span style="color:#00aa00;font-weight:700;">Resolved</span>';
-                        } else {
-                            var yours = label.replace(/_/g, ' ');
-                            var model = (predicted || '').replace(/_/g, ' ');
-                            badge.innerHTML =
-                                '<span class="mismatch-yours">' + yours + '</span>' +
-                                '<span class="mismatch-arrow">&rarr;</span>' +
-                                '<span class="mismatch-model">' + model + '</span>' +
-                                '<span class="mismatch-reviewed-tag">Corrected</span>';
-                        }
-                    }
-                }
-
-                setTimeout(function() { panel.style.display = 'none'; }, 300);
-                updateAccuracy();
-            });
+        postLabel(card, panel, label, function(saved) {
+            afterLabelSaved(card, panel, saved);
+        });
     });
 
     function updateAccuracy() {
