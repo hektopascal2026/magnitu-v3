@@ -513,13 +513,13 @@ body {
 
 .entry-source-tag {
     display: inline-block;
-    padding: 4px 10px;
-    font-size: 12px; /* small */
-    font-weight: 500;
-    border: 2px solid #000000;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    border: 1.5px solid #000000;
     background: #ffffff;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
     color: #000000;
 }
 
@@ -1073,12 +1073,6 @@ kbd {
     opacity: 0.7;
 }
 
-.mismatch-yours.mismatch-unlabeled {
-    background: #FFF3CD;
-    color: #000000;
-    border: 1.5px solid #000000;
-}
-
 /* Mismatch styling */
 .entry-card.mismatch {
     border-left: 5px solid #FF2C2C;
@@ -1097,6 +1091,13 @@ kbd {
 .mismatch-yours {
     padding: 2px 6px;
     background: #74C0FC;
+    border: 1.5px solid #000000;
+}
+
+.mismatch-unlabeled {
+    padding: 2px 6px;
+    background: #FFF3CD;
+    color: #000000;
     border: 1.5px solid #000000;
 }
 
