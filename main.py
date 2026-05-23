@@ -40,6 +40,7 @@ from magnitu.prompts import DEFAULT_GEMINI_PERSONA
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
 from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent, get_theme_colors
 from magnitu.entry_pills import entry_pill_texts
+from magnitu.time_display import format_seismo_timestamp, format_zurich_datetime
 from config import (
     get_config,
     save_config,
@@ -71,6 +72,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["entry_pill_texts"] = entry_pill_texts
+templates.env.filters["zurich_dt"] = format_zurich_datetime
 
 _TOUCH_ICON = BASE_DIR / "static" / "apple-touch-icon.png"
 _TOUCH_ICON_PRE = BASE_DIR / "static" / "apple-touch-icon-precomposed.png"
@@ -400,7 +402,9 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
             "model_uuid":        profile_info.get("model_uuid", ""),
             "model_description": profile_info.get("description", ""),
             "model_version":     model_info["version"],
-            "model_trained_at":  model_info.get("trained_at", ""),
+            "model_trained_at": format_seismo_timestamp(
+                model_info.get("trained_at", "")
+            ),
             "accuracy":          model_info.get("accuracy", 0.0),
             "f1_score":          model_info.get("f1_score", 0.0),
             "label_count":       model_info.get("label_count", 0),
@@ -1484,9 +1488,18 @@ async def sync_health(slug: str):
     last_pull = next((s for s in syncs if s["direction"] == "pull"), None)
     push_ok = last_push and not (last_push.get("details") or "").startswith("FAILED")
     pull_ok = last_pull and not (last_pull.get("details") or "").startswith("FAILED")
+
+    def _fmt_detail(row):
+        if not row:
+            return None
+        out = dict(row)
+        if out.get("synced_at"):
+            out["synced_at_display"] = format_zurich_datetime(out["synced_at"])
+        return out
+
     return {
-        "push": {"ok": push_ok, "detail": dict(last_push) if last_push else None},
-        "pull": {"ok": pull_ok, "detail": dict(last_pull) if last_pull else None},
+        "push": {"ok": push_ok, "detail": _fmt_detail(last_push)},
+        "pull": {"ok": pull_ok, "detail": _fmt_detail(last_pull)},
     }
 
 

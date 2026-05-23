@@ -169,7 +169,7 @@
                         <td>{{ (m.f1_score * 100) | round(1) }}%</td>
                         <td>{{ m.label_count }}</td>
                         <td>{{ m.feature_count }}</td>
-                        <td>{{ m.trained_at[:16] if m.trained_at else '' }}</td>
+                        <td>{{ m.trained_at | zurich_dt }}</td>
                         <td>{% if m.is_active %}Active{% endif %}</td>
                     </tr>
                 {% endfor %}
@@ -191,7 +191,7 @@
                         <td><span class="sync-dir sync-{{ s.direction }}">{{ s.direction }}</span></td>
                         <td>{{ s.items_count }}</td>
                         <td>{{ s.details }}</td>
-                        <td>{{ s.synced_at[:16] if s.synced_at else '' }}</td>
+                        <td>{{ s.synced_at | zurich_dt }}</td>
                     </tr>
                 {% endfor %}
             </tbody>

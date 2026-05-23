@@ -176,6 +176,19 @@ try:
 except Exception as e:
     fail(str(e))
 
+t = test("format_zurich_datetime converts UTC to CEST")
+try:
+    from magnitu.time_display import format_zurich_datetime, format_seismo_timestamp
+    # May 23 is CEST (UTC+2)
+    display = format_zurich_datetime("2026-05-23 12:28:45")
+    assert "14:28" in display, "expected 14:28 local, got {!r}".format(display)
+    assert "CEST" in display or "CET" in display
+    seismo = format_seismo_timestamp("2026-05-23 12:28:45")
+    assert seismo.startswith("2026-05-23 14:28"), seismo
+    ok()
+except Exception as e:
+    fail(str(e))
+
 t = test("deactivate_all_models")
 try:
     db.save_model_record(

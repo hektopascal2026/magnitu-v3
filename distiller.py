@@ -21,6 +21,7 @@ import numpy as np
 
 import db
 from config import MODELS_DIR, get_config  # get_config: global legal_signal_patterns only
+from magnitu.time_display import format_seismo_timestamp
 from pipeline import (
     load_active_model,
     get_feature_importance,
@@ -217,9 +218,15 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     keywords = _apply_floor_weights(keywords)
 
     # Build recipe
+    trained_raw = model_info.get("trained_at", "")
+    trained_at = format_seismo_timestamp(trained_raw)
+    if not trained_at:
+        from zoneinfo import ZoneInfo
+        trained_at = datetime.now(ZoneInfo("Europe/Zurich")).strftime("%Y-%m-%d %H:%M:%S")
+
     recipe = {
         "version": model_info["version"],
-        "trained_at": model_info.get("trained_at", datetime.now().isoformat()),
+        "trained_at": trained_at,
         "labels_used": model_info.get("label_count", 0),
         "metrics": {
             "accuracy": round(model_info.get("accuracy", 0), 4),
