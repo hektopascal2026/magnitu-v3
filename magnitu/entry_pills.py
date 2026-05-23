@@ -27,9 +27,9 @@ _CALENDAR_EVENT_TYPE_LABELS = {
 }
 
 _COUNCIL_LABELS = {
-    "NR": "Nationalrat",
-    "SR": "Ständerat",
-    "BR": "Bundesrat",
+    "NR": "NR",
+    "SR": "SR",
+    "BR": "BR",
 }
 
 _LEX_JURISDICTION = {
@@ -163,8 +163,8 @@ def _council_label(code: Optional[str]) -> str:
 
 
 def _calendar_event_pills(entry: dict) -> List[str]:
-    pills = [_calendar_event_type_label(entry.get("source_category"))]
+    type_label = _calendar_event_type_label(entry.get("source_category"))
     council = _council_label(entry.get("author"))
     if council:
-        pills.append(council)
-    return pills
+        return ["%s · %s" % (type_label, council)]
+    return [type_label]

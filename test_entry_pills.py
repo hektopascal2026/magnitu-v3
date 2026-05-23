@@ -148,7 +148,7 @@ def test_calendar_event():
         "source_category": "Motion",
         "author": "NR",
     })
-    if pills != ["Motion", "Nationalrat"]:
+    if pills != ["Motion · NR"]:
         fail("calendar: %r" % pills)
     else:
         ok()

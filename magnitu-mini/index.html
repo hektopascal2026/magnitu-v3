@@ -509,11 +509,11 @@ body {
     function calendarEventPillTexts(entry) {
         var raw = (entry.source_category || '').trim();
         var typeLabel = raw ? (calendarEventTypeLabels[raw] || raw) : 'Event';
-        var pills = [typeLabel];
-        var councilMap = { NR: 'Nationalrat', SR: 'Ständerat', BR: 'Bundesrat' };
         var code = (entry.author || '').trim();
-        if (code) pills.push(councilMap[code] || code);
-        return pills;
+        if (code) {
+            return [typeLabel + ' · ' + code];
+        }
+        return [typeLabel];
     }
 
     function escapeHtml(s) {
