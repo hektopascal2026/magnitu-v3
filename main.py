@@ -46,6 +46,8 @@ from config import (
     BASE_DIR,
     VERSION,
     MODELS_DIR,
+    DEFAULT_TRANSFORMER_MODEL,
+    EMBEDDING_STACK_GENERATION,
     suggested_recipe_top_keywords,
     RECIPE_TOP_KEYWORDS_LABELS_FOR_MAX,
     PROFILE_TRAINING_SETTINGS_KEYS,
@@ -1575,6 +1577,8 @@ async def stats(slug: str):
         "models_count":       len(db.get_all_models(profile_id)),
         "gpu_available":      gpu_available,
         "gpu_enabled":        config.get("use_gpu", True),
+        "embedding_stack_generation": config.get("embedding_stack_generation", ""),
+        "has_active_model": db.get_active_model(profile_id) is not None,
     }
 
 
@@ -1661,6 +1665,7 @@ async def update_settings(request: Request):
     new_transformer_name = config.get("transformer_model_name", "")
     if new_transformer_name != old_transformer_name and old_transformer_name:
         db.invalidate_all_embeddings()
+        db.deactivate_all_models()
         pipeline.invalidate_embedder_cache()
 
     if cleaned_patterns != old_legal_patterns:
@@ -1695,13 +1700,27 @@ async def compute_embeddings():
 def _migrate_config():
     cfg = get_config()
     changed = False
-    if cfg.get("transformer_model_name") == "distilroberta-base":
+    needs_reembed = False
+    legacy_models = ("distilroberta-base", "xlm-roberta-base")
+    if cfg.get("transformer_model_name") in legacy_models:
         import logging
         logging.getLogger(__name__).info(
-            "Migrating transformer model: distilroberta-base → xlm-roberta-base"
+            "Migrating transformer model: %s → %s",
+            cfg.get("transformer_model_name"),
+            DEFAULT_TRANSFORMER_MODEL,
         )
-        cfg["transformer_model_name"] = "xlm-roberta-base"
+        cfg["transformer_model_name"] = DEFAULT_TRANSFORMER_MODEL
         changed = True
+        needs_reembed = True
+    if cfg.get("embedding_stack_generation") != EMBEDDING_STACK_GENERATION:
+        import logging
+        logging.getLogger(__name__).info(
+            "Embedding stack generation changed (%s → %s); re-embedding required.",
+            cfg.get("embedding_stack_generation"), EMBEDDING_STACK_GENERATION,
+        )
+        cfg["embedding_stack_generation"] = EMBEDDING_STACK_GENERATION
+        changed = True
+        needs_reembed = True
     content_cap = pipeline.CONTENT_CAP
     if cfg.get("embedding_content_cap") != content_cap:
         import logging
@@ -1711,9 +1730,12 @@ def _migrate_config():
         )
         cfg["embedding_content_cap"] = content_cap
         changed = True
+        needs_reembed = True
     if changed:
         save_config(cfg)
+    if needs_reembed:
         db.invalidate_all_embeddings()
+        db.deactivate_all_models()
         pipeline.invalidate_embedder_cache()
 
 

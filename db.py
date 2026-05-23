@@ -1050,6 +1050,14 @@ def invalidate_all_embeddings():
     conn.close()
 
 
+def deactivate_all_models():
+    """Clear active model flags (e.g. after embedding stack migration)."""
+    conn = get_db()
+    conn.execute("UPDATE models SET is_active = 0")
+    conn.commit()
+    conn.close()
+
+
 # ─── Model operations ────────────────────────────────────────────────────────
 
 def save_model_record(version: int, accuracy: float, f1: float, precision: float,

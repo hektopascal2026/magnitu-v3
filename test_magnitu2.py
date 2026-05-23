@@ -84,6 +84,7 @@ try:
     assert "embedding_dim" in cfg
     assert cfg["model_architecture"] == "transformer"
     assert cfg["embedding_dim"] == 768
+    assert "embedding_stack_generation" in cfg
     assert "discovery_lead_blend" in cfg
     assert cfg.get("discovery_lead_blend", 0) == 0.0
     ok()
@@ -171,6 +172,24 @@ t = test("invalidate_all_embeddings")
 try:
     db.invalidate_all_embeddings()
     assert db.get_embedding_count() == 0
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("deactivate_all_models")
+try:
+    db.save_model_record(
+        version=9999, accuracy=0.5, f1=0.5, precision=0.5, recall=0.5,
+        label_count=10, feature_count=768, model_path="/tmp/unused.joblib",
+        architecture="transformer", profile_id=1,
+    )
+    assert db.get_active_model(1) is not None
+    db.deactivate_all_models()
+    assert db.get_active_model(1) is None
+    conn = db.get_db()
+    conn.execute("DELETE FROM models WHERE version = 9999")
+    conn.commit()
+    conn.close()
     ok()
 except Exception as e:
     fail(str(e))
@@ -318,6 +337,16 @@ try:
     emb_bytes = pipeline.embed_entries(test_entries[:2])
     assert len(emb_bytes) == 2
     assert all(len(b) == 768 * 4 for b in emb_bytes)
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("_embedding_input_text adds passage prefix for E5")
+try:
+    txt = pipeline._embedding_input_text("Hello world", "intfloat/multilingual-e5-base")
+    assert txt.startswith("passage: ")
+    plain = pipeline._embedding_input_text("Hello", "xlm-roberta-base")
+    assert not plain.startswith("passage:")
     ok()
 except Exception as e:
     fail(str(e))

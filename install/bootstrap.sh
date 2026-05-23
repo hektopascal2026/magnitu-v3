@@ -175,8 +175,9 @@ if [ -z "$SKIP_CONFIG" ]; then
   "auto_train_after_n_labels": 10,
   "alert_threshold": 0.75,
   "model_architecture": "transformer",
-  "transformer_model_name": "xlm-roberta-base",
+  "transformer_model_name": "intfloat/multilingual-e5-base",
   "embedding_dim": 768,
+  "embedding_stack_generation": "e5-v1",
   "discovery_lead_blend": 0.0
 }
 CONF

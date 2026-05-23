@@ -3,11 +3,11 @@ ML pipeline for Magnitu.
 
 Two architectures behind the same interface:
 - "tfidf":       TF-IDF + Logistic Regression (classic fallback + recipe distiller)
-- "transformer": Cached XLM-RoBERTa embeddings + MLP classifier (default)
+- "transformer": Cached multilingual E5 embeddings + LogReg head (default)
 
 The transformer path computes mean-pooled embeddings once at sync time and
 stores them in the DB.  Training and scoring use these cached embeddings with
-a lightweight MLP classifier — so labeling stays snappy.  The TF-IDF path is
+a regularized linear classifier — so labeling stays snappy.  The TF-IDF path is
 kept as a fallback and is used by the recipe distiller for knowledge
 distillation.
 """
@@ -19,7 +19,6 @@ import pandas as pd
 from pathlib import Path
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -33,7 +32,11 @@ from sklearn.metrics import (
 from typing import Optional, List, Tuple, Dict
 
 import db
-from config import MODELS_DIR, get_config
+from config import (
+    DEFAULT_TRANSFORMER_MODEL,
+    MODELS_DIR,
+    get_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,17 +226,18 @@ def logits_for_classifier_head(clf, X) -> np.ndarray:
 
     Sklearn ``Pipeline`` does not always expose ``decision_function`` even when
     the final step supports it (depends on version), so we unwrap known
-    Magnitu layouts explicitly.  For the transformer path the head is an
-    ``MLPClassifier`` which has no ``decision_function`` — we fall back to
-    ``log(predict_proba)`` in that case (see ``_step_logits``).
+    Magnitu layouts explicitly.
     """
     if hasattr(clf, "_pipeline"):
         return logits_for_classifier_head(clf._pipeline, X)
     if hasattr(clf, "named_steps"):
         steps = clf.named_steps
-        if "mlp" in steps and "scaler" in steps:
+        if "scaler" in steps:
             scaled = steps["scaler"].transform(X)
-            return _step_logits(steps["mlp"], scaled)
+            if "classifier" in steps:
+                return _step_logits(steps["classifier"], scaled)
+            if "mlp" in steps:
+                return _step_logits(steps["mlp"], scaled)
         if "classifier" in steps and "features" in steps:
             Xf = steps["features"].transform(X)
             return _step_logits(steps["classifier"], Xf)
@@ -275,6 +279,82 @@ def _fit_temperature_scalar(
             best_nll = nll
             best_t = float(t)
     return best_t
+
+
+def _oof_fold_count(n_train: int, min_class_count: int) -> int:
+    """Stratified fold count for OOF calibration on the training fold."""
+    if n_train < 15 or min_class_count < 2:
+        return 0
+    folds = min(5, min_class_count)
+    if n_train < 50:
+        folds = min(folds, 3)
+    return folds if folds >= 2 else 0
+
+
+def _transformer_fit_kwargs(sample_weight) -> dict:
+    """Build sklearn fit kwargs for the transformer LogReg head."""
+    if sample_weight is None:
+        return {}
+    sw = np.asarray(sample_weight, dtype=np.float64)
+    if len(sw) == 0 or float(np.std(sw)) <= 1e-6:
+        return {}
+    return {"classifier__sample_weight": sw}
+
+
+def build_transformer_head_pipeline() -> Pipeline:
+    """StandardScaler + balanced LogReg on frozen embedding vectors."""
+    return Pipeline([
+        ("scaler", StandardScaler()),
+        ("classifier", LogisticRegression(
+            C=1.0,
+            class_weight="balanced",
+            max_iter=1000,
+            solver="lbfgs",
+            random_state=42,
+        )),
+    ])
+
+
+def _collect_oof_logits(
+    X: np.ndarray,
+    y_list: List[str],
+    sample_weight,
+    label_encoder,
+    n_folds: int,
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Out-of-fold logits on the training fold for stable temperature scaling.
+    """
+    from sklearn.model_selection import StratifiedKFold
+
+    y_enc = label_encoder.transform(y_list)
+    n_samples = len(y_enc)
+    sw_arr = None
+    if sample_weight is not None and len(sample_weight) == n_samples:
+        sw_arr = np.asarray(sample_weight, dtype=np.float64)
+
+    oof_logits = [None] * n_samples
+    oof_y = [None] * n_samples
+
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    for train_idx, val_idx in skf.split(X, y_enc):
+        pipe = build_transformer_head_pipeline()
+        fit_kwargs = _transformer_fit_kwargs(
+            sw_arr[train_idx] if sw_arr is not None else None
+        )
+        pipe.fit(X[train_idx], y_enc[train_idx], **fit_kwargs)
+        logits_val = logits_for_classifier_head(pipe, X[val_idx])
+        for j, vi in enumerate(val_idx):
+            oof_logits[vi] = logits_val[j]
+            oof_y[vi] = y_list[vi]
+
+    valid_idx = [i for i in range(n_samples) if oof_logits[i] is not None]
+    if not valid_idx:
+        return np.array([]), []
+    return (
+        np.array([oof_logits[i] for i in valid_idx]),
+        [oof_y[i] for i in valid_idx],
+    )
 
 
 def classifier_probabilities(
@@ -361,7 +441,7 @@ def _get_embedder():
     from transformers import AutoTokenizer, AutoModel
 
     config = get_config()
-    model_name = config.get("transformer_model_name", "xlm-roberta-base")
+    model_name = config.get("transformer_model_name", DEFAULT_TRANSFORMER_MODEL)
 
     logger.info("Loading transformer model: %s", model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -402,17 +482,53 @@ def release_embedder():
         logger.info("Transformer model released from memory.")
 
 
-def compute_embeddings(texts: List[str], batch_size: int = 8) -> np.ndarray:
+def _model_uses_passage_prefix(model_name: str) -> bool:
+    """E5-family models expect a passage: prefix for document embedding."""
+    name = (model_name or "").lower()
+    return "e5" in name
+
+
+def _embedding_input_text(text: str, model_name: Optional[str] = None) -> str:
+    """Apply model-specific input formatting at embed time (not TF-IDF/recipe)."""
+    if model_name is None:
+        model_name = get_config().get("transformer_model_name", DEFAULT_TRANSFORMER_MODEL)
+    body = text or ""
+    if _model_uses_passage_prefix(model_name) and not body.startswith("passage:"):
+        return "passage: " + body
+    return body
+
+
+def _embedding_runtime_settings():
+    """Resolve max tokens and batch size from config."""
+    config = get_config()
+    model_name = config.get("transformer_model_name", DEFAULT_TRANSFORMER_MODEL)
+    try:
+        max_length = int(config.get("embedding_max_tokens", EMBEDDING_MAX_LENGTH))
+    except (TypeError, ValueError):
+        max_length = EMBEDDING_MAX_LENGTH
+    max_length = max(64, min(512, max_length))
+    try:
+        batch_size = int(config.get("embedding_batch_size", 0) or 0)
+    except (TypeError, ValueError):
+        batch_size = 0
+    if batch_size <= 0:
+        batch_size = 4 if max_length >= 512 else 8
+    return model_name, max_length, batch_size
+
+
+def compute_embeddings(texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
     """
     Compute mean-pooled embeddings for a list of texts using the transformer.
     Returns ndarray of shape (len(texts), embedding_dim).
-    Batch size kept small (8) and max_length capped at 256 to limit memory.
 
-    Mean pooling averages all non-padding token embeddings, producing better
-    representations than [CLS] alone for models like XLM-RoBERTa that weren't
-    trained with a dedicated [CLS] objective.
+    Mean pooling averages all non-padding token embeddings.  E5 inputs receive
+    a ``passage:`` prefix at embed time only.
     """
     import torch
+
+    model_name, max_length, default_batch = _embedding_runtime_settings()
+    if batch_size is None:
+        batch_size = default_batch
 
     embedder = _get_embedder()
     tokenizer = embedder["tokenizer"]
@@ -421,12 +537,14 @@ def compute_embeddings(texts: List[str], batch_size: int = 8) -> np.ndarray:
 
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i:i + batch_size]
+        batch_texts = [
+            _embedding_input_text(t, model_name) for t in texts[i:i + batch_size]
+        ]
         encoded = tokenizer(
             batch_texts,
             padding=True,
             truncation=True,
-            max_length=256,
+            max_length=max_length,
             return_tensors="pt",
         ).to(device)
 
@@ -466,7 +584,8 @@ def invalidate_embedder_cache():
     _embedder = None
 
 
-CONTENT_CAP = 1000
+CONTENT_CAP = 3000
+EMBEDDING_MAX_LENGTH = 512
 SOURCE_NAME_CAP = 120
 SOURCE_CATEGORY_CAP = 80
 LEGAL_SIGNAL_CAP = 8  # max distinct signals to prepend per entry
@@ -523,10 +642,10 @@ def _build_entry_text(entry: dict, legal_patterns: Optional[List[str]] = None) -
     """
     Build text for embedding/scoring from an entry's fields.
 
-    Title is repeated so it dominates the [CLS] embedding even for entries
-    with long content.  Content is capped at CONTENT_CAP chars so a 3000-
-    char government press release doesn't push the title out of the
-    tokenizer's 256-token window.  This makes embeddings comparable across
+    Title is repeated so it dominates the embedding even for entries with long
+    content.  Content is capped at CONTENT_CAP chars so a long government press
+    release doesn't push the title out of the tokenizer window.  This makes
+    embeddings comparable across
     sources that provide wildly different amounts of text (e.g. a Bund
     Medienmitteilung vs. an SRF teaser).
 
@@ -802,7 +921,7 @@ class _LabelDecodingClassifier:
 
 
 def _train_transformer(profile_id: int = 1) -> dict:
-    """Train an MLP classifier on cached transformer embeddings for a profile."""
+    """Train a LogReg classifier on cached transformer embeddings for a profile."""
     config = db.get_effective_config(profile_id)
     min_labels = config.get("min_labels_to_train", 20)
     embedding_dim = config.get("embedding_dim", 768)
@@ -888,109 +1007,48 @@ def _train_transformer(profile_id: int = 1) -> dict:
             int(round(100.0 * te / (tr + te))),
         )
 
-    # Hold out part of the training fold for temperature scaling (kept out of oversampling)
-    X_tr_raw, y_tr_raw = X_train, y_train
-    sw_tr = sw_train
-    X_val, y_val = None, None
-    if min_class_count >= 2 and len(X_train) >= 30:
-        try:
-            xtr, xv, ytr, yv, sw_tr_new, _sw_v = train_test_split(
-                X_train, y_train, sw_train,
-                test_size=0.15, stratify=y_train, random_state=43,
-            )
-            if len(xv) >= 5:
-                X_tr_raw, X_val = xtr, xv
-                y_tr_raw, y_val = ytr, yv
-                sw_tr = sw_tr_new
-        except ValueError:
-            pass
-
-    # Fold per-sample weights into the training set via replication.  MLPClassifier
-    # doesn't support sample_weight, so we express "this label matters more" by
-    # letting it appear more often.  Capped at 5× to keep training tractable.
-    if sw_tr is not None and len(sw_tr) == len(y_tr_raw) and len(sw_tr) > 0:
-        w_arr = np.asarray(sw_tr, dtype=np.float64)
-        w_min = max(float(np.min(w_arr)), 1e-6)
-        reps = np.clip(np.round(w_arr / w_min).astype(int), 1, 5)
-    else:
-        reps = np.ones(len(y_tr_raw), dtype=int)
-
-    if np.any(reps > 1):
-        X_rep = []
-        y_rep = []
-        X_tr_arr = np.asarray(X_tr_raw)
-        for i in range(len(y_tr_raw)):
-            n = int(reps[i])
-            for _ in range(n):
-                X_rep.append(X_tr_arr[i])
-                y_rep.append(y_tr_raw[i])
-        X_tr_raw = np.array(X_rep)
-        y_tr_raw = y_rep
-
-    # Oversample minority classes so the MLP sees equal representation
-    # (MLPClassifier doesn't support class_weight or sample_weight)
-    from collections import Counter
-    train_counts = Counter(y_tr_raw)
-    max_count = max(train_counts.values())
-    rng = np.random.RandomState(42)
-
-    X_balanced = list(X_tr_raw)
-    y_balanced = list(y_tr_raw)
-    for cls, count in train_counts.items():
-        if count < max_count:
-            cls_indices = [i for i, label in enumerate(y_tr_raw) if label == cls]
-            extra = rng.choice(cls_indices, size=max_count - count, replace=True)
-            for idx in extra:
-                X_balanced.append(X_tr_raw[idx])
-                y_balanced.append(y_tr_raw[idx])
-    X_train_bal = np.array(X_balanced)
-    y_train_bal = y_balanced
-
-    # Encode string labels to integers for MLP (early_stopping + string labels
-    # triggers a numpy isnan bug in some sklearn versions)
     from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder()
     le.fit(CLASSES)
-    y_train_enc = le.transform(y_train_bal)
+    y_train_enc = le.transform(y_train)
+    fit_kwargs = _transformer_fit_kwargs(sw_train)
 
-    clf_pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("mlp", MLPClassifier(
-            hidden_layer_sizes=(256,),
-            activation="relu",
-            max_iter=500,
-            early_stopping=True,
-            validation_fraction=0.15,
-            n_iter_no_change=15,
-            random_state=42,
-        )),
-    ])
-    clf_pipeline.fit(X_train_bal, y_train_enc)
-
-    # Wrap in a thin adapter that decodes integer predictions back to strings
-    # so the rest of the codebase (scoring, explainer) works unchanged
-    clf = _LabelDecodingClassifier(clf_pipeline, le)
-
-    # Temperature scaling on validation logits (matches production scoring)
-    class_names_fit = clf.classes_.tolist()
-    if X_val is not None and len(X_val) >= 3:
-        logits_val = logits_for_classifier_head(clf, X_val)
-        temperature = _fit_temperature_scalar(
-            logits_val, np.array(y_val), class_names_fit
+    n_folds = _oof_fold_count(len(y_train), int(min_class_count))
+    class_names_fit = le.classes_.tolist()
+    oof_samples = 0
+    if n_folds >= 2:
+        oof_logits, oof_y = _collect_oof_logits(
+            X_train, y_train, sw_train, le, n_folds
         )
-        cal_note = "temperature T={:.3f} fit on {} validation samples".format(
-            temperature, len(X_val)
-        )
+        oof_samples = len(oof_y)
+        if oof_samples >= 3:
+            temperature = _fit_temperature_scalar(
+                oof_logits, np.array(oof_y), class_names_fit
+            )
+            cal_note = "temperature T={:.3f} fit on {} OOF samples ({} folds)".format(
+                temperature, oof_samples, n_folds
+            )
+        else:
+            temperature = 1.0
+            cal_note = "temperature T=1.0 (OOF degenerate; calibration inactive)"
     else:
         temperature = 1.0
-        cal_note = "temperature T=1.0 (no validation slice; calibration inactive)"
+        cal_note = "temperature T=1.0 (too few samples for OOF; calibration inactive)"
 
     cal_dict = {
         "version": 1,
         "method": "temperature",
+        "calibration_fit": "oof" if oof_samples >= 3 else "none",
+        "oof_folds": n_folds if oof_samples >= 3 else 0,
+        "oof_samples": oof_samples,
         "temperature": temperature,
         "class_names": class_names_fit,
     }
+
+    clf_pipeline = build_transformer_head_pipeline()
+    clf_pipeline.fit(X_train, y_train_enc, **fit_kwargs)
+
+    clf = _LabelDecodingClassifier(clf_pipeline, le)
 
     # Evaluate on held-out test using the same probabilities as scoring
     version = db.get_next_model_version(profile_id)
@@ -1049,7 +1107,7 @@ MAX_ONTHEFLY_EMBEDDINGS = 10
 
 
 def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
-    """Score entries using cached embeddings + MLP classifier.
+    """Score entries using cached embeddings + LogReg classifier.
 
     On-the-fly embedding computation is capped at MAX_ONTHEFLY_EMBEDDINGS so
     that page loads stay fast.  Entries beyond the cap are silently omitted

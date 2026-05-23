@@ -76,6 +76,11 @@ DB_PATH = DATA_DIR / "magnitu.db"
 MODELS_DIR = DATA_DIR / "models"
 MODELS_DIR.mkdir(exist_ok=True)
 
+# Default HuggingFace embedding backbone (multilingual E5, 768-D).
+DEFAULT_TRANSFORMER_MODEL = "intfloat/multilingual-e5-base"
+# Bump when backbone, prefix rules, or content/token caps change (triggers re-embed).
+EMBEDDING_STACK_GENERATION = "e5-v1"
+
 # Defaults
 DEFAULTS = {
     "seismo_url": "http://localhost/seismo_0.5/index.php",
@@ -86,8 +91,11 @@ DEFAULTS = {
     "alert_threshold": 0.75,
     # Transformer settings (cached embeddings + classifier head)
     "model_architecture": "transformer",     # "tfidf" or "transformer"
-    "transformer_model_name": "xlm-roberta-base",
+    "transformer_model_name": DEFAULT_TRANSFORMER_MODEL,
     "embedding_dim": 768,
+    "embedding_stack_generation": EMBEDDING_STACK_GENERATION,
+    "embedding_max_tokens": 512,
+    "embedding_content_cap": 3000,
     "use_gpu": False,  # Use CUDA/MPS when available for embeddings
     # Blend toward investigation_lead in pushed relevance_score (0 = off, max 0.25).
     "discovery_lead_blend": 0.0,

@@ -7,7 +7,7 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
 
 ## Current stack
 
-- **Local model**: transformer embeddings (`xlm-roberta-base` by default) + MLP classifier
+- **Local model**: transformer embeddings (`intfloat/multilingual-e5-base` by default) + LogReg classifier
 - **Seismo runtime**: keyword recipe evaluated in PHP (distilled from local model via knowledge distillation)
 - **Data sync**: pull **entries** from global mothership Settings; pull **labels** from each profile’s satellite (or mothership if satellite URL/key blank); push scores/recipe/labels per profile
 - **Multi-profile**: multiple topic profiles (e.g. security, digital policy) each with their own labels, model, and push target — sharing one entry pool
@@ -32,7 +32,7 @@ Release **3.x** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - **Full Sync**: source-by-source backfill + repeated embedding passes until coverage is complete
   - Live progress bar (phase label + percentage) for sync and push
 - **Scoring quality**
-  - **Temperature calibration**: probabilities are fit on a held-out validation slice so they are less overconfident before being pushed
+  - **Temperature calibration**: probabilities are fit via out-of-fold logits on the training fold so they are less overconfident before being pushed
   - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; the embedding is invalidated when those fields change on sync
   - **Lead discovery blend** (optional, 0–0.25): gently emphasises `investigation_lead` probability in the relevance score pushed to Seismo
 - **Advanced training knobs** (Settings → Advanced training, all opt-in)
@@ -190,7 +190,7 @@ Settings are split into **global** (apply to every profile) and **per-profile**.
 ### Global (applies to all profiles)
 - **Mothership Seismo URL + API key** — where entries are pulled from
 - **Model architecture** — `transformer` or `tfidf`
-- **Transformer model name** — HuggingFace model id (default `xlm-roberta-base`)
+- **Transformer model name** — HuggingFace model id (default `intfloat/multilingual-e5-base`)
 - **GPU toggle** — CUDA/MPS acceleration when available
 - **Legal-signal patterns** — shared across profiles (they are baked into the same cached embeddings for every entry)
 
@@ -241,7 +241,7 @@ Minimum weight after unlimited decay.
 - `0.5` = "soft recency" — decay just nudges priorities, everything still counts substantially.
 
 **Reasoning-weight boost** — default `1.0` (off), range `0.0 – 5.0`  
-Multiplier for labels that carry a written reasoning note. Labels are replicated (for MLP) or `sample_weight`-ed (for TF-IDF) by this factor.
+Multiplier for labels that carry a written reasoning note. Labels receive `sample_weight` on the transformer and TF-IDF paths by this factor.
 - `1.0` = off; `1.3 – 1.5` = gentle boost (recommended starting point); `2.0` = strong; above `3.0` = experimental.
 - **Heuristic**: if a minority of your labels have reasoning (say 10–30%), you can afford a stronger boost. If most labels have reasoning, stay near `1.0` — the boost stops being informative.
 - The model never reads the reasoning text; only the *presence* of reasoning changes the label's weight.

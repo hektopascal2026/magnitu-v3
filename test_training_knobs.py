@@ -302,16 +302,10 @@ except Exception as e:
     fail(str(e))
 
 
-# ─── Full MLP calibration branch (regression for MLPClassifier bug) ────
-# Previous tests trained on tiny (6-label) sets that skipped the
-# calibration branch entirely.  That's why the AttributeError on
-# MLPClassifier.decision_function only surfaced in real-world training
-# with hundreds of labels.  This test force-enters that branch by
-# pre-populating 60 fake embeddings so pipeline.train() never calls the
-# real transformer embedder and runs in under a second.
-print("\n=== full calibration branch with MLP head ===")
+# ─── Full OOF calibration branch (transformer LogReg head) ────
+print("\n=== full calibration branch with LogReg head ===")
 
-t("transformer train runs calibration with >=30 train-fold samples")
+t("transformer train runs OOF calibration with >=15 train-fold samples")
 try:
     import numpy as np
     from pipeline import embedding_to_bytes
@@ -346,7 +340,7 @@ try:
     updates = []
     for i, e in enumerate(fake_entries):
         v = rng.randn(dim).astype("float32")
-        # Tilt embeddings per-class so the MLP can actually learn something
+        # Tilt embeddings per-class so the classifier can learn something
         cls = i % 4
         v[cls * 20:(cls + 1) * 20] += 1.5
         updates.append((embedding_to_bytes(v), e["entry_type"], e["entry_id"]))
@@ -367,14 +361,9 @@ try:
     res = pipeline.train(profile_id=1)
     assert res["success"], "train failed: {}".format(res.get("error", ""))
 
-    # Critical: the calibration branch must have fired.  With 60 labels,
-    # min_class_count=15, the 80/20 split yields train_fold ~48 >= 30, so
-    # the inner 15% validation split runs, yielding len(xv) >= 5, and
-    # logits_for_classifier_head(clf, X_val) is invoked.  Before the fix
-    # this raised AttributeError.  Assert the result explicitly confirms
-    # calibration ran (not "calibration inactive").
+    # Critical: OOF calibration must run on the training fold.
     cal_note = res.get("calibration_note", "")
-    assert "validation samples" in cal_note, \
+    assert "OOF samples" in cal_note, \
         "calibration branch didn't run: cal_note={!r}".format(cal_note)
     assert "calibration inactive" not in cal_note
     # Temperature should be an actual fitted value, not the no-op 1.0
@@ -398,9 +387,8 @@ except Exception as e:
 
 t("knobs-on + calibration branch still succeeds")
 try:
-    # Same setup, but with all three knobs active — verifies the sample-
-    # weight replication / sample_weight kwarg plays nicely with the
-    # calibration branch.
+    # Same setup, but with all three knobs active — verifies sample_weight
+    # plays nicely with the OOF calibration branch.
     cfg_on = dict(cfg_iso)
     cfg_on["label_time_decay_days"] = 180
     cfg_on["label_time_decay_floor"] = 0.3
@@ -426,7 +414,7 @@ try:
     res = pipeline.train(profile_id=1)
     assert res["success"], "knobs-on train failed: {}".format(res.get("error"))
     cal_note = res.get("calibration_note", "")
-    assert "validation samples" in cal_note, \
+    assert "OOF samples" in cal_note, \
         "calibration didn't fire with knobs on: cal_note={!r}".format(cal_note)
     ok()
 except Exception as e:

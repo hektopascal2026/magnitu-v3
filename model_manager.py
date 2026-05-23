@@ -106,7 +106,9 @@ def _build_manifest(model_name: str, model_uuid: str, description: str,
         "architecture": (active_model.get("architecture", "tfidf")
                          if active_model
                          else config.get("model_architecture", "transformer")),
-        "transformer_model_name": config.get("transformer_model_name", "xlm-roberta-base"),
+        "transformer_model_name": config.get(
+            "transformer_model_name", "intfloat/multilingual-e5-base"
+        ),
         "metrics": {},
         "version_chain": _get_version_chain(profile_id),
     }
