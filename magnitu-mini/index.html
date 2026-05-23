@@ -132,14 +132,20 @@ body {
     letter-spacing: 0.3px;
 }
 
+/* Seismo timeline entry-pill colours — docs/magnitu-entry-pills.md */
 .source-rss { background: #add8e6; }
 .source-substack { background: #C5B4D1; }
-.source-email { background: #f5f5f5; }
-.source-lex_eu { background: #FFF3BF; }
-.source-lex_ch { background: #FFD8D8; }
-.source-lex_de { background: #FFF3BF; }
-.source-lex_fr { background: #FFF3BF; }
-.source-lex_it { background: #FFF3BF; }
+.source-scraper { background: #FFDBBB; }
+.source-email { background: #FFDBBB; }
+.source-parl_press { background: #f5f562; }
+.source-lex_eu,
+.source-lex_ch { background: #fff2a8; }
+.source-tag[class*="source-lex_"]:not(.source-lex_eu):not(.source-lex_ch) {
+    background: #f5f562;
+}
+.source-tag[class*="source-leg_"] {
+    background: #d4edda;
+}
 
 .entry-date { font-style: italic; color: #555; }
 .entry-category { color: #555; }
