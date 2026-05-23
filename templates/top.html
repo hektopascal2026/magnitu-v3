@@ -16,17 +16,17 @@
     <!-- View Description -->
     <p class="section-desc">
         {% if view == 'recent' %}
-            Highest-scored entries from the last 7 days that you haven't labeled yet. <strong>That's right</strong> accepts the model's class; <strong>That's wrong</strong> to pick another.
+            Highest-scored entries from the last 7 days that you haven't labeled yet. <strong>Accept prediction</strong> saves the model's class; <strong>Reject prediction</strong> to pick another.
             {% if total_recent is defined %}
                 <span class="top-view-meta">{{ total_recent }} recent entries, {{ total_recent_unlabeled }} unlabeled{% if total_recent_unlabeled > (top_page_limit|default(30)) %} (showing top {{ top_page_limit|default(30) }}){% endif %}.</span>
             {% endif %}
         {% elif view == 'mismatches' %}
-            Entries where your label disagrees with the model's prediction. Use <strong>That's right</strong> if the model is correct, or <strong>That's wrong</strong> to set your label.
+            Entries where your label disagrees with the model's prediction. <strong>Accept change</strong> updates your label to match the model; <strong>Reject prediction</strong> to keep or set a different label.
             {% if total_mismatches is defined %}
                 <span class="top-view-meta">{{ total_mismatches }} mismatch{{ 'es' if total_mismatches != 1 else '' }} found{% if total_mismatches > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %}.</span>
             {% endif %}
         {% elif view == 'predicted_noise' %}
-            Entries the model classifies as <strong>noise</strong>. <strong>That's right</strong> confirms noise; <strong>That's wrong</strong> if it should be lead, important, or background.
+            Entries the model classifies as <strong>noise</strong>. <strong>Confirm noise</strong> accepts the model; <strong>Reject prediction</strong> if it should be lead, important, or background.
             {% if total_predicted_noise is defined %}
                 <span class="top-view-meta">{{ total_predicted_noise_pending | default(total_predicted_noise) }} still need a label{% if total_predicted_noise_pending > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %} · {{ total_predicted_noise }} predicted as noise total.</span>
             {% endif %}
@@ -152,8 +152,18 @@
                         <div class="top-card-footer-left">
                             {% set needs_review = (not item.user_label) or (item.user_label != s.predicted_label) %}
                             {% if needs_review %}
-                                <button type="button" class="btn-agree-right" title="The model's prediction is correct — save it as your label">That's right</button>
-                                <button type="button" class="btn-reclassify" title="The model is wrong — choose the correct label">That's wrong</button>
+                                {% if view == 'mismatches' %}
+                                    {% set agree_label = 'Accept change' %}
+                                    {% set agree_title = 'The model is correct — replace your label with its prediction' %}
+                                {% elif view == 'predicted_noise' %}
+                                    {% set agree_label = 'Confirm noise' %}
+                                    {% set agree_title = 'The model is correct — save noise as your label' %}
+                                {% else %}
+                                    {% set agree_label = 'Accept prediction' %}
+                                    {% set agree_title = 'Save the model\'s predicted label as yours' %}
+                                {% endif %}
+                                <button type="button" class="btn-agree-right" title="{{ agree_title }}">{{ agree_label }}</button>
+                                <button type="button" class="btn-reclassify" title="The model is wrong — choose the correct label">Reject prediction</button>
                             {% else %}
                                 <button type="button" class="btn-reclassify" title="Change your label">Reclassify</button>
                             {% endif %}
@@ -294,7 +304,7 @@
     }
 
     document.addEventListener('click', function(e) {
-        /* ── That's right: save the model's predicted label ── */
+        /* ── Accept prediction / Accept change: save the model's predicted label ── */
         var agreeBtn = e.target.closest('.btn-agree-right');
         if (agreeBtn) {
             var card = agreeBtn.closest('.entry-card');
