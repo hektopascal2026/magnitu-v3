@@ -108,16 +108,15 @@
                                     <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
                                 </span>
                             {% elif view == 'predicted_noise' %}
-                                <span class="noise-review-badge">
-                                    <span class="noise-review-model">Model: noise</span>
+                                <span class="mismatch-badge">
                                     {% if item.user_label %}
-                                        <span class="noise-review-arrow">&rarr;</span>
-                                        <span class="noise-review-yours">{{ item.user_label | replace('_', ' ') }}</span>
-                                        {% if item.user_label == 'noise' %}
-                                            <span class="noise-review-confirmed">Confirmed</span>
-                                        {% endif %}
+                                        <span class="mismatch-yours">{{ item.user_label | replace('_', ' ') }}</span>
+                                        <span class="mismatch-arrow">&rarr;</span>
+                                        <span class="mismatch-model mismatch-noise">Noise</span>
                                     {% else %}
-                                        <span class="noise-review-pending">Needs label</span>
+                                        <span class="mismatch-yours mismatch-unlabeled">Unlabeled</span>
+                                        <span class="mismatch-arrow">&rarr;</span>
+                                        <span class="mismatch-model mismatch-noise">Noise</span>
                                     {% endif %}
                                 </span>
                             {% endif %}
@@ -281,22 +280,22 @@
         if (currentView === 'predicted_noise') {
             card.style.opacity = '0.4';
             card.style.transition = 'opacity 0.3s';
-            var noiseBadge = card.querySelector('.noise-review-badge');
+            var noiseBadge = card.querySelector('.mismatch-badge');
             if (noiseBadge) {
                 if (label === 'noise') {
                     noiseBadge.innerHTML =
-                        '<span class="noise-review-model">Model: noise</span>' +
-                        '<span style="color:#00aa00;font-weight:700;margin-left:6px;">Confirmed</span>';
+                        '<span class="mismatch-yours mismatch-noise">Noise</span>' +
+                        '<span class="mismatch-reviewed-tag">Confirmed</span>';
                 } else {
                     noiseBadge.innerHTML =
-                        '<span class="noise-review-model">Model: noise</span>' +
-                        '<span class="noise-review-arrow">&rarr;</span>' +
-                        '<span class="noise-review-yours">' + label.replace(/_/g, ' ') + '</span>' +
-                        '<span class="noise-review-corrected">Corrected</span>';
+                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        '<span class="mismatch-arrow">&rarr;</span>' +
+                        '<span class="mismatch-model mismatch-noise">Noise</span>' +
+                        '<span class="mismatch-reviewed-tag">Corrected</span>';
                 }
             }
             setTimeout(function() {
-                if (!document.querySelector('.noise-review-pending')) {
+                if (!document.querySelector('.mismatch-unlabeled')) {
                     window.location.reload();
                 }
             }, 450);

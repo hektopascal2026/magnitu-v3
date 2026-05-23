@@ -1115,48 +1115,15 @@ kbd {
     border: 1.5px solid #000000;
 }
 
+.mismatch-noise,
+.mismatch-yours.mismatch-noise {
+    background: #e0e0e0;
+    color: #000000;
+}
+
 .entry-card.mismatch-reviewed {
     opacity: 0.4;
     border-left-color: #B0B0B0;
-}
-
-.noise-review-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.78rem;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: #f0f4f8;
-    border: 1px solid #d0d7de;
-    margin-left: 4px;
-}
-
-.noise-review-model {
-    font-weight: 600;
-    color: #57606a;
-}
-
-.noise-review-pending {
-    color: #9a6700;
-    font-weight: 600;
-}
-
-.noise-review-confirmed,
-.noise-review-corrected {
-    color: #00aa00;
-    font-weight: 700;
-    font-size: 0.72rem;
-    margin-left: 4px;
-}
-
-.noise-review-yours {
-    font-weight: 600;
-    color: #24292f;
-}
-
-.noise-review-arrow {
-    color: #8c959f;
 }
 
 .mismatch-reviewed-tag {
