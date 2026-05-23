@@ -768,7 +768,7 @@ async def dashboard_page(slug: str):
 
 
 @app.get("/p/{slug}/top", response_class=HTMLResponse)
-async def top_page(request: Request, slug: str, view: str = "mismatches"):
+async def top_page(request: Request, slug: str, view: str = "predicted_noise"):
     profile = _get_profile_or_404(slug)
     profile_id = profile["id"]
     ctx = _base_context(request, profile)

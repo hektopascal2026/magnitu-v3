@@ -144,6 +144,10 @@
 
 <div class="dashboard-section">
     <h2>Training History</h2>
+    <p class="section-desc" style="margin-top: 0;">
+        Accuracy and F1 are measured on a <strong>stable holdout</strong> (~10–20% of labeled entries, fixed by entry id).
+        Adding labels trains on more data without reshuffling which older entries sit in the test fold, so version-to-version metrics are comparable.
+    </p>
     {% if models %}
         <table class="history-table">
             <thead>

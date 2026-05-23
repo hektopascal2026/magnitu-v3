@@ -7,9 +7,9 @@
 
     <!-- View Tabs -->
     <div class="top-view-tabs">
-        <a href="/p/{{ profile.slug }}/top?view=mismatches" class="top-view-tab {% if view == 'mismatches' %}active{% endif %}">Mismatches</a>
         <a href="/p/{{ profile.slug }}/top?view=predicted_noise" class="top-view-tab {% if view == 'predicted_noise' %}active{% endif %}">Predicted noise</a>
-        <a href="/p/{{ profile.slug }}/top?view=recent" class="top-view-tab {% if view == 'recent' %}active{% endif %}">Recently unlabeled</a>
+        <a href="/p/{{ profile.slug }}/top?view=recent" class="top-view-tab {% if view == 'recent' %}active{% endif %}">Recent predicted high</a>
+        <a href="/p/{{ profile.slug }}/top?view=mismatches" class="top-view-tab {% if view == 'mismatches' %}active{% endif %}">Mismatches</a>
         <a href="/p/{{ profile.slug }}/top?view=all" class="top-view-tab {% if view == 'all' %}active{% endif %}">All-time</a>
     </div>
 

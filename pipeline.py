@@ -47,6 +47,91 @@ CLASS_WEIGHT_MAP = {
 }
 
 
+_STABLE_HOLDOUT_SALT = b"magnitu-v3-stable-holdout-v1"
+
+
+def _stable_split_bucket(entry_type, entry_id) -> int:
+    """0..9999 bucket from entry identity; stable across retrains and label order."""
+    import hashlib
+
+    et, eid = db.entry_key(entry_type, entry_id)
+    raw = ("%s\x00%s" % (et, eid)).encode("utf-8")
+    digest = hashlib.sha256(_STABLE_HOLDOUT_SALT + raw).hexdigest()
+    return int(digest[:8], 16) % 10000
+
+
+def _holdout_test_fraction(min_class_count: int, n: int) -> float:
+    """Match legacy sizing: ~10–20% test, capped by rarest class."""
+    test_size = min(0.2, min_class_count / max(n, 1))
+    return max(float(test_size), 0.1)
+
+
+def _repair_stratified_holdout(is_test, y_arr, keys):
+    """Ensure each class with >=2 rows has at least one train and one test sample."""
+    is_test = np.asarray(is_test, dtype=bool).copy()
+    for cls in np.unique(y_arr):
+        cls_idx = np.where(y_arr == cls)[0]
+        if len(cls_idx) < 2:
+            continue
+        test_cls = cls_idx[is_test[cls_idx]]
+        train_cls = cls_idx[~is_test[cls_idx]]
+        if len(test_cls) == 0 and len(train_cls) > 0:
+            buckets = [_stable_split_bucket(*keys[i]) for i in train_cls]
+            is_test[train_cls[int(np.argmax(buckets))]] = True
+        elif len(train_cls) == 0 and len(test_cls) > 0:
+            buckets = [_stable_split_bucket(*keys[i]) for i in test_cls]
+            is_test[test_cls[int(np.argmin(buckets))]] = False
+    return is_test
+
+
+def _slice_by_indices(X, y, sample_weight, train_idx, test_idx):
+    """Index rows for ndarray, DataFrame, or list features."""
+
+    def _take(arr, idx):
+        if arr is None:
+            return None
+        if isinstance(arr, np.ndarray):
+            return arr[idx]
+        if hasattr(arr, "iloc"):
+            return arr.iloc[idx]
+        return [arr[i] for i in idx]
+
+    y_list = list(y)
+    return (
+        _take(X, train_idx),
+        _take(X, test_idx),
+        [y_list[i] for i in train_idx],
+        [y_list[i] for i in test_idx],
+        _take(sample_weight, train_idx),
+        _take(sample_weight, test_idx),
+    )
+
+
+def _stable_train_test_split(X, y, sample_weight, labeled_rows, test_size: float):
+    """
+    Hold out a fixed fraction of entries by (entry_type, entry_id) hash.
+
+    Unlike ``train_test_split(random_state=42)``, adding labels does not reshuffle
+    which older entries sit in the test fold — training-history metrics compare fairly.
+    """
+    n = len(y)
+    y_arr = np.asarray(y)
+    keys = [db.entry_key_from_mapping(row) for row in labeled_rows]
+    threshold = int(float(test_size) * 10000)
+    is_test = np.array(
+        [_stable_split_bucket(et, eid) < threshold for et, eid in keys],
+        dtype=bool,
+    )
+    is_test = _repair_stratified_holdout(is_test, y_arr, keys)
+    train_idx = np.where(~is_test)[0]
+    test_idx = np.where(is_test)[0]
+    if len(test_idx) == 0 and n >= 2:
+        is_test[np.argmax([_stable_split_bucket(*keys[i]) for i in range(n)])] = True
+        train_idx = np.where(~is_test)[0]
+        test_idx = np.where(is_test)[0]
+    return _slice_by_indices(X, y, sample_weight, train_idx, test_idx)
+
+
 def _train_test_split_stratified_safe(X, y, sample_weight, test_size: float,
                                       random_state: int = 42):
     """
@@ -791,17 +876,15 @@ def _train_transformer(profile_id: int = 1) -> dict:
         sw_train = sw_all
         split_note = "All data used for training (some classes have <2 samples)"
     else:
-        test_size = min(0.2, min_class_count / len(y))
-        test_size = max(test_size, 0.1)
+        test_size = _holdout_test_fraction(min_class_count, len(y))
         X_train, X_test, y_train, y_test, sw_train, _sw_test = (
-            _train_test_split_stratified_safe(
-                X, y, sw_all, test_size=test_size, random_state=42,
-            )
+            _stable_train_test_split(X, y, sw_all, lbl_list, test_size=test_size)
         )
         te = len(y_test)
         tr = len(y_train)
-        split_note = "{}/{} train/test split".format(
+        split_note = "stable entry holdout {}/{} train/test (~{}% test)".format(
             int(round(100.0 * tr / (tr + te))),
+            int(round(100.0 * te / (tr + te))),
             int(round(100.0 * te / (tr + te))),
         )
 
@@ -1094,17 +1177,15 @@ def _train_tfidf(profile_id: int = 1) -> dict:
         sw_train = sw_all
         split_note = "All data used for training (some classes have <2 samples)"
     else:
-        test_size = min(0.2, min_class_count / len(labels))
-        test_size = max(test_size, 0.1)
+        test_size = _holdout_test_fraction(min_class_count, len(labels))
         X_train, X_test, y_train, y_test, sw_train, _sw_test = (
-            _train_test_split_stratified_safe(
-                df, labels, sw_all, test_size=test_size, random_state=42,
-            )
+            _stable_train_test_split(df, labels, sw_all, labeled, test_size=test_size)
         )
         te = len(y_test)
         tr = len(y_train)
-        split_note = "{}/{} train/test split".format(
+        split_note = "stable entry holdout {}/{} train/test (~{}% test)".format(
             int(round(100.0 * tr / (tr + te))),
+            int(round(100.0 * te / (tr + te))),
             int(round(100.0 * te / (tr + te))),
         )
 
