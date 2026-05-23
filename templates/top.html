@@ -28,7 +28,7 @@
         {% elif view == 'predicted_noise' %}
             Entries the model classifies as <strong>noise</strong>. <strong>That's right</strong> confirms noise; <strong>That's wrong</strong> if it should be lead, important, or background.
             {% if total_predicted_noise is defined %}
-                <span class="top-view-meta">{{ total_predicted_noise }} predicted as noise{% if total_predicted_noise > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %}.</span>
+                <span class="top-view-meta">{{ total_predicted_noise_pending | default(total_predicted_noise) }} still need a label{% if total_predicted_noise_pending > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %} · {{ total_predicted_noise }} predicted as noise total.</span>
             {% endif %}
         {% else %}
             The {{ top_page_limit|default(30) }} highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
@@ -45,7 +45,11 @@
                 {% elif view == 'mismatches' %}
                     No mismatches found — the model agrees with all your labels. Nice!
                 {% elif view == 'predicted_noise' %}
+                    {% if total_predicted_noise_pending is defined and total_predicted_noise_pending == 0 and total_predicted_noise %}
+                    You have labeled every entry the model predicted as noise. Check <a href="/p/{{ profile.slug }}/top?view=mismatches">Mismatches</a> or retrain if the model still scores fluff too high.
+                    {% else %}
                     No entries predicted as noise. The model may be scoring everything as important or lead — label obvious fluff as <strong>noise</strong> on the labeling page, then retrain.
+                    {% endif %}
                 {% else %}
                     No entries scored. Pull entries from Seismo first.
                 {% endif %}
@@ -134,6 +138,15 @@
                     {% set preview_content = 400 %}
                     {% include "_entry_body.html" %}
 
+                    <div class="reasoning-row">
+                        <input type="text" class="reasoning-input"
+                               placeholder="{% if item.user_label == 'investigation_lead' or (not item.user_label and s.predicted_label == 'investigation_lead') %}Why is this relevant?{% else %}Optional: why this label?{% endif %}"
+                               value="{{ item.user_reasoning or '' }}"
+                               data-entry-type="{{ e.entry_type }}"
+                               data-entry-id="{{ e.entry_id }}"
+                               title="Optional reasoning for your label">
+                    </div>
+
                     <!-- Footer: review actions + why left, source+date right -->
                     <div class="top-card-footer">
                         <div class="top-card-footer-left">
@@ -202,10 +215,13 @@
         var entryType = card.dataset.entryType || (panel && panel.querySelector('.label-btn') && panel.querySelector('.label-btn').dataset.entryType);
         var entryId = card.dataset.entryId || (panel && panel.querySelector('.label-btn') && panel.querySelector('.label-btn').dataset.entryId);
         if (!entryType || !entryId) return;
+        var reasoningInput = card.querySelector('.reasoning-input');
+        var reasoning = reasoningInput ? reasoningInput.value.trim() : '';
         var formData = new FormData();
         formData.append('entry_type', entryType);
         formData.append('entry_id', entryId);
         formData.append('label', label);
+        formData.append('reasoning', reasoning);
         fetch(P + '/api/label', { method: 'POST', body: formData })
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -248,6 +264,11 @@
                         '<span class="noise-review-corrected">Corrected</span>';
                 }
             }
+            setTimeout(function() {
+                if (!document.querySelector('.noise-review-pending')) {
+                    window.location.reload();
+                }
+            }, 450);
         }
 
         if (currentView === 'mismatches') {
@@ -287,7 +308,7 @@
             return;
         }
 
-        /* ── That's wrong / Reclassify: open label picker ── */
+        /* ── Reclassify: open label picker (focus reasoning if empty) ── */
         var reclBtn = e.target.closest('.btn-reclassify');
         if (reclBtn) {
             var card = reclBtn.closest('.entry-card');
@@ -296,6 +317,10 @@
                 var visible = panel.style.display !== 'none';
                 document.querySelectorAll('.top-label-buttons').forEach(function(p) { p.style.display = 'none'; });
                 panel.style.display = visible ? 'none' : 'flex';
+                if (!visible) {
+                    var input = card.querySelector('.reasoning-input');
+                    if (input && !input.value.trim()) input.focus();
+                }
             }
             return;
         }

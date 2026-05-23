@@ -776,6 +776,14 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
     ctx["view"] = view
     ctx["top_page_limit"] = TOP_PAGE_LIMIT
 
+    label_meta_by_key = {}
+    for lbl in db.get_all_labels_raw(profile_id):
+        key = db.entry_key_from_mapping(lbl)
+        label_meta_by_key[key] = {
+            "label": lbl["label"],
+            "reasoning": (lbl.get("reasoning") or "").strip(),
+        }
+
     if view == "recent":
         entries = db.get_recent_entries(days=7)
         scored = pipeline.score_entries(entries, profile_id=profile_id)
@@ -791,9 +799,11 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
             entry = entry_map.get(db.entry_key_from_mapping(s))
             if not entry:
                 continue
+            meta = label_meta_by_key.get(db.entry_key_from_mapping(s), {})
             top_entries.append({
                 "entry": entry, "score": s,
                 "user_label": None, "match": None,
+                "user_reasoning": meta.get("reasoning", ""),
             })
         ctx["top_entries"] = top_entries
         ctx["labeled_count"] = 0
@@ -815,9 +825,11 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
             user_label = entry["user_label"]
             predicted = s["predicted_label"]
             if user_label != predicted:
+                meta = label_meta_by_key.get(key, {})
                 mismatch_pool.append({
                     "entry": entry, "score": s,
                     "user_label": user_label, "match": False,
+                    "user_reasoning": meta.get("reasoning", ""),
                 })
         mismatch_pool.sort(key=lambda x: x["score"]["relevance_score"], reverse=True)
         ctx["total_mismatches"] = len(mismatch_pool)
@@ -830,9 +842,6 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
         entries = db.get_all_entries()
         scored = pipeline.score_entries(entries, profile_id=profile_id)
         entry_map = {db.entry_key_from_mapping(e): e for e in entries}
-        labels_by_key = {}
-        for lbl in db.get_all_labels_raw(profile_id):
-            labels_by_key[db.entry_key_from_mapping(lbl)] = lbl["label"]
         noise_pool = []
         for s in scored:
             if s.get("predicted_label") != "noise":
@@ -841,27 +850,24 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
             entry = entry_map.get(key)
             if not entry:
                 continue
-            user_label = labels_by_key.get(key)
+            meta = label_meta_by_key.get(key, {})
+            user_label = meta.get("label")
             noise_pool.append({
                 "entry": entry,
                 "score": s,
                 "user_label": user_label,
+                "user_reasoning": meta.get("reasoning", ""),
                 "match": user_label == "noise" if user_label else None,
             })
 
-        def _noise_review_priority(item):
-            ul = item["user_label"]
-            if ul is None:
-                tier = 0
-            elif ul != "noise":
-                tier = 1
-            else:
-                tier = 2
-            return (tier, item["score"]["relevance_score"])
-
-        noise_pool.sort(key=_noise_review_priority)
+        noise_pool.sort(
+            key=lambda x: x["score"]["relevance_score"],
+            reverse=True,
+        )
+        pending_noise = [x for x in noise_pool if x["user_label"] is None]
         ctx["total_predicted_noise"] = len(noise_pool)
-        ctx["top_entries"] = noise_pool[:TOP_PAGE_LIMIT]
+        ctx["total_predicted_noise_pending"] = len(pending_noise)
+        ctx["top_entries"] = pending_noise[:TOP_PAGE_LIMIT]
         ctx["labeled_count"] = sum(1 for x in noise_pool if x["user_label"])
         ctx["correct_count"] = sum(1 for x in noise_pool if x["user_label"] == "noise")
         ctx["accuracy"] = None
@@ -870,10 +876,6 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
         entries = db.get_all_entries()
         scored = pipeline.score_entries(entries, profile_id=profile_id)
         entry_map = {db.entry_key_from_mapping(e): e for e in entries}
-        labels_by_key = {}
-        for lbl in db.get_all_labels_raw(profile_id):
-            labels_by_key[db.entry_key_from_mapping(lbl)] = lbl["label"]
-
         scored.sort(key=lambda s: s["relevance_score"], reverse=True)
         top_entries = []
         for s in scored[:TOP_PAGE_LIMIT]:
@@ -881,11 +883,13 @@ async def top_page(request: Request, slug: str, view: str = "mismatches"):
             entry = entry_map.get(key)
             if not entry:
                 continue
-            user_label = labels_by_key.get(key)
+            meta = label_meta_by_key.get(key, {})
+            user_label = meta.get("label")
             top_entries.append({
                 "entry": entry,
                 "score": s,
                 "user_label": user_label,
+                "user_reasoning": meta.get("reasoning", ""),
                 "match": user_label == s["predicted_label"] if user_label else None,
             })
         labeled_in_top = [e for e in top_entries if e["user_label"] is not None]
