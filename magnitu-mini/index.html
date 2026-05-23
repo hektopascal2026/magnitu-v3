@@ -411,6 +411,129 @@ body {
         return 'all';
     }
 
+    /** Seismo timeline pill labels (text only; see Magnitu docs/magnitu-entry-pills.md). */
+    function entryPillTexts(entry) {
+        var et = (entry.entry_type || '').trim();
+        if (et === 'feed_item') return feedItemPillTexts(entry);
+        if (et === 'email') return emailPillTexts(entry);
+        if (et === 'lex_item') return lexItemPillTexts(entry);
+        if (et === 'calendar_event') return calendarEventPillTexts(entry);
+        return [];
+    }
+
+    function truncatePillLabel(s, max) {
+        max = max || 32;
+        s = (s || '').trim();
+        if (s.length <= max) return s;
+        return s.slice(0, max) + '…';
+    }
+
+    function labelFromCategoryOrTitle(category, title) {
+        var c = (category || '').trim();
+        if (c && c.toLowerCase() !== 'unsortiert') return c;
+        return (title || '').trim();
+    }
+
+    function feedItemPillTexts(entry) {
+        var st = (entry.source_type || '').trim().toLowerCase();
+        if (st === 'parl_press') {
+            var cat = (entry.source_category || '').trim().toLowerCase();
+            var isSda = cat === 'parl_sda' || ((entry.link || '').trim().toLowerCase().indexOf('parl_sda:') === 0);
+            var meta = isSda ? 'Session' : (
+                (entry.source_category || '').trim() &&
+                cat !== 'unsortiert' && cat !== 'parl_sda' && cat !== 'parl_mm'
+                    ? (entry.source_category || '').trim()
+                    : 'Medienmitteilung'
+            );
+            return [isSda ? '🇨🇭 Parl SDA' : '🇨🇭 Parl MM', meta];
+        }
+        if (st === 'scraper') {
+            return ['🌐 ' + ((entry.source_name || '').trim() || 'Scraper')];
+        }
+        var label = truncatePillLabel(labelFromCategoryOrTitle(entry.source_category, entry.source_name));
+        return label ? [label] : [];
+    }
+
+    function emailPillTexts(entry) {
+        var tag = (entry.source_category || '').trim();
+        var name = (entry.source_name || '').trim();
+        if (tag.toLowerCase() === 'unclassified' && !name) return [];
+        var text = name || tag;
+        return text ? [text] : [];
+    }
+
+    function lexSourceKey(entry) {
+        var st = (entry.source_type || '').trim().toLowerCase();
+        if (st.indexOf('lex_') === 0) return st.slice(4);
+        return st;
+    }
+
+    function isParlSwissLex(entry, lexSource) {
+        if (lexSource === 'parl_mm' || lexSource === 'parl_sda') return true;
+        var link = (entry.link || '').trim().toLowerCase();
+        var title = (entry.title || '').trim().toLowerCase();
+        return link.indexOf('parl_mm:') === 0 || link.indexOf('parl_sda:') === 0 ||
+            title.indexOf('parl_mm:') === 0 || title.indexOf('parl_sda:') === 0;
+    }
+
+    function lexItemPillTexts(entry) {
+        var lexSource = lexSourceKey(entry);
+        var docType = (entry.source_category || '').trim() || 'Legislation';
+        var parl = isParlSwissLex(entry, lexSource);
+        if (lexSource === 'eu' || parl) {
+            return [parl ? '🇨🇭 CH' : '🇪🇺 EU', docType];
+        }
+        if (lexSource === 'ch') return ['🇨🇭 CH', docType];
+        var map = {
+            ch_bger: ['⚖️', 'BGer'], ch_bge: ['⚖️', 'BGE'], ch_bvger: ['⚖️', 'BVGer'],
+            de: ['🇩🇪', 'DE'], ch: ['🇨🇭', 'CH'], fr: ['🇫🇷', 'FR']
+        };
+        var pair = map[lexSource] || ['🇪🇺', 'EU'];
+        return [pair[0] + ' ' + pair[1], docType];
+    }
+
+    var calendarEventTypeLabels = {
+        session: 'Session', Motion: 'Motion', Postulat: 'Postulat',
+        Interpellation: 'Interpellation', 'Dringliche Interpellation': 'Interpellation',
+        'Einfache Anfrage': 'Anfrage', 'Dringliche Einfache Anfrage': 'Anfrage',
+        'Parlamentarische Initiative': 'Parl. Initiative',
+        Standesinitiative: 'Standesinitiative',
+        'Geschaeft des Bundesrates': 'Bundesratsgeschäft',
+        'Geschäft des Bundesrates': 'Bundesratsgeschäft',
+        'Geschaeft des Parlaments': 'Parlamentsgeschäft',
+        'Geschäft des Parlaments': 'Parlamentsgeschäft',
+        Petition: 'Petition', Empfehlung: 'Empfehlung',
+        'Fragestunde. Frage': 'Fragestunde'
+    };
+
+    function calendarEventPillTexts(entry) {
+        var raw = (entry.source_category || '').trim();
+        var typeLabel = raw ? (calendarEventTypeLabels[raw] || raw) : 'Event';
+        var pills = [typeLabel];
+        var councilMap = { NR: 'Nationalrat', SR: 'Ständerat', BR: 'Bundesrat' };
+        var code = (entry.author || '').trim();
+        if (code) pills.push(councilMap[code] || code);
+        return pills;
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function entryPillsHtml(entry) {
+        var pills = entryPillTexts(entry);
+        var html = '';
+        var st = entry.source_type || '';
+        pills.forEach(function(text, i) {
+            if (i === 0) {
+                html += '<span class="source-tag source-' + escapeHtml(st) + '">' + escapeHtml(text) + '</span>';
+            } else {
+                html += '<span class="entry-category">' + escapeHtml(text) + '</span>';
+            }
+        });
+        return html;
+    }
+
     // Hide settings gear when credentials are hardcoded
     if (LOCKED) {
         document.getElementById('settingsBtn').style.display = 'none';
@@ -764,8 +887,7 @@ body {
 
             card.innerHTML =
                 '<div class="entry-meta">' +
-                    '<span class="source-tag source-' + (entry.source_type || '') + '">' + (entry.source_type || 'unknown') + '</span>' +
-                    (entry.source_category ? '<span class="entry-category">' + entry.source_category + '</span>' : '') +
+                    entryPillsHtml(entry) +
                     (entry.published_date ? '<span class="entry-date">' + entry.published_date.substring(0, 10) + '</span>' : '') +
                 '</div>' +
                 '<div class="entry-title">' +

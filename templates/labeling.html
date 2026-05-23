@@ -87,12 +87,7 @@
                  data-sampling-reason="{{ entry._sampling_reason or 'new' }}"
                  id="card-{{ entry.entry_type }}-{{ entry.entry_id }}">
                 <div class="entry-header">
-                    <span class="entry-source-tag source-{{ entry.source_type }}">
-                        {{ entry.source_type }}
-                    </span>
-                    {% if entry.source_category %}
-                        <span class="entry-category">{{ entry.source_category }}</span>
-                    {% endif %}
+                    {% include "_entry_pills.html" %}
                     {% if entry._sampling_reason and entry._sampling_reason != 'new' %}
                         <span class="sampling-reason sampling-reason-{{ entry._sampling_reason }}">
                             {{ entry._sampling_reason }}

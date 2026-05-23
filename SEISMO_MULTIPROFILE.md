@@ -3,6 +3,8 @@
 **For Seismo operators and Magnitu admins.**  
 Describes how **path satellites** in Seismo 0.6 work with Magnitu v3’s multi-profile layout.
 
+**Related:** [Timeline entry pills](docs/magnitu-entry-pills.md) — source labels on entry cards (CSS, API fields, Seismo parity).
+
 ---
 
 ## Background

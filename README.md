@@ -278,3 +278,4 @@ Magnitu migrates existing installations automatically on startup:
 - Seismo uses one active recipe per instance at a time. Last push wins.
 - If you see recipe/model mismatch, run **Full Sync → Train → Push**.
 - See `SEISMO_MULTIPROFILE.md` for Seismo 0.6 path-satellite setup and Magnitu wiring.
+- See `docs/magnitu-entry-pills.md` for Seismo timeline source-pill styling (entry cards in Magnitu UI).

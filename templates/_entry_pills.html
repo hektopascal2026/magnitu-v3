@@ -1,0 +1,9 @@
+{# Seismo-matching pill text; Magnitu entry-source-tag / entry-category styling. #}
+{% set pills = entry_pill_texts(entry) %}
+{% for text in pills %}
+    {% if loop.first %}
+        <span class="entry-source-tag source-{{ entry.source_type }}">{{ text }}</span>
+    {% else %}
+        <span class="entry-category">{{ text }}</span>
+    {% endif %}
+{% endfor %}

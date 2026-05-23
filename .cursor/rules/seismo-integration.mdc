@@ -23,7 +23,7 @@ Optional backward-compatible field on the JSON response: **`accent_color`** — 
 
 ## Entry format received from seismo
 
-Each entry has: `entry_type` (feed_item|email|lex_item|calendar_event), `entry_id`, `title`, `description`, `content`, `link`, `author`, `published_date`, `source_name`, `source_category`, `source_type` (rss|substack|email|lex_*, leg_*).
+Each entry has: `entry_type` (feed_item|email|lex_item|calendar_event), `entry_id`, `title`, `description`, `content`, `link`, `author`, `published_date`, `source_name`, `source_category`, `source_type` (rss|substack|email|lex_*, leg_*). For timeline **source pill** styling (top-left labels on cards), see `docs/magnitu-entry-pills.md`.
 
 ## Score format pushed to seismo
 

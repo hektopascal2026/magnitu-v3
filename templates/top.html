@@ -89,12 +89,7 @@
                     <!-- Header: source tag (lex only) left, rank|score box right -->
                     <div class="top-card-header">
                         <div class="top-card-header-left">
-                            {% if e.entry_type == 'calendar_event' or (e.source_type and (e.source_type.startswith('lex') or e.source_type.startswith('leg_') or e.source_type == 'parl_press')) %}
-                                <span class="entry-source-tag source-{{ e.source_type }}">{{ e.source_type }}</span>
-                                {% if e.source_category %}
-                                    <span class="entry-category">{{ e.source_category }}</span>
-                                {% endif %}
-                            {% endif %}
+                            {% with entry=e %}{% include "_entry_pills.html" %}{% endwith %}
                             {% if view == 'mismatches' %}
                                 <span class="mismatch-badge">
                                     <span class="mismatch-yours">{{ item.user_label | replace('_', ' ') }}</span>
@@ -103,7 +98,7 @@
                                 </span>
                             {% elif view == 'recent' %}
                                 <span class="mismatch-badge model-prediction-badge">
-                                    <span class="mismatch-yours mismatch-unlabeled">Unlabeled</span>
+                                    <span class="mismatch-unlabeled">Unlabeled</span>
                                     <span class="mismatch-arrow">&rarr;</span>
                                     <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
                                 </span>
@@ -114,7 +109,7 @@
                                         <span class="mismatch-arrow">&rarr;</span>
                                         <span class="mismatch-model mismatch-noise">Noise</span>
                                     {% else %}
-                                        <span class="mismatch-yours mismatch-unlabeled">Unlabeled</span>
+                                        <span class="mismatch-unlabeled">Unlabeled</span>
                                         <span class="mismatch-arrow">&rarr;</span>
                                         <span class="mismatch-model mismatch-noise">Noise</span>
                                     {% endif %}
