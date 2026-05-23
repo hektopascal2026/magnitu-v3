@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-VERSION = "3.0.0"
+VERSION = "3.5.0"
 
 BASE_DIR = Path(__file__).parent.resolve()
 

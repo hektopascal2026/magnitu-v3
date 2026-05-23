@@ -57,10 +57,10 @@
     <div class="about-section">
         <div class="about-detail-grid">
             <div class="about-detail">
-                <span class="about-detail-label">Version 3.x (Current)</span>
+                <span class="about-detail-label">Version 3.5 (Current)</span>
                 <span class="about-detail-value">
                     <p><strong>The Satellite Era & Multi-Profile Automation</strong></p>
-                    <p><strong>Satellites are now built and deployed!</strong> The primary goal of v3—pushing customized topic models to standalone "Satellite" Seismo instances—is fully realized. This version introduces a robust Multi-Profile Architecture and a new Model Library to manage multiple <code>.magnitu</code> profiles within a single app. It also adds the <strong>Gemini Synthetic Scorer</strong> (with prompt batching) to auto-label entries and drastically accelerate model convergence.</p>
+                    <p><strong>Satellites are now built and deployed!</strong> The primary goal of v3—pushing customized topic models to standalone "Satellite" Seismo instances—is fully realized. This version introduces a robust Multi-Profile Architecture and a new Model Library to manage multiple <code>.magnitu</code> profiles within a single app. It also adds the <strong>Gemini Synthetic Scorer</strong> (with prompt batching) to auto-label entries and drastically accelerate model convergence. The default embedding stack is <strong>multilingual E5</strong> with a regularized <strong>logistic-regression</strong> classifier head, out-of-fold probability calibration, and longer text context for legal bodies.</p>
                 </span>
             </div>
             <div class="about-detail">
@@ -172,17 +172,17 @@
 
     <div class="about-section">
         <h3>How Magnitu Reads Text</h3>
-        <p><strong>Language Model:</strong> Magnitu uses a pre-trained transformer (default <code>{{ config.transformer_model_name or 'xlm-roberta-base' }}</code>). With 278 million parameters trained across 100 languages, it naturally understands what words mean—allowing terms like <em>"Untersuchung"</em> and <em>"investigation"</em> to produce similar vectors.</p>
-        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional fingerprint based on its title (emphasized by repeating it once), description, a 1,000-character body excerpt, and structured Seismo context (<code>source_type</code>, <code>source_name</code>, <code>source_category</code>). Embedding runs once per article during sync and is cached.</p>
+        <p><strong>Language Model:</strong> Magnitu uses a pre-trained multilingual embedding model (default <code>{{ config.transformer_model_name or 'intfloat/multilingual-e5-base' }}</code>). It is contrastively trained for semantic similarity across 100+ languages, so terms like <em>"Untersuchung"</em> and <em>"investigation"</em> land near each other in vector space. Document text is prefixed with <code>passage:</code> at embed time, as required by the E5 family.</p>
+        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional fingerprint from its title (repeated once for emphasis), description, a body excerpt (up to {{ config.embedding_content_cap or 3000 }} characters), and structured Seismo context (<code>source_type</code>, <code>source_name</code>, <code>source_category</code>). Up to {{ config.embedding_max_tokens or 512 }} tokens are encoded per entry. Embedding runs once during sync and is cached.</p>
 
         <h3>Training & Distillation</h3>
-        <p><strong>The Classifier Head:</strong> Every time you train, Magnitu builds a Multi-Layer Perceptron (MLP) from scratch on your cached transformer embeddings. The language model provides the semantic understanding, while the MLP learns your priorities.</p>
-        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models. To bridge this, Magnitu trains a simpler TF-IDF student model to mimic the transformer's predictions, extracting a lightweight JSON "recipe" of weighted features (single words, bigrams, trigrams). This recipe is pushed to Seismo for millisecond live scoring.</p>
+        <p><strong>The Classifier Head:</strong> Each train fits a <strong>logistic regression</strong> classifier on your cached embeddings (with balanced class weights and optional per-label <code>sample_weight</code> for time-decay and reasoning boost). This stays stable with modest label counts compared to a large neural head.</p>
+        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models. Magnitu trains a simpler TF-IDF student to mimic the transformer's predictions, extracting a lightweight JSON "recipe" of weighted features (unigrams, bigrams, trigrams). That recipe is pushed to Seismo for millisecond live scoring.</p>
     </div>
 
     <div class="about-section">
         <h3>Relevance Scores & Measuring Quality</h3>
-        <p>Every entry gets a relevance score from 0 to 1 (shown as a percentage). Probabilities are calibrated using a temperature fit on a held-out slice of data to prevent overconfidence.</p>
+        <p>Every entry gets a relevance score from 0 to 1 (shown as a percentage). Class probabilities are calibrated with <strong>temperature scaling</strong> fit on out-of-fold predictions from the training fold, so scores are less overconfident before push.</p>
         <p>The final score is a weighted composite of calibrated probabilities:</p>
         <ul>
             <li>Investigation Lead: <strong>Weight 1.0</strong></li>
@@ -200,7 +200,7 @@
         <div class="about-detail-grid">
             <div class="about-detail">
                 <span class="about-detail-label">Text Length</span>
-                <span class="about-detail-value">Keyword weights in the recipe are normalized to compensate. Local transformer body excerpts are capped at 1,000 characters.</span>
+                <span class="about-detail-value">Keyword weights in the recipe are normalized to compensate. Local transformer body excerpts are capped at {{ config.embedding_content_cap or 3000 }} characters ({{ config.embedding_max_tokens or 512 }} tokens at encode time).</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Source Bias</span>
@@ -208,7 +208,7 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Class Imbalance</span>
-                <span class="about-detail-value">Rare classes (like leads) are automatically up-weighted during training to prevent them from being ignored.</span>
+                <span class="about-detail-value">Rare classes (like leads) use balanced class weights during training. Reasoning and time-decay knobs adjust per-label <code>sample_weight</code> instead of duplicating rows.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Recency Bias</span>
