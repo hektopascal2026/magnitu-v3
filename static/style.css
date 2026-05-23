@@ -1073,6 +1073,16 @@ kbd {
     opacity: 0.7;
 }
 
+.mismatch-unlabeled {
+    background-color: inherit;
+    font-style: normal;
+}
+
+.model-prediction-badge .mismatch-unlabeled {
+    background: #E8E8E8;
+    color: #333333;
+}
+
 /* Mismatch styling */
 .entry-card.mismatch {
     border-left: 5px solid #FF2C2C;

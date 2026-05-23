@@ -101,6 +101,12 @@
                                     <span class="mismatch-arrow">&rarr;</span>
                                     <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
                                 </span>
+                            {% elif view == 'recent' %}
+                                <span class="mismatch-badge model-prediction-badge">
+                                    <span class="mismatch-yours mismatch-unlabeled">Unlabeled</span>
+                                    <span class="mismatch-arrow">&rarr;</span>
+                                    <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
+                                </span>
                             {% elif view == 'predicted_noise' %}
                                 <span class="noise-review-badge">
                                     <span class="noise-review-model">Model: noise</span>
@@ -256,6 +262,20 @@
         if (currentView === 'recent') {
             card.style.opacity = '0.4';
             card.style.transition = 'opacity 0.3s';
+            var predBadge = card.querySelector('.model-prediction-badge');
+            if (predBadge) {
+                if (label === predicted) {
+                    predBadge.innerHTML =
+                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        '<span style="color:#00aa00;font-weight:700;margin-left:6px;">Accepted</span>';
+                } else {
+                    predBadge.innerHTML =
+                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        '<span class="mismatch-arrow">&rarr;</span>' +
+                        '<span class="mismatch-model">' + (predicted || '').replace(/_/g, ' ') + '</span>' +
+                        '<span class="mismatch-reviewed-tag">Corrected</span>';
+                }
+            }
         }
 
         if (currentView === 'predicted_noise') {
