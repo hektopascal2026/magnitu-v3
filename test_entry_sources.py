@@ -42,19 +42,23 @@ def test_is_leg_source_type():
     ok()
 
 
-def test_lex_filter_includes_calendar_and_parl_press():
+def test_lex_and_email_filters():
     cal = {"entry_type": "calendar_event", "entry_id": 1, "source_type": "leg_parliament_ch"}
-    press = {"entry_type": "feed_item", "entry_id": 2, "source_type": "parl_press"}
-    rss = {"entry_type": "feed_item", "entry_id": 3, "source_type": "rss"}
+    lex = {"entry_type": "lex_item", "entry_id": 2, "source_type": "lex_ch"}
+    press = {"entry_type": "feed_item", "entry_id": 3, "source_type": "parl_press"}
+    rss = {"entry_type": "feed_item", "entry_id": 4, "source_type": "rss"}
+    mail = {"entry_type": "email", "entry_id": 5, "source_type": "email"}
     assert entry_matches_source_filter(cal, "lex")
-    assert entry_matches_source_filter(press, "lex")
+    assert entry_matches_source_filter(lex, "lex")
+    assert not entry_matches_source_filter(press, "lex")
     assert not entry_matches_source_filter(rss, "lex")
-    assert entry_matches_source_filter(rss, "news")
-    assert not entry_matches_source_filter(press, "news")
+    assert entry_matches_source_filter(mail, "email")
+    assert not entry_matches_source_filter(rss, "email")
+    assert not entry_matches_source_filter(cal, "email")
     ok()
 
 
-def test_db_lex_unlabeled_includes_leg_rows():
+def test_db_source_filters():
     db.upsert_entries([
         {
             "entry_type": "calendar_event", "entry_id": 10,
@@ -63,25 +67,34 @@ def test_db_lex_unlabeled_includes_leg_rows():
             "source_name": "Parl", "source_category": "", "source_type": "leg_parliament_ch",
         },
         {
-            "entry_type": "feed_item", "entry_id": 11,
+            "entry_type": "lex_item", "entry_id": 11,
+            "title": "Lex", "description": "", "content": "",
+            "link": "", "author": "", "published_date": "2026-05-01",
+            "source_name": "Fedlex", "source_category": "", "source_type": "lex_ch",
+        },
+        {
+            "entry_type": "feed_item", "entry_id": 12,
             "title": "Press", "description": "", "content": "",
             "link": "", "author": "", "published_date": "2026-05-01",
             "source_name": "Parl", "source_category": "", "source_type": "parl_press",
         },
         {
-            "entry_type": "feed_item", "entry_id": 12,
-            "title": "RSS", "description": "", "content": "",
+            "entry_type": "email", "entry_id": 13,
+            "title": "Inbox", "description": "", "content": "",
             "link": "", "author": "", "published_date": "2026-05-01",
-            "source_name": "News", "source_category": "", "source_type": "rss",
+            "source_name": "Mail", "source_category": "", "source_type": "email",
         },
     ])
     lex_rows = db.get_unlabeled_entries(limit=50, source_filter="lex", profile_id=1)
-    types = {(r["entry_type"], r["entry_id"]) for r in lex_rows}
-    if (("calendar_event", 10) not in types) or (("feed_item", 11) not in types):
-        fail("lex filter missing leg rows: %s" % types)
+    lex_types = {(r["entry_type"], r["entry_id"]) for r in lex_rows}
+    if lex_types != {("calendar_event", 10), ("lex_item", 11)}:
+        fail("lex filter wrong: %s" % lex_types)
         return
-    if ("feed_item", 12) in types:
-        fail("lex filter should exclude rss feed_item")
+
+    email_rows = db.get_unlabeled_entries(limit=50, source_filter="email", profile_id=1)
+    email_types = {(r["entry_type"], r["entry_id"]) for r in email_rows}
+    if email_types != {("email", 13)}:
+        fail("email filter wrong: %s" % email_types)
         return
     ok()
 
@@ -89,7 +102,7 @@ def test_db_lex_unlabeled_includes_leg_rows():
 if __name__ == "__main__":
     print("=== entry_sources ===")
     test_is_leg_source_type()
-    test_lex_filter_includes_calendar_and_parl_press()
-    test_db_lex_unlabeled_includes_leg_rows()
+    test_lex_and_email_filters()
+    test_db_source_filters()
     print("Results: %d passed, %d failed" % (PASS, FAIL))
     sys.exit(1 if FAIL else 0)

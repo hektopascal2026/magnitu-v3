@@ -603,7 +603,7 @@ async def profiles_page_redirect():
 # ─── Profile-scoped pages ─────────────────────────────────────────────────────
 
 def _source_filter_for_ui(source: Optional[str]) -> Optional[str]:
-    """Map Label/Gemini ``source`` tab to db ``source_filter`` (``lex`` / ``news``)."""
+    """Map Label/Gemini ``source`` tab to db ``source_filter`` (``lex`` / ``email``)."""
     from magnitu.entry_sources import normalize_source_filter
     return normalize_source_filter(source)
 

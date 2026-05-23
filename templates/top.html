@@ -28,7 +28,8 @@
         {% elif view == 'predicted_noise' %}
             Entries the model classifies as <strong>noise</strong>. <strong>Confirm noise</strong> accepts the model; <strong>Reject prediction</strong> if it should be lead, important, or background.
             {% if total_predicted_noise is defined %}
-                <span class="top-view-meta">{{ total_predicted_noise_pending | default(total_predicted_noise) }} still need a label{% if total_predicted_noise_pending > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %} · {{ total_predicted_noise }} predicted as noise total.</span>
+                {% set noise_pending = total_predicted_noise_pending | default(total_predicted_noise | default(0)) %}
+                <span class="top-view-meta">{{ noise_pending }} still need a label{% if noise_pending > (top_page_limit|default(30)) %} (showing {{ top_page_limit|default(30) }}){% endif %} · {{ total_predicted_noise }} predicted as noise total.</span>
             {% endif %}
         {% else %}
             The {{ top_page_limit|default(30) }} highest-scored entries across all time. Compare the model's prediction against your labels to validate accuracy.
@@ -45,7 +46,7 @@
                 {% elif view == 'mismatches' %}
                     No mismatches found — the model agrees with all your labels. Nice!
                 {% elif view == 'predicted_noise' %}
-                    {% if total_predicted_noise_pending is defined and total_predicted_noise_pending == 0 and total_predicted_noise %}
+                    {% if total_predicted_noise and (total_predicted_noise_pending | default(-1)) == 0 %}
                     You have labeled every entry the model predicted as noise. Check <a href="/p/{{ profile.slug }}/top?view=mismatches">Mismatches</a> or retrain if the model still scores fluff too high.
                     {% else %}
                     No entries predicted as noise. The model may be scoring everything as important or lead — label obvious fluff as <strong>noise</strong> on the labeling page, then retrain.

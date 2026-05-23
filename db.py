@@ -703,8 +703,8 @@ def get_unlabeled_entries(limit: int = 30,
     ``entry_type`` accepts a single entry_type string, or a list/tuple of
     entry_types.
 
-    ``source_filter`` — ``lex`` (statutory + leg calendar + parl_press feeds),
-    ``news`` (RSS/email excluding leg feeds), or omitted for all types.
+    ``source_filter`` — ``lex`` (``lex_item`` + ``calendar_event`` only),
+    ``email`` (``email`` entries only), or omitted for all types.
     When set, ``entry_type`` is ignored.
     """
     from magnitu.entry_sources import normalize_source_filter, sql_source_filter_clause
