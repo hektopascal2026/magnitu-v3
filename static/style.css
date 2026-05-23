@@ -16,6 +16,11 @@
     --accent-fg: #000000;
     --accent-subtle: #FFF7F7;
     --accent-border: #FF6B6B;
+    /* Relevance labels — same hues everywhere (pills, badges, buttons, borders) */
+    --label-investigation: #FF6B6B;
+    --label-important: #FFA94D;
+    --label-background: #74C0FC;
+    --label-noise: #e0e0e0;
 }
 
 body {
@@ -497,10 +502,10 @@ body {
 }
 
 /* Colored left border only on labeling page (not Top 30) */
-.progress-section ~ .entries-section .entry-card.labeled-investigation_lead { border-left: 5px solid #FF6B6B; }
-.progress-section ~ .entries-section .entry-card.labeled-important { border-left: 5px solid #FFA94D; }
-.progress-section ~ .entries-section .entry-card.labeled-background { border-left: 5px solid #74C0FC; }
-.progress-section ~ .entries-section .entry-card.labeled-noise { border-left: 5px solid #e0e0e0; }
+.progress-section ~ .entries-section .entry-card.labeled-investigation_lead { border-left: 5px solid var(--label-investigation); }
+.progress-section ~ .entries-section .entry-card.labeled-important { border-left: 5px solid var(--label-important); }
+.progress-section ~ .entries-section .entry-card.labeled-background { border-left: 5px solid var(--label-background); }
+.progress-section ~ .entries-section .entry-card.labeled-noise { border-left: 5px solid var(--label-noise); }
 
 .entry-header {
     display: flex;
@@ -523,11 +528,20 @@ body {
     color: #000000;
 }
 
+/* Seismo timeline entry-pill colours — docs/magnitu-entry-pills.md */
 .source-rss { background: #add8e6; }
 .source-substack { background: #C5B4D1; }
-.source-email { background: #f5f5f5; }
-.source-lex_eu { background: #f5f5f5; }
-.source-lex_ch { background: #f5f5f5; }
+.source-scraper { background: #FFDBBB; }
+.source-email { background: #FFDBBB; }
+.source-parl_press { background: #f5f562; }
+.source-lex_eu,
+.source-lex_ch { background: #fff2a8; }
+.entry-source-tag[class*="source-lex_"]:not(.source-lex_eu):not(.source-lex_ch) {
+    background: #f5f562;
+}
+.entry-source-tag[class*="source-leg_"] {
+    background: #d4edda;
+}
 
 .entry-category {
     font-size: 12px; /* small */
@@ -707,27 +721,27 @@ body {
     opacity: 0.4;
 }
 
-.label-btn-investigation { border-color: #FF6B6B; }
-.label-btn-investigation:hover, .label-btn-investigation.active { background: #FF6B6B; color: #000000; }
+.label-btn-investigation { border-color: var(--label-investigation); }
+.label-btn-investigation:hover, .label-btn-investigation.active { background: var(--label-investigation); color: #000000; }
 
-.label-btn-important { border-color: #FFA94D; }
-.label-btn-important:hover, .label-btn-important.active { background: #FFA94D; color: #000000; }
+.label-btn-important { border-color: var(--label-important); }
+.label-btn-important:hover, .label-btn-important.active { background: var(--label-important); color: #000000; }
 
-.label-btn-background { border-color: #74C0FC; }
-.label-btn-background:hover, .label-btn-background.active { background: #74C0FC; color: #000000; }
+.label-btn-background { border-color: var(--label-background); }
+.label-btn-background:hover, .label-btn-background.active { background: var(--label-background); color: #000000; }
 
-.label-btn-noise { border-color: #e0e0e0; }
-.label-btn-noise:hover, .label-btn-noise.active { background: #e0e0e0; color: #000000; }
+.label-btn-noise { border-color: var(--label-noise); }
+.label-btn-noise:hover, .label-btn-noise.active { background: var(--label-noise); color: #000000; }
 
 .label-btn.active .label-key {
     opacity: 0.5;
 }
 
-/* ═══ Label Colors (shared) ═══ */
-.label-investigation_lead { color: #000000; border-color: #FF6B6B; background: #FF6B6B; }
-.label-important { color: #000000; border-color: #FFA94D; background: #FFA94D; }
-.label-background { color: #000000; border-color: #74C0FC; background: #74C0FC; }
-.label-noise { color: #000000; border-color: #e0e0e0; background: #e0e0e0; }
+/* ═══ Label Colors (shared: dist chart, current label, Top 30 mismatch pills) ═══ */
+.label-investigation_lead { color: #000000; border-color: var(--label-investigation); background: var(--label-investigation); }
+.label-important { color: #000000; border-color: var(--label-important); background: var(--label-important); }
+.label-background { color: #000000; border-color: var(--label-background); background: var(--label-background); }
+.label-noise { color: #000000; border-color: var(--label-noise); background: var(--label-noise); }
 
 /* ═══ Dashboard ═══ */
 .dashboard-section {
@@ -817,10 +831,10 @@ body {
     transition: width 0.3s;
 }
 
-.dist-bar-investigation_lead { background: #FF6B6B; }
-.dist-bar-important { background: #FFA94D; }
-.dist-bar-background { background: #74C0FC; }
-.dist-bar-noise { background: #e0e0e0; }
+.dist-bar-investigation_lead { background: var(--label-investigation); }
+.dist-bar-important { background: var(--label-important); }
+.dist-bar-background { background: var(--label-background); }
+.dist-bar-noise { background: var(--label-noise); }
 
 .dist-count {
     width: 80px;
@@ -1088,10 +1102,11 @@ kbd {
     letter-spacing: 0.3px;
 }
 
-.mismatch-yours {
+.mismatch-yours,
+.mismatch-model {
     padding: 2px 6px;
-    background: #74C0FC;
     border: 1.5px solid #000000;
+    color: #000000;
 }
 
 .mismatch-unlabeled {
@@ -1104,18 +1119,6 @@ kbd {
 .mismatch-arrow {
     font-size: 12px;
     color: #FF2C2C;
-}
-
-.mismatch-model {
-    padding: 2px 6px;
-    background: #FFE0E0;
-    border: 1.5px solid #000000;
-}
-
-.mismatch-noise,
-.mismatch-yours.mismatch-noise {
-    background: #e0e0e0;
-    color: #000000;
 }
 
 .entry-card.mismatch-reviewed {

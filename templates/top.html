@@ -92,26 +92,26 @@
                             {% with entry=e %}{% include "_entry_pills.html" %}{% endwith %}
                             {% if view == 'mismatches' %}
                                 <span class="mismatch-badge">
-                                    <span class="mismatch-yours">{{ item.user_label | replace('_', ' ') }}</span>
+                                    <span class="mismatch-yours label-{{ item.user_label }}">{{ item.user_label | replace('_', ' ') }}</span>
                                     <span class="mismatch-arrow">&rarr;</span>
-                                    <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
+                                    <span class="mismatch-model label-{{ s.predicted_label }}">{{ s.predicted_label | replace('_', ' ') }}</span>
                                 </span>
                             {% elif view == 'recent' %}
                                 <span class="mismatch-badge model-prediction-badge">
                                     <span class="mismatch-unlabeled">Unlabeled</span>
                                     <span class="mismatch-arrow">&rarr;</span>
-                                    <span class="mismatch-model">{{ s.predicted_label | replace('_', ' ') }}</span>
+                                    <span class="mismatch-model label-{{ s.predicted_label }}">{{ s.predicted_label | replace('_', ' ') }}</span>
                                 </span>
                             {% elif view == 'predicted_noise' %}
                                 <span class="mismatch-badge">
                                     {% if item.user_label %}
-                                        <span class="mismatch-yours">{{ item.user_label | replace('_', ' ') }}</span>
+                                        <span class="mismatch-yours label-{{ item.user_label }}">{{ item.user_label | replace('_', ' ') }}</span>
                                         <span class="mismatch-arrow">&rarr;</span>
-                                        <span class="mismatch-model mismatch-noise">Noise</span>
+                                        <span class="mismatch-model label-noise">Noise</span>
                                     {% else %}
                                         <span class="mismatch-unlabeled">Unlabeled</span>
                                         <span class="mismatch-arrow">&rarr;</span>
-                                        <span class="mismatch-model mismatch-noise">Noise</span>
+                                        <span class="mismatch-model label-noise">Noise</span>
                                     {% endif %}
                                 </span>
                             {% endif %}
@@ -211,6 +211,14 @@
     var P = SLUG ? '/p/' + SLUG : '';
     var currentView = '{{ view }}';
 
+    function labelDisplay(label) {
+        return (label || '').replace(/_/g, ' ');
+    }
+
+    function labelPillHtml(role, label) {
+        return '<span class="' + role + ' label-' + label + '">' + labelDisplay(label) + '</span>';
+    }
+
     // Color score badges by fixed score buckets (0-100)
     function scoreColor(v) {
         if (v <= 25) return '#E0E0E0'; // 0-25 gray
@@ -260,13 +268,13 @@
             if (predBadge) {
                 if (label === predicted) {
                     predBadge.innerHTML =
-                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        labelPillHtml('mismatch-yours', label) +
                         '<span style="color:#00aa00;font-weight:700;margin-left:6px;">Accepted</span>';
                 } else {
                     predBadge.innerHTML =
-                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        labelPillHtml('mismatch-yours', label) +
                         '<span class="mismatch-arrow">&rarr;</span>' +
-                        '<span class="mismatch-model">' + (predicted || '').replace(/_/g, ' ') + '</span>' +
+                        labelPillHtml('mismatch-model', predicted) +
                         '<span class="mismatch-reviewed-tag">Corrected</span>';
                 }
             }
@@ -279,13 +287,13 @@
             if (noiseBadge) {
                 if (label === 'noise') {
                     noiseBadge.innerHTML =
-                        '<span class="mismatch-yours mismatch-noise">Noise</span>' +
+                        labelPillHtml('mismatch-yours', 'noise') +
                         '<span class="mismatch-reviewed-tag">Confirmed</span>';
                 } else {
                     noiseBadge.innerHTML =
-                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        labelPillHtml('mismatch-yours', label) +
                         '<span class="mismatch-arrow">&rarr;</span>' +
-                        '<span class="mismatch-model mismatch-noise">Noise</span>' +
+                        labelPillHtml('mismatch-model', 'noise') +
                         '<span class="mismatch-reviewed-tag">Corrected</span>';
                 }
             }
@@ -307,9 +315,9 @@
                     badge.innerHTML = '<span style="color:#00aa00;font-weight:700;">Resolved — model was right</span>';
                 } else {
                     badge.innerHTML =
-                        '<span class="mismatch-yours">' + label.replace(/_/g, ' ') + '</span>' +
+                        labelPillHtml('mismatch-yours', label) +
                         '<span class="mismatch-arrow">&rarr;</span>' +
-                        '<span class="mismatch-model">' + (predicted || '').replace(/_/g, ' ') + '</span>' +
+                        labelPillHtml('mismatch-model', predicted) +
                         '<span class="mismatch-reviewed-tag">Corrected</span>';
                 }
             }
