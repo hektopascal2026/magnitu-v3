@@ -1,0 +1,117 @@
+{% extends "layout.html" %}
+{% block title %}History — Magnitu{% endblock %}
+
+{% block content %}
+
+<!-- SECTION 1: VERSION 1.x -->
+<div class="dashboard-section">
+    <h2>I. The Dawn of Magnitu: Version 1.x (The Prototype Era)</h2>
+    <p class="section-desc">Validating the premise that a system can learn an analyst's editorial priorities from feedback alone.</p>
+
+    <div class="about-section">
+        <p>The project began as an experimental prototype designed to solve information overload for professional monitoring desks. In this initial stage, the platform focused on validating the basic premise: can a system learn an individual analyst's editorial priorities based entirely on implicit and explicit feedback?</p>
+
+        <h3>Key Technical &amp; Operational Milestones</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Foundational Scoring Scale</span>
+                <span class="about-detail-value">Established the core 0 to 100 relevance scale to rank incoming entries, shifting the workflow from a basic chronological feed to a priority-sorted stream.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Four-Label Taxonomy</span>
+                <span class="about-detail-value">Defined the rigid four-class system: <em>Investigation Lead</em> (highest action value), <em>Important</em> (core beat material), <em>Background</em> (contextual information), and <em>Noise</em> (clutter, press releases, duplicates).</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Relevance Feedback Loop</span>
+                <span class="about-detail-value">Introduced a simple interface where an analyst could click through documents, tag them, and immediately build a local classification profile.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SECTION 2: VERSION 2.x -->
+<div class="dashboard-section">
+    <h2>II. The Cognitive Leap: Version 2.x (The Deep Learning &amp; Distillation Bridge)</h2>
+    <p class="section-desc">Deep transformers and the first keyword recipe bridge to PHP scoring.</p>
+
+    <div class="about-section">
+        <p>As data volume grew, simple keyword matching and basic statistical text filters struggled with linguistic nuances, metaphors, and cross-lingual alerts (e.g., matching a Swiss impact within a German or French document). Version 2.x completely overhauled the system's core intelligence, introducing deep learning language processing.</p>
+
+        <h3>Key Technical &amp; Operational Milestones</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Deep Transformers</span>
+                <span class="about-detail-value">Replaced basic text filters with a heavy multilingual transformer (<code>xlm-roberta-base</code>). Terms like <em>Untersuchung</em> and <em>investigation</em> could land near each other in a shared vector space.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">The Distillation Bridge</span>
+                <span class="about-detail-value">Because production Seismo runs on high-speed PHP, it could not natively run heavy Python models. Version 2.x introduced <strong>Knowledge Distillation</strong>: a TF-IDF student mimics the transformer's teacher predictions.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Keyword Recipe Export</span>
+                <span class="about-detail-value">The student's coefficients compile into a lightweight JSON file of weighted keywords (unigrams, bigrams, trigrams). The recipe is pushed to PHP for sub-millisecond live scoring.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SECTION 3: VERSION 3.x -->
+<div class="dashboard-section">
+    <h2>III. The Modern Automation &amp; Multi-Profile Grid: Version 3.0 to 3.5 (The Satellite Era)</h2>
+    <p class="section-desc">Distributed newsrooms, shared embeddings, and refined training for production desks.</p>
+
+    <div class="about-section">
+        <p>While Version 2.x established powerful modeling capabilities, it operated as a monolithic single-user tool that struggled with cold-start data problems and required manual tuning. The Version 3.x series—culminating in Version 3.5—was built to support distributed newsrooms with shared data pools but diverging beats.</p>
+        <p>This era refined the system's core machine learning pipeline to resolve subtle logical blind spots and training inefficiencies.</p>
+
+        <pre class="about-diagram">[Mothership: Global Seismo Input]
+       │
+       ├──► Cached Multilingual E5 Embeddings (Computed Once)
+       │
+       ├──► [Profile A: Tax Beat] ──► LogReg Head ──► Soft Distillation ──► [Satellite PHP Install A]
+       │
+       └──► [Profile B: Trade Beat] ──► LogReg Head ──► Soft Distillation ──► [Satellite PHP Install B]</pre>
+
+        <h3>Key Technical &amp; Operational Milestones</h3>
+        <div class="about-detail-grid">
+            <div class="about-detail">
+                <span class="about-detail-label">Multi-Profile &amp; Satellites</span>
+                <span class="about-detail-value">A mothership-and-satellite paradigm: embeddings run once globally; each profile trains on its own labels and pushes scores to independent Satellite PHP installs.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Gemini Synthetic Scorer</span>
+                <span class="about-detail-value">Optional batch-prompted Gemini pipeline for synthetic labels and reasoning notes, accelerating convergence before manual review.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Multilingual E5 Shift</span>
+                <span class="about-detail-value">Upgraded to <code>multilingual-e5-base</code>, with <code>passage:</code> prefixing at embed time as required by the E5 family.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Natural Language Metadata</span>
+                <span class="about-detail-value">Publisher and feed context is wrapped in fluent prose sentences instead of raw database notation (<code>source_type=…</code>), aligning metadata with the model's text pre-training.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Logistic Regression Heads</span>
+                <span class="about-detail-value">Each profile trains a regularized <strong>logistic regression</strong> classifier on frozen embeddings—stable with modest label counts while E5 carries semantic depth.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Out-of-Fold Calibration</span>
+                <span class="about-detail-value"><strong>Temperature scaling</strong> fit on out-of-fold training predictions; when classes are too sparse for OOF, calibration safely defaults to T=1.0.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Soft-Label Distillation</span>
+                <span class="about-detail-value">The TF-IDF student trains on the teacher's full probability vectors (not just argmax labels), preserving nuance on borderline entries in the exported recipe.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Recipe Cap Optimization</span>
+                <span class="about-detail-value">During distillation, a grid search over unigram, phrase, and source export caps picks values that best track the full model on labeled holdout entries.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Label-Aware Time Decay</span>
+                <span class="about-detail-value">Optional sample-weight decay: <em>noise</em> fades faster, while <em>investigation_lead</em> and <em>important</em> rows keep full weight by default so old junk patterns drop away without erasing high-value precedents.</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

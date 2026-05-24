@@ -153,7 +153,7 @@
         </div>
 
         <h4>Reasoning Notes & Legal Patterns</h4>
-        <p><strong>Reasoning Notes:</strong> The deep model does not read your note text directly. Instead, explaining a label lets the recipe distiller extract your matching keywords and boost them in the Seismo recipe. If enabled in settings, it also applies a <strong>Reasoning-Weight Boost</strong> to that row's training weight.</p>
+        <p><strong>Reasoning Notes:</strong> The deep model does not read your annotations directly. Instead, explaining a label lets the recipe distiller extract phrase patterns you vouched for and boost them in the Seismo recipe. When enabled, a <strong>Reasoning-Weight Boost</strong> also gives those rows extra influence during training so your stated priorities are less likely to be drowned out by bulk noise elsewhere in the dataset.</p>
         
         <p><strong>Legislation Monitoring:</strong> For tracking foreign legislation (e.g., Swiss impacts from EU law), Magnitu learns to spot hidden impacts by recognizing patterns across languages:</p>
         <ul>
@@ -173,16 +173,16 @@
     <div class="about-section">
         <h3>How Magnitu Reads Text</h3>
         <p><strong>Language Model:</strong> Magnitu uses a pre-trained multilingual embedding model (default <code>{{ config.transformer_model_name or 'intfloat/multilingual-e5-base' }}</code>). It is contrastively trained for semantic similarity across 100+ languages, so terms like <em>"Untersuchung"</em> and <em>"investigation"</em> land near each other in vector space. Document text is prefixed with <code>passage:</code> at embed time, as required by the E5 family.</p>
-        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional fingerprint from its title (repeated once for emphasis), description, a body excerpt (up to {{ config.embedding_content_cap or 3000 }} characters), and natural-language Seismo context (source type, publisher, category, legal signals). Long documents also contribute extractive snippets around legal-signal matches from the full body. Up to {{ config.embedding_max_tokens or 512 }} tokens are encoded per entry. Embedding runs once during sync and is cached.</p>
+        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional semantic fingerprint from its title (repeated for emphasis), description, and a body excerpt (up to {{ config.embedding_content_cap or 3000 }} characters). Structured context—publisher, feed type, category, and matched legal-signal phrases—is prepended as <strong>natural-language sentences</strong> rather than raw key=value tags, which tends to work better with the multilingual E5 model. Long documents also contribute extractive snippets from the full body when legal patterns match beyond the excerpt cap. Up to {{ config.embedding_max_tokens or 512 }} tokens are encoded per entry; embeddings are computed once at sync and cached.</p>
 
         <h3>Training & Distillation</h3>
-        <p><strong>The Classifier Head:</strong> Each train fits a <strong>logistic regression</strong> classifier on your cached embeddings (with balanced class weights and optional per-label <code>sample_weight</code> for time-decay and reasoning boost). This stays stable with modest label counts compared to a large neural head.</p>
-        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models. Magnitu trains a simpler TF-IDF student to mimic the transformer's <em>soft probability</em> outputs (not just the argmax label), extracting a lightweight JSON "recipe" of weighted features (unigrams, bigrams, trigrams). Export caps are tuned automatically against labeled holdout entries before the recipe ships to Seismo.</p>
+        <p><strong>The Classifier Head:</strong> Each train fits a regularized <strong>logistic regression</strong> classifier on your cached embeddings (balanced class weights, optional per-label <code>sample_weight</code> for time-decay and reasoning boost). This lightweight linear head stays stable with modest label counts while the E5 embeddings carry most of the semantic work—useful for overlapping topics such as a company name appearing in both regulatory news and routine press releases.</p>
+        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models. Magnitu trains a simpler TF-IDF student using <strong>soft-label distillation</strong>: the teacher's full class probabilities (not just the argmax label) guide the student across all scored entries. Keyword weights (unigrams, bigrams, trigrams) are then exported as a JSON recipe so Seismo can approximate the deep model's scores in milliseconds.</p>
     </div>
 
     <div class="about-section">
         <h3>Relevance Scores & Measuring Quality</h3>
-        <p>Every entry gets a relevance score from 0 to 1 (shown as a percentage). Class probabilities are calibrated with <strong>temperature scaling</strong> fit on out-of-fold predictions from the training fold, so scores are less overconfident before push.</p>
+        <p>Every entry gets a relevance score from 0 to 1 (shown as a percentage). Class probabilities are calibrated with <strong>temperature scaling</strong> fit on out-of-fold predictions from the training fold, so scores are less overconfident before push. <em>Note:</em> If a profile's data pool lacks diverse representation (such as classes containing fewer than two total examples), the calibration system safely defaults to an inactive baseline (T=1.0) to prevent dataset distortion.</p>
         <p>The final score is a weighted composite of calibrated probabilities:</p>
         <ul>
             <li>Investigation Lead: <strong>Weight 1.0</strong></li>
@@ -244,7 +244,11 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Label Time-Decay</span>
-                <span class="about-detail-value">Default Off. Sets a half-life in days so older labels count less during training.</span>
+                <span class="about-detail-value">Default Off. When enabled, uses a <strong>label-aware</strong> split: <em>investigation_lead</em> and <em>important</em> rows keep full weight by default, <em>noise</em> decays faster, and <em>background</em> follows the configured half-life—so old junk patterns fade while high-value precedents stay in play.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Recipe Optimization</span>
+                <span class="about-detail-value">On by default at distillation time. Grid-searches unigram, phrase, and source export caps against labeled holdout entries to pick values that best track the full model's relevance scores before the recipe ships to Seismo.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Reasoning-Weight Boost</span>
@@ -255,7 +259,7 @@
 
     <div class="about-section">
         <h3>Global Settings (Shared Across All Profiles)</h3>
-        <p><strong>Legal-Signal Patterns:</strong> A user-configured list of regex/phrases. Matches are prepended to the embedded text as <code>signals=...</code> and aggressively boosted in the Seismo recipe. <em>Changing this list invalidates all cached embeddings globally.</em></p>
+        <p><strong>Legal-Signal Patterns:</strong> A user-configured list of regex/phrases. Matches are scanned on the full entry body, surfaced in natural-language context and extractive snippets in the embedded text, and boosted in the Seismo recipe. <em>Changing this list invalidates all cached embeddings globally.</em></p>
     </div>
 </div>
 

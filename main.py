@@ -12,6 +12,7 @@ Multi-profile routing:
   /p/{slug}/settings   → profile-specific settings
   /profiles            → redirect to Settings → Profiles section
   /about               → global
+  /history             → global version history
   /setup               → first-run setup
 """
 import warnings
@@ -583,6 +584,13 @@ async def about_page(request: Request):
     ap = db.get_active_profile()
     ctx = _base_context(request, profile=ap)
     return templates.TemplateResponse("about.html", ctx)
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_page(request: Request):
+    ap = db.get_active_profile()
+    ctx = _base_context(request, profile=ap)
+    return templates.TemplateResponse("history.html", ctx)
 
 
 @app.get("/setup", response_class=HTMLResponse)

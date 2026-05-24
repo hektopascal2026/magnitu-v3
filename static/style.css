@@ -1467,6 +1467,19 @@ kbd {
     background: #ffffff;
 }
 
+.about-diagram {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    padding: 12px 14px;
+    margin: 12px 0 16px;
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    overflow-x: auto;
+    white-space: pre;
+    color: #000000;
+}
+
 /* ═══ Empty State ═══ */
 .empty-state {
     text-align: center;
