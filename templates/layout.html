@@ -76,13 +76,17 @@
     </div>
 
     <script>
-    function flash(msg, type) {
+    window.FLASH_DURATION_MS = 20000;
+    function flash(msg, type, durationMs) {
         var bar = document.getElementById('flash-messages');
         var div = document.createElement('div');
         div.className = 'flash flash-' + (type || 'info');
         div.textContent = msg;
         bar.appendChild(div);
-        setTimeout(function() { div.remove(); }, 5000);
+        var ms = (typeof durationMs === 'number' && durationMs > 0)
+            ? durationMs
+            : window.FLASH_DURATION_MS;
+        setTimeout(function() { div.remove(); }, ms);
     }
     </script>
     <script src="/static/entry_expand.js"></script>

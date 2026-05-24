@@ -283,7 +283,7 @@
             .then(function(data) {
                 if (data.success) {
                     flash('Embeddings computed: ' + data.embedding_count + '/' + data.entry_count, 'success');
-                    setTimeout(function() { location.reload(); }, 1500);
+                    setTimeout(function() { location.reload(); }, window.FLASH_DURATION_MS || 20000);
                 } else {
                     flash(data.error || 'Failed.', 'error');
                     embBtn.disabled = false;

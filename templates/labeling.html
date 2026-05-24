@@ -176,6 +176,7 @@
     var taskProgressLabel = document.getElementById('taskProgressLabel');
     var taskProgressFill = document.getElementById('taskProgressFill');
     var taskProgressMeta = document.getElementById('taskProgressMeta');
+    var statusDoneMs = window.FLASH_DURATION_MS || 20000;
 
     function updateModelCoverageBar() {
         if (!coverageFill) return;
@@ -443,7 +444,7 @@
                         fullBtn.disabled = false;
                         syncBtn.textContent = 'Pull';
                         fullBtn.textContent = 'Full Sync';
-                        setTimeout(function() { location.reload(); }, 1500);
+                        setTimeout(function() { location.reload(); }, statusDoneMs);
                     },
                     function(errMsg) {
                         flash('Sync failed: ' + errMsg, 'error');
@@ -487,7 +488,7 @@
                 .then(function(data) {
                     if (data.success) {
                         flash('Model v' + data.version + ' trained! Accuracy: ' + (data.accuracy * 100).toFixed(1) + '%, F1: ' + (data.f1_score * 100).toFixed(1) + '%', 'success');
-                        setTimeout(function() { location.reload(); }, 1500);
+                        setTimeout(function() { location.reload(); }, statusDoneMs);
                     } else {
                         flash('Training failed: ' + (data.error || 'Unknown error'), 'error');
                     }
@@ -530,7 +531,7 @@
                             }
                             pushBtn.disabled = false;
                             pushBtn.textContent = PUSH_BTN_LABEL;
-                            setTimeout(function() { setProgress(false); }, 1200);
+                            setTimeout(function() { setProgress(false); }, statusDoneMs);
                         },
                         function(errMsg) {
                             flash('Push failed: ' + errMsg, 'error');
