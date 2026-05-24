@@ -3,7 +3,6 @@
 
 {% block content %}
 
-<!-- SECTION 1: WHAT IS MAGNITU? -->
 <div class="dashboard-section">
     <h2>I. What is Magnitu?</h2>
     <p class="section-desc">A personal relevance engine that learns what you care about.</p>
@@ -33,7 +32,6 @@
     </div>
 </div>
 
-<!-- SECTION 2: WORKSPACE ARCHITECTURE -->
 <div class="dashboard-section">
     <h2>II. Architecture & Workspaces</h2>
     <p class="section-desc">Designed for newsrooms where teams share a data pool but have diverging beats.</p>
@@ -49,89 +47,8 @@
     </div>
 </div>
 
-<!-- SECTION 3: VERSION HISTORY -->
 <div class="dashboard-section">
-    <h2>III. Version History &amp; Narrative Evolution</h2>
-    <p class="section-desc">The structural transformation of Magnitu from a local sorting prototype into a distributed, multi-profile intelligence grid.</p>
-
-    <div class="about-section">
-        <h3>1. The Dawn of Magnitu: Version 1.x (The Prototype Era)</h3>
-        <p>The project began as an experimental prototype designed to solve information overload for professional monitoring desks. In this initial stage, the platform focused on validating a basic premise: could a system learn an individual analyst's specific editorial priorities based entirely on user-driven relevance feedback?</p>
-
-        <h4>Key Technical &amp; Operational Milestones</h4>
-        <ul>
-            <li><strong>The Foundational Scoring Scale:</strong> Established the core <code>0 to 100</code> relevance scale to rank incoming entries, shifting the workflow from a basic chronological feed to a priority-sorted stream.</li>
-            <li><strong>The Four-Label Taxonomy:</strong> Defined the rigid four-class system to categorize intelligence assets: <em>Investigation Lead</em>, <em>Important</em>, <em>Background</em>, and <em>Noise</em>.</li>
-            <li><strong>User-Driven Feedback Loop:</strong> Introduced a simple interface where an analyst could read through incoming documents, tag them, and build a local classification profile.</li>
-        </ul>
-
-        <div class="about-sampling-grid" style="grid-template-columns: 1fr; margin-top: 15px; margin-bottom: 30px;">
-            <div class="about-sampling-item" style="border-left: 3px solid var(--accent-color, #4a90e2); padding-left: 12px;">
-                <span class="sampling-pill sampling-pill-new" style="background: #e3f2fd; color: #0d47a1;">💡 What This Means for Laymen</span>
-                <p style="margin-top: 10px;">In the prototype era, Magnitu was essentially a smart, digital sorting tray. Instead of forcing you to look at an endless, overwhelming wall of news sorted blindly by time, the system watched what you manually clicked on. If you kept flagging corporate financial filings as important and ignoring generic PR wires, it tried its best to push corporate text to the top of your feed.</p>
-                <p><strong>Concrete Example:</strong> Imagine an analyst covering corporate malfeasance. An article arrives titled <em>"Federal Prosecutor Opens Probe into Swiss Bank Entity."</em> In v1.x, the analyst manually tags this as an <strong>Investigation Lead</strong>. The system logs this and looks for direct keyword matches in future articles. If another article arrives containing the words "Federal Prosecutor" or "Probe," its score gets bumped up slightly on the 0–100 dashboard slider.</p>
-            </div>
-        </div>
-
-        <hr style="border: 0; border-top: 1px dashed #ddd; margin: 30px 0;">
-
-        <h3>2. The Cognitive Leap: Version 2.x (The Deep Learning &amp; Distillation Bridge)</h3>
-        <p>As data volumes expanded, simple keyword matching and basic statistical text filters hit a wall. They struggled intensely with linguistic nuances, metaphors, and cross-lingual alerts (e.g., matching a hidden Swiss market-access impact within a document written entirely in French or Italian). Version 2.x completely overhauled the system's core intelligence by introducing deep learning language processing.</p>
-
-        <h4>Key Technical &amp; Operational Milestones</h4>
-        <ul>
-            <li><strong>Deep Transformers (<code>xlm-roberta-base</code>):</strong> Replaced superficial word-matching with a heavy, multilingual transformer model. This allowed Magnitu to map whole blocks of text into a shared mathematical vector space where conceptual meanings land near each other regardless of spelling or language.</li>
-            <li><strong>The Distillation Bridge:</strong> Created a distinct architectural boundary. Because the primary production platform (<em>Seismo</em>) runs on high-speed, lightweight PHP, it cannot natively run heavy, resource-intensive Python deep learning frameworks. Version 2.x introduced Knowledge Distillation, using a simple TF-IDF "student" model to mimic the complex transformer "teacher's" predictions.</li>
-            <li><strong>The Keyword Recipe Export:</strong> The student model's insights were compiled into a lightweight JSON file containing weighted keywords (unigrams, bigrams, and trigrams). Pushing this "recipe" to PHP achieved sub-millisecond scoring directly on the live server without needing specialized AI hardware in production.</li>
-        </ul>
-
-        <div class="about-sampling-grid" style="grid-template-columns: 1fr; margin-top: 15px; margin-bottom: 30px;">
-            <div class="about-sampling-item" style="border-left: 3px solid var(--accent-color, #4a90e2); padding-left: 12px;">
-                <span class="sampling-pill sampling-pill-diverse" style="background: #f3e5f5; color: #4a148c;">💡 What This Means for Laymen</span>
-                <p style="margin-top: 10px;">Magnitu upgraded from a basic keyword finder to a system that understands the <em>meaning</em> of sentences across multiple languages. Because this "big AI brain" was too heavy and slow to run every single millisecond a page loaded on your website, the system had the big brain act as a teacher. It read the data, figured out the deep patterns, and wrote a simplified, highly effective "cheat sheet" (the keyword recipe) for your web server to use instantly.</p>
-                <p><strong>Concrete Example:</strong> A French EUR-Lex notice discusses <em>accès au marché des pays tiers</em> without mentioning Switzerland. You previously labeled similar English and German trade-impact text as <strong>Important</strong>. The transformer groups the concepts; the distilled recipe learns phrases like "third country" and "market access" so Seismo's PHP scorer still flags the French item high on your dashboard—even though the exact Swiss keyword never appears.</p>
-            </div>
-        </div>
-
-        <hr style="border: 0; border-top: 1px dashed #ddd; margin: 30px 0;">
-
-        <h3>3. The Modern Automation &amp; Multi-Profile Grid: Version 3.0 to 3.5 (The Satellite Era)</h3>
-        <p>While Version 2.x established powerful modeling capabilities, it operated largely as a monolithic tool that struggled with cold-start data problems and manual tuning. The Version 3.x series—culminating in Version 3.5—was built for distributed newsrooms: one shared entry pool, many isolated editorial beats, and independent Satellite Seismo installs per profile.</p>
-
-        <pre class="about-diagram">[Mothership: Global Seismo Input]
-       │
-       ├──► Cached Multilingual E5 Embeddings (Computed Once)
-       │
-       ├──► [Profile A: Tax Beat] ──► LogReg Head ──► Soft Distillation ──► [Satellite PHP Install A]
-       │
-       └──► [Profile B: Trade Beat] ──► LogReg Head ──► Soft Distillation ──► [Satellite PHP Install B]</pre>
-
-        <h4>Key Technical &amp; Operational Milestones</h4>
-        <ul>
-            <li><strong>Multi-Profile &amp; Satellite Architecture:</strong> Embeddings run once globally; each profile trains on its own labels and pushes scores to a dedicated Satellite PHP install.</li>
-            <li><strong>Gemini Synthetic Scorer:</strong> Optional batch labeling with reasoning notes to accelerate convergence before manual review.</li>
-            <li><strong>Multilingual E5 (<code>multilingual-e5-base</code>):</strong> Contrastive embeddings with <code>passage:</code> prefixing and longer legal-body context.</li>
-            <li><strong>Natural Language Metadata:</strong> Publisher and feed context wrapped in fluent prose instead of raw <code>source_type=…</code> database strings.</li>
-            <li><strong>Logistic Regression Heads:</strong> Regularized linear classifiers on frozen embeddings—stable with modest label counts while E5 carries semantic depth.</li>
-            <li><strong>Out-of-Fold Temperature Scaling:</strong> Calibrated probabilities before push; sparse classes safely default to T=1.0.</li>
-            <li><strong>Soft-Label Distillation:</strong> TF-IDF student trained on the teacher's full probability vectors, not just argmax labels.</li>
-            <li><strong>Recipe Cap Optimization:</strong> Grid search over export caps on labeled holdout entries before the recipe ships to Seismo.</li>
-            <li><strong>Label-Aware Time Decay:</strong> Optional training weights: <em>noise</em> fades faster; <em>investigation_lead</em> and <em>important</em> rows keep full weight by default.</li>
-        </ul>
-
-        <div class="about-sampling-grid" style="grid-template-columns: 1fr; margin-top: 15px; margin-bottom: 30px;">
-            <div class="about-sampling-item" style="border-left: 3px solid var(--accent-color, #4a90e2); padding-left: 12px;">
-                <span class="sampling-pill sampling-pill-conflict" style="background: #fff3e0; color: #e65100;">💡 What This Means for Laymen</span>
-                <p style="margin-top: 10px;">Version 3.x is built for a newsroom where everyone reads the same firehose but cares about different things. The heavy reading (embeddings) happens once. Your tax desk and your trade desk each get their own "brain" and their own Seismo dashboard, without duplicating the entire ingest pipeline.</p>
-                <p><strong>Concrete Example:</strong> The mothership ingests the same EU implementing act. The <strong>Tax</strong> profile—trained on corporate tax precedents—scores it as low-priority <em>Background</em>. The <strong>Trade</strong> profile—trained on third-country market-access leads—flags the same document as an <strong>Investigation Lead</strong> at 0.89 and pushes that score only to its Satellite install, while Tax's satellite stays quiet.</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- SECTION 4: WORKFLOW & STRATEGY -->
-<div class="dashboard-section">
-    <h2>IV. Workflow & Strategy</h2>
+    <h2>III. Workflow & Strategy</h2>
     <p class="section-desc">How you interact with Magnitu and guide its learning.</p>
 
     <div class="about-section">
@@ -188,7 +105,7 @@
             </div>
             <div class="about-sampling-item">
                 <span class="sampling-pill sampling-pill-conflict">Conflict</span>
-                <p>Entries where the deep local model and the lightweight PHP recipe disagree.</p>
+                <p>Surfaces entries where the heavy Python MLP Neural Network (the Teacher) and the lightweight PHP TF-IDF Recipe (the Student) strongly disagree on the score. Labeling these targets pinpoints precisely where the distillation recipe is failing to approximate the deep model, rapidly forcing the student to learn your beat's complex edge cases.</p>
             </div>
             <div class="about-sampling-item">
                 <span class="sampling-pill sampling-pill-diverse">Diverse</span>
@@ -201,7 +118,7 @@
         </div>
 
         <h4>Reasoning Notes & Legal Patterns</h4>
-        <p><strong>Reasoning Notes:</strong> The deep model does not read your annotations directly. Instead, explaining a label lets the recipe distiller extract phrase patterns you vouched for and boost them in the Seismo recipe. When enabled, a <strong>Reasoning-Weight Boost</strong> also gives those rows extra influence during training so your stated priorities are less likely to be drowned out by bulk noise elsewhere in the dataset.</p>
+        <p><strong>Reasoning Notes:</strong> The deep model does not read your annotations directly. Instead, explaining a label allows the recipe distiller to extract user-vouched phrase patterns and apply a bounded <strong>Reasoning-Weight Boost</strong>. This mathematically anchors those specific keywords to positive correlation targets, preventing general dataset noise from accidentally driving down the score of terms you manually flagged as critical. When enabled, it also gives those rows extra influence during training so your stated priorities are less likely to be drowned out by bulk noise elsewhere.</p>
         
         <p><strong>Legislation Monitoring:</strong> For tracking foreign legislation (e.g., Swiss impacts from EU law), Magnitu learns to spot hidden impacts by recognizing patterns across languages:</p>
         <ul>
@@ -213,19 +130,18 @@
     </div>
 </div>
 
-<!-- SECTION 5: UNDER THE HOOD -->
 <div class="dashboard-section">
-    <h2>V. Under the Hood</h2>
+    <h2>IV. Under the Hood</h2>
     <p class="section-desc">The mechanics of how Magnitu understands text, trains models, and calculates scores.</p>
 
     <div class="about-section">
         <h3>How Magnitu Reads Text</h3>
         <p><strong>Language Model:</strong> Magnitu uses a pre-trained multilingual embedding model (default <code>{{ config.transformer_model_name or 'intfloat/multilingual-e5-base' }}</code>). It is contrastively trained for semantic similarity across 100+ languages, so terms like <em>"Untersuchung"</em> and <em>"investigation"</em> land near each other in vector space. Document text is prefixed with <code>passage:</code> at embed time, as required by the E5 family.</p>
-        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional semantic fingerprint from its title (repeated for emphasis), description, and a body excerpt (up to {{ config.embedding_content_cap or 3000 }} characters). Structured context—publisher, feed type, category, and matched legal-signal phrases—is prepended as <strong>natural-language sentences</strong> rather than raw key=value tags, which tends to work better with the multilingual E5 model. Long documents also contribute extractive snippets from the full body when legal patterns match beyond the excerpt cap. Up to {{ config.embedding_max_tokens or 512 }} tokens are encoded per entry; embeddings are computed once at sync and cached.</p>
+        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional semantic fingerprint derived from its title (repeated for architectural emphasis), description, and a body text excerpt (up to {{ config.embedding_content_cap or 3000 }} characters). Crucially, structured environmental context (such as publisher authority and feed types) is woven into <strong>fluent natural language sentences</strong> rather than injected as raw code-style database strings. This perfectly aligns the incoming metadata with the multilingual model's native language distribution, maximizing classification consistency. Long documents also contribute extractive snippets from the full body when legal patterns match beyond the excerpt cap. Up to {{ config.embedding_max_tokens or 512 }} tokens are encoded per entry; embeddings are computed once at sync and cached.</p>
 
         <h3>Training & Distillation</h3>
-        <p><strong>The Classifier Head:</strong> Each train fits a regularized <strong>logistic regression</strong> classifier on your cached embeddings (balanced class weights, optional per-label <code>sample_weight</code> for time-decay and reasoning boost). This lightweight linear head stays stable with modest label counts while the E5 embeddings carry most of the semantic work—useful for overlapping topics such as a company name appearing in both regulatory news and routine press releases.</p>
-        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on PHP, it cannot execute Python transformer models. Magnitu trains a simpler TF-IDF student using <strong>soft-label distillation</strong>: the teacher's full class probabilities (not just the argmax label) guide the student across all scored entries. Keyword weights (unigrams, bigrams, trigrams) are then exported as a JSON recipe so Seismo can approximate the deep model's scores in milliseconds.</p>
+        <p><strong>The Classifier Head:</strong> Each training cycle fits a non-linear <strong>Multi-Layer Perceptron (MLP) neural network head</strong> on top of your cached embeddings (optimized with architectural early-stopping and balanced class weights). This allows Magnitu to map complex geometric intersections between overlapping topics—such as isolating specific corporate entities only when they cross paths with explicit regulatory compliance terms—which a simple linear separator would misclassify.</p>
+        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on standard PHP, it cannot execute heavy Python neural networks natively. To bridge this gap, Magnitu uses <strong>Soft-Label Knowledge Distillation</strong>: a simpler TF-IDF student model is trained on the teacher's continuous <em>confidence spectrum</em> (the full probability array) across all entries using a multi-output continuous regression network. By extracting a regression matrix of weighted keywords (unigrams, bigrams, and trigrams) instead of discrete classification tags, the distilled JSON recipe retains the deep model's nuanced uncertainty profiles for millisecond live scoring.</p>
     </div>
 
     <div class="about-section">
@@ -266,9 +182,8 @@
     </div>
 </div>
 
-<!-- SECTION 6: CONFIGURATION -->
 <div class="dashboard-section">
-    <h2>VI. Configuration</h2>
+    <h2>V. Configuration</h2>
     <p class="section-desc">Settings are divided into global (shared) and per-profile knobs.</p>
 
     <div class="about-section">
@@ -292,11 +207,11 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Label Time-Decay</span>
-                <span class="about-detail-value">Default Off. When enabled, uses a <strong>label-aware</strong> split: <em>investigation_lead</em> and <em>important</em> rows keep full weight by default, <em>noise</em> decays faster, and <em>background</em> follows the configured half-life—so old junk patterns fade while high-value precedents stay in play.</span>
+                <span class="about-detail-value">Default Off. Applies a <strong>Label-Aware split-speed formula</strong>: ephemeral daily clutter (Noise rows) decays rapidly to match current news trends, while high-value historical alerts (Investigation Leads) are algorithmically protected from decay to maintain permanent training relevance.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Recipe Optimization</span>
-                <span class="about-detail-value">On by default at distillation time. Grid-searches unigram, phrase, and source export caps against labeled holdout entries to pick values that best track the full model's relevance scores before the recipe ships to Seismo.</span>
+                <span class="about-detail-value">Automated. Runs an architectural bounded minimization routine (L-BFGS-B) during distillation. It automatically pinpoints the exact mathematical keyword ceilings and unigram caps needed to maximize recipe quality scores.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Reasoning-Weight Boost</span>
