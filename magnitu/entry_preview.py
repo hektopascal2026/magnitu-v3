@@ -319,6 +319,68 @@ def _default_lex_preview(description: str, excerpt: str) -> str:
     return _lead(excerpt, 500)
 
 
+LEGAL_SOURCE_TYPES = frozenset({"lex_eu", "lex_ch", "leg_eu", "leg_ch"})
+
+
+def is_legal_training_entry(entry: Dict[str, Any]) -> bool:
+    """True for lex / Leg rows that carry long statutory body text from Seismo."""
+    entry_type = (entry.get("entry_type") or "").strip()
+    if entry_type in ("lex_item", "calendar_event"):
+        return True
+    source_type = (entry.get("source_type") or "").strip().lower()
+    if source_type in LEGAL_SOURCE_TYPES:
+        return True
+    return source_type.startswith("lex_") or source_type.startswith("leg_")
+
+
+def training_corpus_text(entry: Dict[str, Any]) -> str:
+    """
+    Plain-text corpus for ML training / embeddings (not UI card previews).
+
+    Merges description and content, strips HTML, and for lex corpora skips
+    boilerplate headers so substantive articles reach the model.
+    """
+    entry_type = (entry.get("entry_type") or "").strip()
+
+    if entry_type == "lex_item":
+        description = _plain_excerpt((entry.get("description") or "").strip())
+        excerpt = _excerpt_from_row(entry)
+        if not excerpt and not description:
+            return ""
+        source = _lex_source(entry)
+        body = excerpt
+        if excerpt:
+            if source == "eu":
+                body = _eu_body_from_excerpt(excerpt)
+            elif source == "fr":
+                body = _fr_body_from_excerpt(excerpt)
+            elif source == "de":
+                body = _de_body_from_excerpt(excerpt)
+        parts = []
+        if description:
+            parts.append(description)
+        if body:
+            desc_norm = description.strip()
+            body_norm = body.strip()
+            if not desc_norm or body_norm != desc_norm:
+                if desc_norm and body_norm.startswith(desc_norm) and len(body_norm) <= len(desc_norm) + 40:
+                    pass
+                else:
+                    parts.append(body)
+        return "\n\n".join(parts).strip()
+
+    if entry_type == "calendar_event":
+        return _plain_excerpt(calendar_event_body_text(entry))
+
+    description = _plain_excerpt((entry.get("description") or "").strip())
+    content = _plain_excerpt((entry.get("content") or "").strip())
+    if content and content == description:
+        content = ""
+    if description and content:
+        return "{}\n\n{}".format(description, content)
+    return content or description or ""
+
+
 def lex_card_preview_text(entry: Dict[str, Any]) -> str:
     """Card body for lex rows — mirrors Seismo ``LexCardPreview::previewText``."""
     source = _lex_source(entry)

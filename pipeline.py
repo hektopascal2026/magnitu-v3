@@ -37,6 +37,7 @@ from config import (
     MODELS_DIR,
     get_config,
 )
+from magnitu.entry_preview import is_legal_training_entry, training_corpus_text
 
 logger = logging.getLogger(__name__)
 
@@ -585,10 +586,12 @@ def invalidate_embedder_cache():
 
 
 CONTENT_CAP = 3000
+LEGAL_CONTENT_CAP = 12000  # lex / Leg statutory body text from Seismo
 EMBEDDING_MAX_LENGTH = 512
 SOURCE_NAME_CAP = 120
 SOURCE_CATEGORY_CAP = 80
 LEGAL_SIGNAL_CAP = 8  # max distinct signals to prepend per entry
+LEGAL_EXTRACTIVE_SNIPPET_CAP = 6
 EXTRACTIVE_SNIPPET_CAP = 3  # max excerpts from full content around legal-signal hits
 
 # Human-readable source_type lines for E5 embedding context (not sent to Seismo).
@@ -689,6 +692,22 @@ def _extractive_snippets(full_content: str, patterns: Optional[List[str]] = None
     return snippets
 
 
+def _content_cap_for_entry(entry: dict) -> int:
+    """Character cap for corpus text; higher for lex / Leg entries."""
+    cfg = get_config()
+    if is_legal_training_entry(entry):
+        try:
+            cap = int(cfg.get("embedding_legal_content_cap", LEGAL_CONTENT_CAP) or LEGAL_CONTENT_CAP)
+        except (TypeError, ValueError):
+            cap = LEGAL_CONTENT_CAP
+    else:
+        try:
+            cap = int(cfg.get("embedding_content_cap", CONTENT_CAP) or CONTENT_CAP)
+        except (TypeError, ValueError):
+            cap = CONTENT_CAP
+    return max(500, min(50000, cap))
+
+
 def _natural_source_context(entry: dict, signals: Optional[List[str]] = None) -> str:
     """Build a short natural-language context block for E5 (not Seismo schema)."""
     parts = []
@@ -711,28 +730,36 @@ def _build_entry_text(entry: dict, legal_patterns: Optional[List[str]] = None) -
     Build text for embedding/scoring from an entry's fields.
 
     Title is repeated so it dominates the embedding even for entries with long
-    content.  Content is capped at CONTENT_CAP chars so a long government press
-    release doesn't push the title out of the tokenizer window.
+    content.  Corpus text uses ``training_corpus_text`` (HTML stripped; lex/Leg
+    boilerplate skipped) and is capped per entry type — higher for statutory
+    sources so Seismo's full body text informs training.
 
     A natural-language context prefix (source type, publisher, legal signals)
     helps E5 interpret institutional gravity.  Legal-signal patterns are scanned
-    on the full uncapped content; matching regions are injected as extractive
+    on the full uncapped corpus; matching regions are injected as extractive
     snippets so buried clauses still influence the embedding.
     """
     title = entry.get("title", "").strip()
-    desc = entry.get("description", "").strip()
-    full_content = entry.get("content", "").strip()
-    content = full_content[:CONTENT_CAP]
+    full_corpus = training_corpus_text(entry)
+    content_cap = _content_cap_for_entry(entry)
+    corpus = full_corpus[:content_cap]
 
-    scan_text = " ".join(part for part in [title, desc, full_content] if part)
+    scan_text = " ".join(part for part in [title, full_corpus] if part)
     signals = _detect_legal_signals(scan_text, legal_patterns)
     context = _natural_source_context(entry, signals)
-    snippets = _extractive_snippets(full_content, legal_patterns)
+    snippet_cap = (
+        LEGAL_EXTRACTIVE_SNIPPET_CAP
+        if is_legal_training_entry(entry)
+        else EXTRACTIVE_SNIPPET_CAP
+    )
+    snippets = _extractive_snippets(
+        full_corpus, legal_patterns, max_snippets=snippet_cap,
+    )
 
     body_parts = []
     if snippets:
         body_parts.extend(snippets)
-    body_parts.extend(part for part in [title, title, desc, content] if part)
+    body_parts.extend(part for part in [title, title, corpus] if part)
     body = "\n".join(body_parts) if body_parts else "(empty)"
 
     if context:

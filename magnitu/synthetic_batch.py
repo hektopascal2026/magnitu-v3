@@ -11,6 +11,7 @@ import sampler
 from magnitu.gemini import GeminiClient
 from magnitu.gemini_config import GeminiConfig
 from magnitu.prompts import MAGNITU_LABELS
+from magnitu.entry_preview import training_corpus_text
 from magnitu.synthetic_scorer import (
     call_gemini_for_synthetic_label,
     call_gemini_for_synthetic_label_batch,
@@ -20,10 +21,11 @@ SOURCE_GEMINI = "Gemini"
 
 
 def _entry_fields_for_prompt(entry: Dict[str, Any]) -> Dict[str, str]:
+    corpus = training_corpus_text(entry)
     return {
         "title": str(entry.get("title") or ""),
-        "description": str(entry.get("description") or ""),
-        "content": str(entry.get("content") or ""),
+        "description": "" if corpus else str(entry.get("description") or ""),
+        "content": corpus or str(entry.get("content") or ""),
         "link": str(entry.get("link") or ""),
         "author": str(entry.get("author") or ""),
         "source_name": str(entry.get("source_name") or ""),

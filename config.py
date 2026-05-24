@@ -79,7 +79,7 @@ MODELS_DIR.mkdir(exist_ok=True)
 # Default HuggingFace embedding backbone (multilingual E5, 768-D).
 DEFAULT_TRANSFORMER_MODEL = "intfloat/multilingual-e5-base"
 # Bump when backbone, prefix rules, or content/token caps change (triggers re-embed).
-EMBEDDING_STACK_GENERATION = "e5-v2"
+EMBEDDING_STACK_GENERATION = "e5-v3"
 
 # Defaults
 DEFAULTS = {
@@ -96,6 +96,8 @@ DEFAULTS = {
     "embedding_stack_generation": EMBEDDING_STACK_GENERATION,
     "embedding_max_tokens": 512,
     "embedding_content_cap": 3000,
+    # Higher cap for lex_item / calendar_event (Leg) and lex_* / leg_* source types.
+    "embedding_legal_content_cap": 12000,
     "use_gpu": False,  # Use CUDA/MPS when available for embeddings
     # Blend toward investigation_lead in pushed relevance_score (0 = off, max 0.25).
     "discovery_lead_blend": 0.0,

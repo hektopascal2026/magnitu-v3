@@ -85,6 +85,9 @@ INVESTIGATION_LEAD_REASONING_RETRY_SUFFIX = (
 )
 
 
+GEMINI_SYNTHETIC_CONTENT_CAP = 8000
+
+
 def build_synthetic_label_batch_prompt(
     entries: List[Dict[str, Any]],
 ) -> str:
@@ -102,6 +105,8 @@ def build_synthetic_label_batch_prompt(
         "ENTRIES TO CLASSIFY",
         "-------------------",
     ]
+    from magnitu.entry_preview import training_corpus_text
+
     for idx, e in enumerate(entries):
         parts.append("ITEM #%d" % (idx + 1))
         parts.append("entry_id: %s" % e.get("entry_id"))
@@ -110,9 +115,17 @@ def build_synthetic_label_batch_prompt(
         desc = str(e.get("description") or "").strip()
         if desc:
             parts.append("description: %s" % desc)
+        corpus = training_corpus_text(e)
+        if corpus:
+            if len(corpus) > GEMINI_SYNTHETIC_CONTENT_CAP:
+                corpus = corpus[:GEMINI_SYNTHETIC_CONTENT_CAP].rstrip() + "…"
+            parts.append("content: %s" % corpus)
         source = str(e.get("source_name") or "").strip()
         if source:
             parts.append("source: %s" % source)
+        st = str(e.get("source_type") or "").strip()
+        if st:
+            parts.append("source_type: %s" % st)
         parts.append("---")
     
     parts.append("")
@@ -155,7 +168,10 @@ def build_synthetic_label_user_prompt(
     if description.strip():
         parts.append("description: %s" % description.strip())
     if content.strip():
-        parts.append("content: %s" % content.strip())
+        body = content.strip()
+        if len(body) > GEMINI_SYNTHETIC_CONTENT_CAP:
+            body = body[:GEMINI_SYNTHETIC_CONTENT_CAP].rstrip() + "…"
+        parts.append("content: %s" % body)
     if link.strip():
         parts.append("link: %s" % link.strip())
     if author.strip():

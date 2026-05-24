@@ -1754,6 +1754,16 @@ def _migrate_config():
         cfg["embedding_content_cap"] = content_cap
         changed = True
         needs_reembed = True
+    legal_cap = pipeline.LEGAL_CONTENT_CAP
+    if cfg.get("embedding_legal_content_cap") != legal_cap:
+        import logging
+        logging.getLogger(__name__).info(
+            "Embedding legal content cap changed (%s → %s); re-embedding required.",
+            cfg.get("embedding_legal_content_cap"), legal_cap,
+        )
+        cfg["embedding_legal_content_cap"] = legal_cap
+        changed = True
+        needs_reembed = True
     if changed:
         save_config(cfg)
     if needs_reembed:
