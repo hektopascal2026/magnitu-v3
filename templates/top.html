@@ -131,13 +131,8 @@
                         {% endif %}
                     </h3>
 
-                    <!-- Description + body (e.g. eingereichter Text for lex) -->
-                    {% set desc_trim = (e.description or "")|trim %}
-                    {% set cont_trim = (e.content or "")|trim %}
-                    {% set is_lex = e.entry_type == 'calendar_event' or (e.source_type and (e.source_type.startswith('lex') or e.source_type.startswith('leg_') or e.source_type == 'parl_press')) %}
-                    {% set preview_desc = 200 %}
-                    {% set preview_content = 400 %}
-                    {% include "_entry_body.html" %}
+                    <!-- Description preview (Seismo 0.6 card body rules) -->
+                    {% with entry=e %}{% include "_entry_preview.html" %}{% endwith %}
 
                     <div class="reasoning-row">
                         <input type="text" class="reasoning-input"

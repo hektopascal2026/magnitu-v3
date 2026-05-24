@@ -1,0 +1,9 @@
+{# Seismo 0.6–aligned card body preview. Expects ``entry`` in scope. #}
+{% set card_body = entry_card_body(entry) %}
+{% if card_body and not card_body.skip %}
+    <div class="entry-content entry-preview">{{ card_body.preview }}</div>
+    {% if card_body.has_more %}
+        <div class="entry-full-content">{{ card_body.full }}</div>
+        <button type="button" class="entry-expand-btn" aria-expanded="false">expand &#9660;</button>
+    {% endif %}
+{% endif %}

@@ -588,6 +588,16 @@ body {
     margin-bottom: 4px;
 }
 
+.entry-full-content {
+    display: none;
+    color: #000000;
+    line-height: 1.5;
+    font-size: 12px;
+    margin-bottom: 4px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
 .entry-body-block {
     margin-top: 6px;
     margin-bottom: 4px;

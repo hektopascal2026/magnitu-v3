@@ -41,6 +41,7 @@ from magnitu.prompts import DEFAULT_GEMINI_PERSONA
 from magnitu.synthetic_batch import run_gemini_synthetic_batch_job
 from magnitu.accent_theme import safe_accent_for_profile, contrast_text_on_accent, get_theme_colors
 from magnitu.entry_pills import entry_pill_texts
+from magnitu.entry_preview import entry_card_body
 from magnitu.time_display import format_seismo_timestamp, format_zurich_datetime
 from config import (
     get_config,
@@ -73,6 +74,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["entry_pill_texts"] = entry_pill_texts
+templates.env.globals["entry_card_body"] = entry_card_body
 templates.env.filters["zurich_dt"] = format_zurich_datetime
 
 _TOUCH_ICON = BASE_DIR / "static" / "apple-touch-icon.png"
