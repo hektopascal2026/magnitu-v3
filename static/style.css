@@ -16,6 +16,7 @@
     --accent-fg: #000000;
     --accent-subtle: #FFF7F7;
     --accent-border: #FF6B6B;
+    --border-focus: #94a3b8;
     /* Relevance labels — same hues everywhere (pills, badges, buttons, borders) */
     --label-investigation: #FF6B6B;
     --label-important: #FFA94D;
@@ -1480,6 +1481,103 @@ kbd {
     color: #000000;
 }
 
+/* ═══ Pipeline visualizer (History / About) ═══ */
+.pipeline-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0;
+}
+.pipeline-stage {
+    display: flex;
+    justify-content: center;
+}
+.pipeline-node {
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 12px 16px;
+    text-align: center;
+    min-width: 220px;
+    max-width: 100%;
+}
+.node-mothership {
+    border-top: 3px solid var(--accent-border);
+}
+.node-mothership h4 {
+    font-size: 13px;
+    font-weight: 700;
+    margin: 4px 0 2px;
+}
+.node-mothership p {
+    font-size: 11px;
+    color: #444;
+    margin: 0;
+}
+.pipeline-node h4 {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 4px;
+}
+.node-tag {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #444;
+    background: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+}
+.pipeline-branches {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.pipeline-branch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.node-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #444;
+}
+.step-arrow {
+    color: var(--border-focus);
+}
+.accent-tax {
+    background: #f0fdf4;
+    color: #166534;
+}
+.accent-trade {
+    background: #eff6ff;
+    color: #1e40af;
+}
+.satellite-tag {
+    background: #000000;
+    color: #ffffff;
+}
+.branch-connector {
+    width: 24px;
+    height: 1px;
+    background: var(--border-focus);
+    flex-shrink: 0;
+}
+
 /* ═══ Empty State ═══ */
 .empty-state {
     text-align: center;
@@ -1619,4 +1717,6 @@ kbd {
     .progress-stats { flex-wrap: wrap; gap: 10px; }
     .stats-grid { grid-template-columns: repeat(3, 1fr); }
     .keywords-grid { grid-template-columns: 1fr; }
+    .pipeline-branch { flex-direction: column; gap: 8px; }
+    .branch-connector { width: 1px; height: 16px; }
 }

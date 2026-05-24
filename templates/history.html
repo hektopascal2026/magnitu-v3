@@ -27,7 +27,7 @@
         </div>
 
         <div class="about-sampling-grid" style="grid-template-columns: 1fr; margin-top: 20px;">
-            <div class="about-sampling-item" style="border-left: 3px solid var(--accent-color, #4a90e2); padding-left: 12px;">
+            <div class="about-sampling-item" style="border-left: 3px solid var(--border-focus); padding-left: 12px;">
                 <span class="sampling-pill sampling-pill-new" style="background: #e3f2fd; color: #0d47a1;">💡 What This Means for Laymen</span>
                 <p style="margin-top: 10px;">In the prototype era, Magnitu was essentially a smart, digital sorting tray. Instead of forcing you to look at an endless, overwhelming wall of news sorted blindly by time, the system watched what you manually clicked on. If you kept flagging corporate financial filings as important and ignoring generic PR wires, it tried its best to push corporate text to the top of your feed.</p>
                 <p><strong>Concrete Example:</strong> Imagine an analyst covering corporate malfeasance. An article arrives titled <em>"Federal Prosecutor Opens Probe into Swiss Bank Entity."</em> In v1.x, the analyst manually tags this as an <strong>Investigation Lead</strong>. The system logs this and looks for direct keyword matches in future articles. If another article arrives containing the words "Federal Prosecutor" or "Probe," its score gets bumped up slightly on the 0–100 dashboard slider.</p>
@@ -60,7 +60,7 @@
         </div>
 
         <div class="about-sampling-grid" style="grid-template-columns: 1fr; margin-top: 20px;">
-            <div class="about-sampling-item" style="border-left: 3px solid var(--accent-color, #4a90e2); padding-left: 12px;">
+            <div class="about-sampling-item" style="border-left: 3px solid var(--border-focus); padding-left: 12px;">
                 <span class="sampling-pill sampling-pill-diverse" style="background: #f3e5f5; color: #4a148c;">💡 What This Means for Laymen</span>
                 <p style="margin-top: 10px;">Magnitu upgraded from a basic keyword finder to a system that understands the <em>meaning</em> of sentences across multiple languages. Because this "big AI brain" was too heavy and slow to run every single millisecond a page loaded on your website, the system had the big brain act as a teacher. It read the data, figured out the deep patterns, and wrote a simplified, highly effective "cheat sheet" (the keyword recipe) for your web server to use instantly.</p>
                 <p><strong>Concrete Example:</strong> A French EUR-Lex notice discusses <em>accès au marché des pays tiers</em> without mentioning Switzerland. You previously labeled similar English and German trade-impact text as <strong>Important</strong>. The transformer groups the concepts; the distilled recipe learns phrases like "third country" and "market access" so Seismo's PHP scorer still flags the French item high on your dashboard—even though the exact Swiss keyword never appears.</p>
@@ -77,13 +77,47 @@
         <p>While Version 2.x established powerful modeling capabilities, it operated as a monolithic single-user tool that struggled with cold-start data problems and required manual tuning. The Version 3.x series—culminating in Version 3.5—was built to support distributed newsrooms with shared data pools but diverging beats.</p>
         <p>This era refined the system's core machine learning pipeline to resolve subtle logical blind spots and training inefficiencies.</p>
 
-        <pre class="about-diagram">[Mothership: Global Seismo Input]
-       │
-       ├──► Cached Multilingual E5 Embeddings (Computed Once)
-       │
-       ├──► [Profile A: Tax Beat] ──► MLP Head ──► Soft Distillation ──► [Satellite PHP Install A]
-       │
-       └──► [Profile B: Trade Beat] ──► MLP Head ──► Soft Distillation ──► [Satellite PHP Install B]</pre>
+        <div class="pipeline-flow">
+            <div class="pipeline-stage">
+                <div class="pipeline-node node-mothership">
+                    <span class="node-tag">Global Ingest</span>
+                    <h4>Mothership: Global Seismo Input</h4>
+                    <p>Computes Cached Multilingual E5 Embeddings Once</p>
+                </div>
+            </div>
+
+            <div class="pipeline-branches">
+                <div class="pipeline-branch">
+                    <div class="branch-connector"></div>
+                    <div class="pipeline-node">
+                        <span class="node-tag accent-tax">Profile A: Tax Beat</span>
+                        <div class="node-steps">
+                            <span>MLP Head</span> <span class="step-arrow">→</span> <span>Soft Distillation</span>
+                        </div>
+                    </div>
+                    <div class="branch-connector"></div>
+                    <div class="pipeline-node">
+                        <span class="node-tag satellite-tag">Satellite A</span>
+                        <h4>Dedicated PHP Install</h4>
+                    </div>
+                </div>
+
+                <div class="pipeline-branch">
+                    <div class="branch-connector"></div>
+                    <div class="pipeline-node">
+                        <span class="node-tag accent-trade">Profile B: Trade Beat</span>
+                        <div class="node-steps">
+                            <span>MLP Head</span> <span class="step-arrow">→</span> <span>Soft Distillation</span>
+                        </div>
+                    </div>
+                    <div class="branch-connector"></div>
+                    <div class="pipeline-node">
+                        <span class="node-tag satellite-tag">Satellite B</span>
+                        <h4>Dedicated PHP Install</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <h3>Key Technical &amp; Operational Milestones</h3>
         <div class="about-detail-grid">
@@ -126,7 +160,7 @@
         </div>
 
         <div class="about-sampling-grid" style="grid-template-columns: 1fr; margin-top: 20px;">
-            <div class="about-sampling-item" style="border-left: 3px solid var(--accent-color, #4a90e2); padding-left: 12px;">
+            <div class="about-sampling-item" style="border-left: 3px solid var(--border-focus); padding-left: 12px;">
                 <span class="sampling-pill sampling-pill-conflict" style="background: #fff3e0; color: #e65100;">💡 What This Means for Laymen</span>
                 <p style="margin-top: 10px;">Version 3.x is built for a newsroom where everyone reads the same firehose but cares about different things. The heavy reading (embeddings) happens once. Your tax desk and your trade desk each get their own "brain" and their own Seismo dashboard, without duplicating the entire ingest pipeline.</p>
                 <p><strong>Concrete Example:</strong> The mothership ingests an intricate 60-page cross-border legislative framework issued by the EU Council regarding third-country financial market access.
