@@ -205,8 +205,15 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     # extreme scores while short entries cluster near 0.5
     keywords, source_weights = _normalize_weights(keywords, source_weights)
 
-    # Stabilize export so repeated tokens and source priors cannot dominate.
-    keywords, source_weights = _stabilize_export_weights(keywords, source_weights)
+    # Stabilize export (optionally tune caps against labeled holdout first).
+    cfg = get_config()
+    cap_params = None
+    if cfg.get("recipe_optimize_caps", True):
+        keywords, source_weights, cap_params = _optimize_recipe_caps(
+            keywords, source_weights, profile_id=profile_id
+        )
+    else:
+        keywords, source_weights = _stabilize_export_weights(keywords, source_weights)
 
     # Floor weights for curated anchor concepts. _stabilize_export_weights caps
     # every phrase at recipe_max_phrase_abs (default 0.24), which silently
@@ -238,6 +245,8 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
         "keywords": keywords,
         "source_weights": source_weights,
     }
+    if cap_params:
+        recipe["export_caps"] = cap_params
 
     # Save recipe to disk
     recipe_filename = "recipe_v{}.json".format(model_info["version"])
@@ -305,7 +314,8 @@ def _normalize_weights(keywords: dict, source_weights: dict) -> tuple:
     magnitudes.sort()
     median_mag = magnitudes[len(magnitudes) // 2]
 
-    TARGET_MAGNITUDE = 2.0
+    cfg = get_config()
+    TARGET_MAGNITUDE = float(cfg.get("recipe_normalize_target", 2.0) or 2.0)
     if median_mag < 0.01:
         return keywords, source_weights
 
@@ -367,7 +377,8 @@ def _apply_floor_weights(keywords: dict) -> dict:
     return keywords
 
 
-def _stabilize_export_weights(keywords: dict, source_weights: dict) -> tuple:
+def _stabilize_export_weights(keywords: dict, source_weights: dict,
+                              caps: Optional[dict] = None) -> tuple:
     """
     Clamp exported weights to keep Seismo recipe scoring stable:
     - lower cap for unigrams (repeat more often in text)
@@ -375,10 +386,16 @@ def _stabilize_export_weights(keywords: dict, source_weights: dict) -> tuple:
     - strict cap for source priors so text remains dominant
     """
     cfg = get_config()
-    max_unigram_abs = float(cfg.get("recipe_max_unigram_abs", 0.12))
-    max_phrase_abs = float(cfg.get("recipe_max_phrase_abs", 0.24))
-    max_source_abs = float(cfg.get("recipe_max_source_abs", 0.08))
-    min_abs_keep = float(cfg.get("recipe_min_abs_keep", 0.01))
+    if caps is None:
+        caps = {}
+    max_unigram_abs = float(caps.get("max_unigram_abs",
+                                      cfg.get("recipe_max_unigram_abs", 0.12)))
+    max_phrase_abs = float(caps.get("max_phrase_abs",
+                                     cfg.get("recipe_max_phrase_abs", 0.24)))
+    max_source_abs = float(caps.get("max_source_abs",
+                                    cfg.get("recipe_max_source_abs", 0.08)))
+    min_abs_keep = float(caps.get("min_abs_keep",
+                                  cfg.get("recipe_min_abs_keep", 0.01)))
 
     stable_kw = {}
     for token, cls_wts in keywords.items():
@@ -521,6 +538,129 @@ def _boost_legal_templates(keywords: dict) -> dict:
     return keywords
 
 
+def _recipe_composite(entry: dict, keywords: dict, source_weights: dict,
+                      classes: list, class_wts: list) -> float:
+    """Seismo-style composite relevance from a keyword recipe."""
+    text = "{} {} {}".format(
+        entry.get("title", ""),
+        entry.get("description", ""),
+        entry.get("content", ""),
+    ).lower()
+    all_tokens = _extract_recipe_tokens(text)
+
+    class_scores = {c: 0.0 for c in classes}
+    for token in all_tokens:
+        if token in keywords:
+            for cls, wt in keywords[token].items():
+                if cls in class_scores:
+                    class_scores[cls] += wt
+
+    src = entry.get("source_type", "")
+    if src in source_weights:
+        for cls, wt in source_weights[src].items():
+            if cls in class_scores:
+                class_scores[cls] += wt
+
+    max_s = max(class_scores.values()) if class_scores else 0
+    exp_scores = {c: np.exp(s - max_s) for c, s in class_scores.items()}
+    exp_sum = sum(exp_scores.values())
+    probs = {
+        c: exp_scores[c] / exp_sum if exp_sum > 0 else 1.0 / len(classes)
+        for c in classes
+    }
+    return float(sum(probs.get(c, 0) * class_wts[idx] for idx, c in enumerate(classes)))
+
+
+def _optimize_recipe_caps(keywords: dict, source_weights: dict,
+                          profile_id: int = 1) -> tuple:
+    """
+    Grid-search export cap values to maximize recipe-vs-model score correlation
+    on labeled entries, then apply the best caps via _stabilize_export_weights.
+    """
+    cfg = get_config()
+    classes = ["investigation_lead", "important", "background", "noise"]
+    class_wts = [1.0, 0.66, 0.33, 0.0]
+
+    labels = db.get_all_labels(profile_id=profile_id)
+    entry_map = {
+        db.entry_key_from_mapping(e): e for e in db.get_all_entries()
+    }
+    eval_entries = []
+    for lbl in labels:
+        key = db.entry_key_from_mapping(lbl)
+        if key in entry_map:
+            eval_entries.append(entry_map[key])
+    if len(eval_entries) < 5:
+        logger.info("Recipe cap optimization skipped (<5 labeled entries for eval)")
+        stable = _stabilize_export_weights(keywords, source_weights)
+        return stable[0], stable[1], None
+
+    full_scores = score_entries(eval_entries, profile_id=profile_id)
+    model_score_map = {
+        db.entry_key_from_mapping(s): s["relevance_score"]
+        for s in full_scores
+    }
+    if len(model_score_map) < 5:
+        stable = _stabilize_export_weights(keywords, source_weights)
+        return stable[0], stable[1], None
+
+    default_caps = {
+        "max_unigram_abs": float(cfg.get("recipe_max_unigram_abs", 0.12)),
+        "max_phrase_abs": float(cfg.get("recipe_max_phrase_abs", 0.24)),
+        "max_source_abs": float(cfg.get("recipe_max_source_abs", 0.08)),
+    }
+    unigram_grid = [0.08, 0.10, 0.12, 0.14, 0.16]
+    phrase_grid = [0.18, 0.22, 0.26, 0.30, 0.34]
+    source_grid = [0.06, 0.08, 0.10, 0.12]
+
+    best_quality = -1.0
+    best_caps = dict(default_caps)
+    best_kw = keywords
+    best_sw = source_weights
+
+    for max_u in unigram_grid:
+        for max_p in phrase_grid:
+            for max_s in source_grid:
+                trial_caps = {
+                    "max_unigram_abs": max_u,
+                    "max_phrase_abs": max_p,
+                    "max_source_abs": max_s,
+                }
+                t_kw, t_sw = _stabilize_export_weights(keywords, source_weights, trial_caps)
+                paired_model = []
+                paired_recipe = []
+                for entry in eval_entries:
+                    key = db.entry_key_from_mapping(entry)
+                    if key not in model_score_map:
+                        continue
+                    composite = _recipe_composite(
+                        entry, t_kw, t_sw, classes, class_wts
+                    )
+                    paired_model.append(model_score_map[key])
+                    paired_recipe.append(composite)
+                if len(paired_model) < 5:
+                    continue
+                corr = float(np.corrcoef(paired_model, paired_recipe)[0, 1])
+                quality = max(0.0, corr) if corr == corr else 0.0
+                if quality > best_quality:
+                    best_quality = quality
+                    best_caps = trial_caps
+                    best_kw = t_kw
+                    best_sw = t_sw
+
+    logger.info(
+        "Recipe cap optimization: quality=%.4f caps=%s",
+        best_quality, best_caps,
+    )
+    cap_meta = {
+        "quality": round(best_quality, 4),
+        "max_unigram_abs": best_caps["max_unigram_abs"],
+        "max_phrase_abs": best_caps["max_phrase_abs"],
+        "max_source_abs": best_caps["max_source_abs"],
+    }
+    return best_kw, best_sw, cap_meta
+
+
 def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
                             profile_id: int = 1) -> float:
     """
@@ -554,36 +694,7 @@ def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
         key = db.entry_key_from_mapping(entry)
         if key not in model_score_map:
             continue
-
-        text = "{} {} {}".format(
-            entry.get("title", ""),
-            entry.get("description", ""),
-            entry.get("content", ""),
-        ).lower()
-        all_tokens = _extract_recipe_tokens(text)
-
-        class_scores = {c: 0.0 for c in classes}
-        for token in all_tokens:
-            if token in kw:
-                for cls, wt in kw[token].items():
-                    if cls in class_scores:
-                        class_scores[cls] += wt
-
-        src = entry.get("source_type", "")
-        if src in source_weights_map:
-            for cls, wt in source_weights_map[src].items():
-                if cls in class_scores:
-                    class_scores[cls] += wt
-
-        max_s = max(class_scores.values()) if class_scores else 0
-        exp_scores = {c: np.exp(s - max_s) for c, s in class_scores.items()}
-        exp_sum = sum(exp_scores.values())
-        probs = {
-            c: exp_scores[c] / exp_sum if exp_sum > 0 else 1 / len(classes)
-            for c in classes
-        }
-
-        composite = sum(probs.get(c, 0) * class_wts[idx] for idx, c in enumerate(classes))
+        composite = _recipe_composite(entry, kw, source_weights_map, classes, class_wts)
         paired_model.append(model_score_map[key])
         paired_recipe.append(composite)
 

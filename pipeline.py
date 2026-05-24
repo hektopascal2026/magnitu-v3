@@ -589,6 +589,22 @@ EMBEDDING_MAX_LENGTH = 512
 SOURCE_NAME_CAP = 120
 SOURCE_CATEGORY_CAP = 80
 LEGAL_SIGNAL_CAP = 8  # max distinct signals to prepend per entry
+EXTRACTIVE_SNIPPET_CAP = 3  # max excerpts from full content around legal-signal hits
+
+# Human-readable source_type lines for E5 embedding context (not sent to Seismo).
+SOURCE_TYPE_DESCRIPTIONS = {
+    "rss": "This is a news feed article.",
+    "substack": "This is a newsletter article.",
+    "email": "This is an email message.",
+    "lex_eu": "This is an official EU legal publication.",
+    "lex_ch": "This is an official Swiss legal publication.",
+    "leg_eu": "This is an EU legislative document.",
+    "leg_ch": "This is a Swiss legislative document.",
+}
+
+PRIORITY_TRAINING_LABELS = frozenset({"investigation_lead", "important"})
+SOFT_DISTILL_MIN_PROBA = 0.02
+HUMAN_DISTILL_WEIGHT = 3.0
 
 
 _LEGAL_PATTERNS_CACHE = {"key": None, "compiled": []}
@@ -638,51 +654,89 @@ def _detect_legal_signals(text: str, patterns: Optional[List[str]] = None) -> Li
     return hits
 
 
+def _extractive_snippets(full_content: str, patterns: Optional[List[str]] = None,
+                         window: Optional[int] = None,
+                         max_snippets: int = EXTRACTIVE_SNIPPET_CAP) -> List[str]:
+    """
+    Pull short excerpts from uncapped content around legal-signal pattern hits so
+    clauses buried after the content cap still reach the embedding.
+    """
+    if not full_content or not patterns:
+        return []
+    if window is None:
+        try:
+            window = int(get_config().get("embedding_extractive_window", 280) or 280)
+        except (TypeError, ValueError):
+            window = 280
+    window = max(80, min(800, window))
+
+    snippets = []
+    seen_norm = set()
+    for _phrase, rx in _compiled_legal_patterns(patterns):
+        for match in rx.finditer(full_content):
+            start = max(0, match.start() - window // 2)
+            end = min(len(full_content), match.end() + window // 2)
+            snippet = full_content[start:end].strip()
+            if not snippet:
+                continue
+            norm = snippet.lower()
+            if norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            snippets.append(snippet)
+            if len(snippets) >= max_snippets:
+                return snippets
+    return snippets
+
+
+def _natural_source_context(entry: dict, signals: Optional[List[str]] = None) -> str:
+    """Build a short natural-language context block for E5 (not Seismo schema)."""
+    parts = []
+    st = (entry.get("source_type") or "").strip()
+    if st:
+        parts.append(SOURCE_TYPE_DESCRIPTIONS.get(st, "Source type: {}.".format(st)))
+    sn = (entry.get("source_name") or "").strip()
+    if sn:
+        parts.append("Published by {}.".format(sn[:SOURCE_NAME_CAP]))
+    sc = (entry.get("source_category") or "").strip()
+    if sc:
+        parts.append("Category: {}.".format(sc[:SOURCE_CATEGORY_CAP]))
+    if signals:
+        parts.append("Legal signals detected: {}.".format(", ".join(signals)))
+    return " ".join(parts)
+
+
 def _build_entry_text(entry: dict, legal_patterns: Optional[List[str]] = None) -> str:
     """
     Build text for embedding/scoring from an entry's fields.
 
     Title is repeated so it dominates the embedding even for entries with long
     content.  Content is capped at CONTENT_CAP chars so a long government press
-    release doesn't push the title out of the tokenizer window.  This makes
-    embeddings comparable across
-    sources that provide wildly different amounts of text (e.g. a Bund
-    Medienmitteilung vs. an SRF teaser).
+    release doesn't push the title out of the tokenizer window.
 
-    A short structured prefix (source type, name, category) helps the model
-    separate feeds without changing the Seismo entry schema.
-
-    When legal_signal_patterns are configured and any match the entry body,
-    they are prepended as a "signals=..." tag so the transformer sees them
-    as emphasized context.  Changing this list invalidates cached embeddings.
+    A natural-language context prefix (source type, publisher, legal signals)
+    helps E5 interpret institutional gravity.  Legal-signal patterns are scanned
+    on the full uncapped content; matching regions are injected as extractive
+    snippets so buried clauses still influence the embedding.
     """
-    meta_parts = []
-    st = (entry.get("source_type") or "").strip()
-    if st:
-        meta_parts.append("source_type={}".format(st))
-    sn = (entry.get("source_name") or "").strip()
-    if sn:
-        meta_parts.append("source={}".format(sn[:SOURCE_NAME_CAP]))
-    sc = (entry.get("source_category") or "").strip()
-    if sc:
-        meta_parts.append("category={}".format(sc[:SOURCE_CATEGORY_CAP]))
-
     title = entry.get("title", "").strip()
     desc = entry.get("description", "").strip()
-    content = entry.get("content", "").strip()[:CONTENT_CAP]
+    full_content = entry.get("content", "").strip()
+    content = full_content[:CONTENT_CAP]
 
-    scan_text = " ".join(part for part in [title, desc, content] if part)
+    scan_text = " ".join(part for part in [title, desc, full_content] if part)
     signals = _detect_legal_signals(scan_text, legal_patterns)
-    if signals:
-        meta_parts.append("signals={}".format(", ".join(signals)))
+    context = _natural_source_context(entry, signals)
+    snippets = _extractive_snippets(full_content, legal_patterns)
 
-    meta = "; ".join(meta_parts)
+    body_parts = []
+    if snippets:
+        body_parts.extend(snippets)
+    body_parts.extend(part for part in [title, title, desc, content] if part)
+    body = "\n".join(body_parts) if body_parts else "(empty)"
 
-    body = "\n".join(part for part in [title, title, desc, content] if part)
-    if not body:
-        body = "(empty)"
-    if meta:
-        return "{}\n\n{}".format(meta, body)
+    if context:
+        return "{}\n\n{}".format(context, body)
     return body
 
 
@@ -720,6 +774,24 @@ def _parse_label_ts(value) -> Optional[float]:
         return None
 
 
+def _decay_half_life_for_label(label: str, base_half_life: float,
+                                config: dict) -> float:
+    """Effective half-life in days for a label class; 0 means no decay."""
+    if base_half_life <= 0:
+        return 0.0
+    if config.get("label_time_decay_priority_exempt", True):
+        if label in PRIORITY_TRAINING_LABELS:
+            return 0.0
+    if label == "noise":
+        try:
+            accel = float(config.get("label_time_decay_noise_accel", 3.0) or 3.0)
+        except (TypeError, ValueError):
+            accel = 3.0
+        accel = max(1.0, accel)
+        return base_half_life / accel
+    return base_half_life
+
+
 def compute_sample_weights(labeled: List[dict],
                             config: Optional[dict] = None) -> np.ndarray:
     """Per-label training weight combining time decay and reasoning boost.
@@ -727,6 +799,8 @@ def compute_sample_weights(labeled: List[dict],
     - Time decay: ``weight = 0.5 ** (age_days / half_life)`` clamped to a floor.
       Uses ``updated_at`` when present (freshly re-labeled rows stay strong)
       else ``created_at``.  Missing timestamps get weight 1.0.
+      When decay is enabled, ``investigation_lead`` and ``important`` skip decay
+      by default; ``noise`` decays faster (``label_time_decay_noise_accel``).
     - Reasoning boost: multiplied in for labels with a non-empty reasoning note.
     - Both default to no-op so existing models train identically.
     """
@@ -756,8 +830,12 @@ def compute_sample_weights(labeled: List[dict],
             ts = _parse_label_ts(lbl.get("updated_at")) or _parse_label_ts(lbl.get("created_at"))
             if ts is None:
                 continue
+            label = lbl.get("label") or ""
+            effective_hl = _decay_half_life_for_label(label, half_life, config)
+            if effective_hl <= 0:
+                continue
             age_days = max(0.0, (now - ts) / 86400.0)
-            w = 0.5 ** (age_days / half_life)
+            w = 0.5 ** (age_days / effective_hl)
             weights[i] = max(floor, w)
 
     if abs(boost - 1.0) > 1e-6:
@@ -820,6 +898,68 @@ def build_tfidf_pipeline() -> Pipeline:
     ])
 
     return pipeline
+
+
+def _relaxed_tfidf_vectorizer(min_df: int = 1) -> TfidfVectorizer:
+    """TF-IDF settings for small distillation corpora."""
+    return TfidfVectorizer(
+        max_features=5000,
+        ngram_range=(1, 3),
+        sublinear_tf=True,
+        strip_accents="unicode",
+        min_df=min_df,
+        max_df=1.0 if min_df <= 1 else 0.95,
+    )
+
+
+def _fit_tfidf_student(student: Pipeline, df: pd.DataFrame,
+                       targets: List[dict], class_names: List[str]) -> Pipeline:
+    """
+    Fit a TF-IDF student from distillation targets.
+
+    Each target is either:
+    - ``{"hard": "important", "weight": 3.0}`` for human labels
+    - ``{"soft": {"important": 0.6, "investigation_lead": 0.35, ...}}`` for teacher probs
+
+    Soft targets expand into one weighted row per class (equivalent to soft CE).
+    """
+    expanded_rows = []
+    y_train = []
+    sample_weights = []
+
+    for i in range(len(df)):
+        row = df.iloc[i].to_dict()
+        target = targets[i]
+        if "hard" in target:
+            expanded_rows.append(row)
+            y_train.append(target["hard"])
+            sample_weights.append(float(target.get("weight", 1.0)))
+            continue
+        probs = target.get("soft") or {}
+        for cls in class_names:
+            p = float(probs.get(cls, 0.0) or 0.0)
+            if p < SOFT_DISTILL_MIN_PROBA:
+                continue
+            expanded_rows.append(row)
+            y_train.append(cls)
+            sample_weights.append(p)
+
+    if len(expanded_rows) < 20:
+        raise ValueError("Not enough distillation rows after soft-label expansion")
+
+    fit_df = pd.DataFrame(expanded_rows)
+    sw = np.asarray(sample_weights, dtype=np.float64)
+
+    try:
+        student.fit(fit_df, y_train, classifier__sample_weight=sw)
+    except ValueError:
+        student.named_steps["features"].transformers[0] = (
+            "text",
+            _relaxed_tfidf_vectorizer(min_df=1),
+            "text",
+        )
+        student.fit(fit_df, y_train, classifier__sample_weight=sw)
+    return student
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1447,8 +1587,9 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
     Train a TF-IDF + LogReg 'student' model that learns from the transformer
     model's predictions on ALL entries (not just labeled ones).
 
-    The student captures the transformer's knowledge in a form that can be
-    distilled into a keyword recipe for seismo's PHP.
+    Uses soft teacher probabilities by default so borderline entries teach
+    mixed class weights to the keyword recipe.  Human labels override with
+    a higher sample weight.
 
     Returns the trained student pipeline, or None if not possible.
     """
@@ -1456,7 +1597,9 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
     if not model_info or model_info.get("architecture") != "transformer":
         return None
 
-    # Score all entries with the transformer model for this profile
+    config = db.get_effective_config(profile_id)
+    use_soft = bool(config.get("distillation_soft_labels", True))
+
     all_entries = db.get_all_entries()
     if len(all_entries) < 20:
         return None
@@ -1465,53 +1608,46 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
     if not scores:
         return None
 
-    # Build a lookup of transformer predictions keyed by (entry_type, entry_id)
-    score_map = {
+    teacher_prob_map = {
+        db.entry_key_from_mapping(s): s.get("probabilities") or {}
+        for s in scores
+    }
+    teacher_label_map = {
         db.entry_key_from_mapping(s): s["predicted_label"]
         for s in scores
     }
 
-    # Human labels override transformer predictions (profile-specific)
     human_labels = {
         db.entry_key_from_mapping(lbl): lbl["label"]
         for lbl in db.get_all_labels(profile_id)
     }
 
-    # Only include entries that have either a score or a human label
     scored_entries = []
-    teacher_labels = []
+    targets = []
+    class_names = list(CLASSES)
+
     for entry in all_entries:
         key = db.entry_key_from_mapping(entry)
         if key in human_labels:
             scored_entries.append(entry)
-            teacher_labels.append(human_labels[key])
-        elif key in score_map:
+            targets.append({"hard": human_labels[key], "weight": HUMAN_DISTILL_WEIGHT})
+        elif use_soft and teacher_prob_map.get(key):
             scored_entries.append(entry)
-            teacher_labels.append(score_map[key])
+            targets.append({"soft": teacher_prob_map[key]})
+        elif key in teacher_label_map:
+            scored_entries.append(entry)
+            targets.append({"hard": teacher_label_map[key], "weight": 1.0})
 
     if len(scored_entries) < 20:
         return None
 
     df = _prepare_text(scored_entries)
-
-    # Build and train the student pipeline
     student = build_tfidf_pipeline()
 
     try:
-        student.fit(df, teacher_labels)
-    except ValueError:
-        student.named_steps["features"].transformers[0] = (
-            "text",
-            TfidfVectorizer(
-                max_features=5000,
-                ngram_range=(1, 3),
-                sublinear_tf=True,
-                strip_accents="unicode",
-                min_df=1,
-                max_df=1.0,
-            ),
-            "text",
-        )
-        student.fit(df, teacher_labels)
+        _fit_tfidf_student(student, df, targets, class_names)
+    except ValueError as exc:
+        logger.warning("TF-IDF student distillation failed: %s", exc)
+        return None
 
     return student

@@ -381,6 +381,14 @@ def _normalize_training_settings_dict(d: dict) -> None:
         except (TypeError, ValueError):
             fl = 0.2
         d["label_time_decay_floor"] = max(0.0, min(1.0, fl))
+    if "label_time_decay_priority_exempt" in d:
+        d["label_time_decay_priority_exempt"] = bool(d.get("label_time_decay_priority_exempt"))
+    if "label_time_decay_noise_accel" in d:
+        try:
+            na = float(d.get("label_time_decay_noise_accel", 3.0) or 3.0)
+        except (TypeError, ValueError):
+            na = 3.0
+        d["label_time_decay_noise_accel"] = max(1.0, min(10.0, na))
     if "reasoning_weight_boost" in d:
         try:
             rb = float(d.get("reasoning_weight_boost", 1.0) or 1.0)

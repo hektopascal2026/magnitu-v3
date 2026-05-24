@@ -79,7 +79,7 @@ MODELS_DIR.mkdir(exist_ok=True)
 # Default HuggingFace embedding backbone (multilingual E5, 768-D).
 DEFAULT_TRANSFORMER_MODEL = "intfloat/multilingual-e5-base"
 # Bump when backbone, prefix rules, or content/token caps change (triggers re-embed).
-EMBEDDING_STACK_GENERATION = "e5-v1"
+EMBEDDING_STACK_GENERATION = "e5-v2"
 
 # Defaults
 DEFAULTS = {
@@ -104,6 +104,21 @@ DEFAULTS = {
     "label_time_decay_days": 0,
     # Minimum floor for the decay weight (so very old labels never vanish). 0-1.
     "label_time_decay_floor": 0.2,
+    # When decay is enabled: investigation_lead/important skip decay entirely.
+    "label_time_decay_priority_exempt": True,
+    # When decay is enabled: noise labels decay this many times faster (half-life / accel).
+    "label_time_decay_noise_accel": 3.0,
+    # Soft teacher probabilities for TF-IDF recipe distillation (vs hard argmax).
+    "distillation_soft_labels": True,
+    # Recipe export caps (tuned automatically when recipe_optimize_caps is True).
+    "recipe_max_unigram_abs": 0.12,
+    "recipe_max_phrase_abs": 0.24,
+    "recipe_max_source_abs": 0.08,
+    "recipe_min_abs_keep": 0.01,
+    "recipe_normalize_target": 2.0,
+    "recipe_optimize_caps": True,
+    # Chars around legal-signal matches pulled from full (uncapped) content for embedding.
+    "embedding_extractive_window": 280,
     # Multiplier applied to labels that have a non-empty reasoning note. 1 = off.
     "reasoning_weight_boost": 1.0,
     # Regex patterns (or plain phrases) that flag legislative signal in an entry.
@@ -140,6 +155,8 @@ PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
     "discovery_lead_blend",
     "label_time_decay_days",
     "label_time_decay_floor",
+    "label_time_decay_priority_exempt",
+    "label_time_decay_noise_accel",
     "reasoning_weight_boost",
     "gemini_mode",
 })

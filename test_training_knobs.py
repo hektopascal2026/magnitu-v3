@@ -173,7 +173,7 @@ print("\n=== text builder (config fallback) ===")
 t("build_entry_text with no explicit patterns reads config")
 try:
     txt = pipeline._build_entry_text(entries[0])
-    assert "signals=" in txt, "no signals prefix: {}".format(txt[:200])
+    assert "Legal signals" in txt, "no signals context: {}".format(txt[:200])
     assert "Drittland" in txt and "Binnenmarkt" in txt
     ok()
 except Exception as e:
@@ -272,7 +272,7 @@ try:
     # Must reset cache since we mutated config
     pipeline._LEGAL_PATTERNS_CACHE["key"] = None
     txt = pipeline._build_entry_text(entries[0], legal_patterns=[])
-    assert "signals=" not in txt
+    assert "Legal signals" not in txt
     ok()
 except Exception as e:
     fail(str(e))

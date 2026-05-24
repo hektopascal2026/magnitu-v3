@@ -364,7 +364,7 @@ try:
 except Exception as e:
     fail(str(e))
 
-t = test("_build_entry_text includes structured source prefix")
+t = test("_build_entry_text includes natural source context")
 try:
     txt = pipeline._build_entry_text({
         "title": "Hello",
@@ -374,9 +374,9 @@ try:
         "source_name": "SRG",
         "source_category": "News",
     })
-    assert "source_type=lex_ch" in txt
-    assert "source=SRG" in txt
-    assert "category=News" in txt
+    assert "Swiss legal publication" in txt
+    assert "Published by SRF" in txt
+    assert "Category: News" in txt
     assert "Hello" in txt
     ok()
 except Exception as e:
@@ -912,9 +912,13 @@ t = test("Config defaults include new training knobs")
 try:
     cfg = config.get_config()
     for k in ("label_time_decay_days", "label_time_decay_floor",
+              "label_time_decay_priority_exempt", "label_time_decay_noise_accel",
+              "distillation_soft_labels", "recipe_optimize_caps",
               "reasoning_weight_boost", "legal_signal_patterns"):
         assert k in cfg, "missing default: " + k
     assert cfg["label_time_decay_days"] == 0
+    assert cfg["label_time_decay_priority_exempt"] is True
+    assert cfg["distillation_soft_labels"] is True
     assert cfg["reasoning_weight_boost"] == 1.0
     assert cfg["legal_signal_patterns"] == []
     ok()
@@ -970,7 +974,7 @@ try:
 except Exception as e:
     fail(str(e))
 
-t = test("_build_entry_text injects legal-signal prefix on match")
+t = test("_build_entry_text injects legal-signal context on match")
 try:
     entry = {
         "title": "Drittland-Klausel sorgt für Diskussionen",
@@ -980,12 +984,26 @@ try:
     }
     patterns = ["Drittland", "Binnenmarkt", "CE-Kennzeichnung"]
     text = pipeline._build_entry_text(entry, legal_patterns=patterns)
-    assert "signals=" in text, "prefix missing: {}".format(text[:120])
+    assert "Legal signals detected" in text, "prefix missing: {}".format(text[:160])
     assert "Drittland" in text and "Binnenmarkt" in text
-    # A non-matching phrase should not appear in the signals tag
-    # (title still contains other words, but the signals= chunk is bounded)
-    sig_line = [ln for ln in text.split("\n") if "signals=" in ln][0]
+    sig_line = [ln for ln in text.split("\n") if "Legal signals" in ln][0]
     assert "CE-Kennzeichnung" not in sig_line
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("_build_entry_text extractive snippet from buried content")
+try:
+    filler = "x" * 3500
+    entry = {
+        "title": "Treaty update",
+        "description": "",
+        "content": filler + " Critical Drittstaaten exclusion clause applies.",
+        "source_type": "rss", "source_name": "Test", "source_category": "",
+    }
+    patterns = ["Drittstaaten"]
+    text = pipeline._build_entry_text(entry, legal_patterns=patterns)
+    assert "Drittstaaten exclusion" in text, "buried clause not extracted"
     ok()
 except Exception as e:
     fail(str(e))
@@ -999,7 +1017,48 @@ try:
         "source_type": "rss", "source_name": "Test", "source_category": "",
     }
     text_no_pat = pipeline._build_entry_text(entry, legal_patterns=[])
-    assert "signals=" not in text_no_pat
+    assert "Legal signals" not in text_no_pat
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("compute_sample_weights label-aware decay preserves priority labels")
+try:
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    old_ts = (now - timedelta(days=240)).strftime("%Y-%m-%d %H:%M:%S")
+    labeled = [
+        {"label": "investigation_lead", "reasoning": "", "updated_at": old_ts, "created_at": None},
+        {"label": "noise", "reasoning": "", "updated_at": old_ts, "created_at": None},
+    ]
+    cfg = {
+        "label_time_decay_days": 120,
+        "label_time_decay_floor": 0.25,
+        "label_time_decay_priority_exempt": True,
+        "label_time_decay_noise_accel": 3.0,
+        "reasoning_weight_boost": 1.0,
+    }
+    w = pipeline.compute_sample_weights(labeled, config=cfg)
+    assert abs(w[0] - 1.0) < 1e-3, "IL should skip decay, got {}".format(w[0])
+    assert w[1] < w[0], "noise should decay faster than preserved IL"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("_fit_tfidf_student accepts soft distillation targets")
+try:
+    import pandas as pd
+    df = pd.DataFrame([
+        {"text": "trade quota penalty machinery", "source_type": "rss", "text_length": 30},
+        {"text": "weather forecast weekend rain", "source_type": "rss", "text_length": 30},
+    ] * 12)
+    targets = [
+        {"soft": {"important": 0.6, "investigation_lead": 0.35, "background": 0.05, "noise": 0.0}},
+        {"soft": {"noise": 0.85, "background": 0.1, "important": 0.05, "investigation_lead": 0.0}},
+    ] * 12
+    student = pipeline.build_tfidf_pipeline()
+    pipeline._fit_tfidf_student(student, df, targets, pipeline.CLASSES)
+    assert hasattr(student.named_steps["classifier"], "coef_")
     ok()
 except Exception as e:
     fail(str(e))

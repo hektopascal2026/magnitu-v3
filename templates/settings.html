@@ -338,14 +338,32 @@
                     <input type="number" id="reasoningBoost" value="{{ config.reasoning_weight_boost or 1.0 }}" min="0" max="5" step="0.1">
                     <div class="form-help">Labels with a non-empty reasoning note count more. <code>1.5</code> is a sensible starting point.</div>
                 </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="labelDecayPriorityExempt"
+                            {% if config.label_time_decay_priority_exempt is not defined or config.label_time_decay_priority_exempt %}checked{% endif %}>
+                        Preserve investigation_lead / important from decay
+                    </label>
+                    <div class="form-help">
+                        When time-decay is enabled, high-priority labels keep full weight; only background and noise age out.
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Noise decay acceleration (≥1)</label>
+                    <input type="number" id="labelDecayNoiseAccel" value="{{ config.label_time_decay_noise_accel or 3.0 }}" min="1" max="10" step="0.5">
+                    <div class="form-help">
+                        Noise labels decay this many times faster than background when decay is on.
+                        <code>3</code> ≈ junk patterns forgotten in a third the time.
+                    </div>
+                </div>
             </div>
             <div class="form-group" style="margin-top: 1rem;">
                 <label>Legal-signal patterns</label>
                 <textarea id="legalSignalPatterns" rows="4" style="width:100%; font-family:monospace;" placeholder="Drittland&#10;Binnenmarkt&#10;EWR&#10;CE-Kennzeichnung&#10;Ursprungserzeugnis">{{ "\n".join(config.legal_signal_patterns or []) }}</textarea>
                 <div class="form-help">
-                    One phrase (or regex) per line.  When a match is found in an entry it's prepended to the embedded text
-                    as <code>signals=…</code> so the transformer treats it as emphasized context, and the phrase is
-                    boosted in the distilled recipe for <em>investigation_lead</em>.
+                    One phrase (or regex) per line.  Matches are scanned on the <strong>full</strong> entry body;
+                    hits appear in natural-language context and as extractive snippets in the embedded text,
+                    and the phrase is boosted in the distilled recipe for <em>investigation_lead</em>.
                     Changing this list will clear all cached embeddings — next sync re-embeds.
                     <strong>Shared across all profiles</strong> (embeddings are global).
                 </div>
@@ -711,6 +729,8 @@
             var data = {
                 label_time_decay_days: parseInt(document.getElementById('labelDecayDays').value) || 0,
                 label_time_decay_floor: parseFloat(document.getElementById('labelDecayFloor').value),
+                label_time_decay_priority_exempt: document.getElementById('labelDecayPriorityExempt').checked,
+                label_time_decay_noise_accel: parseFloat(document.getElementById('labelDecayNoiseAccel').value) || 3.0,
                 reasoning_weight_boost: parseFloat(document.getElementById('reasoningBoost').value),
                 legal_signal_patterns: patterns,
             };
