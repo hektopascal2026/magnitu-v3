@@ -13,6 +13,7 @@ distillation.
 """
 import json
 import logging
+import os
 import joblib
 import numpy as np
 import pandas as pd
@@ -29,7 +30,7 @@ from sklearn.metrics import (
     classification_report,
 )
 
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Callable
 
 import db
 from config import (
@@ -455,6 +456,51 @@ def _select_device():
     return torch.device("cpu")
 
 
+def _hf_hub_cache_dir() -> str:
+    """Directory where huggingface_hub stores downloaded model snapshots."""
+    return (
+        os.environ.get("HF_HOME")
+        or os.environ.get("HUGGINGFACE_HUB_CACHE")
+        or os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    )
+
+
+def _log_hf_model_cache_status(model_name: str) -> None:
+    """Tell the operator whether E5 will load from disk or hit the network."""
+    logger.info("HuggingFace hub cache: %s", _hf_hub_cache_dir())
+    if os.environ.get("HF_HUB_OFFLINE") == "1" or os.environ.get("TRANSFORMERS_OFFLINE") == "1":
+        logger.warning(
+            "HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE is set — download disabled; "
+            "model must already be cached or load will fail."
+        )
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        cached = try_to_load_from_cache(model_name, "config.json")
+        if cached:
+            logger.info(
+                "E5 backbone %s: config found in local cache (%s)",
+                model_name, cached,
+            )
+        else:
+            logger.info(
+                "E5 backbone %s: not in local cache — will download from "
+                "huggingface.co (~1.1 GB for e5-base; needs working internet)",
+                model_name,
+            )
+    except Exception as exc:
+        logger.info(
+            "Could not inspect HF cache for %s (%s); proceeding with from_pretrained",
+            model_name, exc,
+        )
+
+
+def _enable_hf_download_logging() -> None:
+    """Surface huggingface_hub download activity in the server terminal."""
+    for name in ("huggingface_hub", "huggingface_hub.file_download", "transformers"):
+        logging.getLogger(name).setLevel(logging.INFO)
+
+
 def _get_embedder():
     """Lazy-load the transformer model + tokenizer. Cached after first call."""
     global _embedder
@@ -467,13 +513,20 @@ def _get_embedder():
     config = get_config()
     model_name = config.get("transformer_model_name", DEFAULT_TRANSFORMER_MODEL)
 
-    logger.info("Loading transformer model: %s", model_name)
+    _enable_hf_download_logging()
+    _log_hf_model_cache_status(model_name)
+
+    logger.info("Loading E5 tokenizer: %s ...", model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    logger.info("Tokenizer ready for %s", model_name)
 
     device = _select_device()
-
     model_dtype = torch.float16 if device.type in ("cuda", "mps") else torch.float32
 
+    logger.info(
+        "Loading E5 weights: %s (device=%s, dtype=%s) ...",
+        model_name, device.type, str(model_dtype).split(".")[-1],
+    )
     model = AutoModel.from_pretrained(
         model_name,
         dtype=model_dtype,
@@ -482,7 +535,7 @@ def _get_embedder():
     model.eval()
     model.to(device)
 
-    logger.info("Transformer loaded on %s (%s)", device.type, str(model_dtype).split(".")[-1])
+    logger.info("E5 model ready on %s", device.type)
 
     _embedder = {"tokenizer": tokenizer, "model": model, "device": device}
     return _embedder
@@ -540,7 +593,11 @@ def _embedding_runtime_settings():
     return model_name, max_length, batch_size
 
 
-def compute_embeddings(texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+def compute_embeddings(
+    texts: List[str],
+    batch_size: Optional[int] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> np.ndarray:
     """
     Compute mean-pooled embeddings for a list of texts using the transformer.
     Returns ndarray of shape (len(texts), embedding_dim).
@@ -559,8 +616,9 @@ def compute_embeddings(texts: List[str], batch_size: Optional[int] = None) -> np
     model = embedder["model"]
     device = embedder["device"]
 
+    n_texts = len(texts)
     all_embeddings = []
-    for i in range(0, len(texts), batch_size):
+    for i in range(0, n_texts, batch_size):
         batch_texts = [
             _embedding_input_text(t, model_name) for t in texts[i:i + batch_size]
         ]
@@ -581,6 +639,11 @@ def compute_embeddings(texts: List[str], batch_size: Optional[int] = None) -> np
         counts = attention_mask.sum(dim=1).clamp(min=1e-9)
         mean_pooled = (summed / counts).cpu().numpy()
         all_embeddings.append(mean_pooled)
+        done = min(i + len(batch_texts), n_texts)
+        if progress_cb:
+            progress_cb(done, n_texts)
+        elif done == n_texts or (done % max(batch_size * 10, 40) == 0):
+            logger.info("Embedded %d / %d texts", done, n_texts)
 
     return np.vstack(all_embeddings) if all_embeddings else np.array([])
 
@@ -790,11 +853,24 @@ def _build_entry_text(entry: dict, legal_patterns: Optional[List[str]] = None) -
     return body
 
 
-def embed_entries(entries: List[dict]) -> List[bytes]:
+def embed_entries(
+    entries: List[dict],
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> List[bytes]:
     """Compute embeddings for a list of entry dicts. Returns list of bytes."""
     patterns = get_config().get("legal_signal_patterns") or []
-    texts = [_build_entry_text(e, legal_patterns=patterns) for e in entries]
-    embeddings = compute_embeddings(texts)
+    n = len(entries)
+    logger.info(
+        "Preparing entry text for %d rows (lex/Leg bodies can take minutes before E5 loads)...",
+        n,
+    )
+    texts = []
+    for i, entry in enumerate(entries):
+        texts.append(_build_entry_text(entry, legal_patterns=patterns))
+        if n <= 50 or (i + 1) % 50 == 0 or (i + 1) == n:
+            logger.info("  entry text prep %d / %d", i + 1, n)
+    logger.info("Entry text ready; loading E5 and encoding %d texts", n)
+    embeddings = compute_embeddings(texts, progress_cb=progress_cb)
     return [embedding_to_bytes(emb) for emb in embeddings]
 
 

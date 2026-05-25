@@ -59,6 +59,24 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_MAGNITU_LOGGERS = ("main", "pipeline", "sync", "distiller", "explainer", "magnitu")
+
+
+def _configure_app_logging():
+    """Show pipeline/sync INFO in the terminal (uvicorn access logs alone hide E5 progress)."""
+    fmt = logging.Formatter("%(levelname)s:%(name)s: %(message)s")
+    for name in _MAGNITU_LOGGERS:
+        log = logging.getLogger(name)
+        if log.level == logging.NOTSET:
+            log.setLevel(logging.INFO)
+        if not log.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(fmt)
+            log.addHandler(handler)
+
+
+_configure_app_logging()
+
 TOP_PAGE_LIMIT = 30
 
 app = FastAPI(title="Magnitu", version=VERSION)
@@ -264,10 +282,23 @@ def _sync_pull_impl(
                 missing_now = len(db.get_entries_without_embeddings(limit=5000))
                 if progress_cb:
                     progress_cb(
-                        min(90, 70 + embedding_rounds * 4),
-                        "Computing embeddings ({} missing)...".format(missing_now)
+                        min(90, 70 + embedding_rounds * 2),
+                        "Computing embeddings (~{} missing)...".format(missing_now),
                     )
-                sync._compute_pending_embeddings()
+
+                def _emb_progress(done, batch_total, phase_msg):
+                    if not progress_cb:
+                        return
+                    frac = (float(done) / float(batch_total)) if batch_total else 0.0
+                    pct = 70 + min(embedding_rounds, 9) * 2 + int(frac * 2)
+                    progress_cb(
+                        min(91, pct),
+                        "{} ({}/{} this batch, ~{} left)".format(
+                            phase_msg, done, batch_total, max(0, missing_now - done)
+                        ),
+                    )
+
+                sync._compute_pending_embeddings(progress_cb=_emb_progress)
                 embedding_rounds += 1
                 missing_after = len(db.get_entries_without_embeddings(limit=5000))
                 if prev_missing is not None and missing_after >= prev_missing:
@@ -361,9 +392,21 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
     if cfg.get("model_architecture") == "transformer":
         missing = db.get_entries_without_embeddings(limit=5000)
         if missing:
+            missing_n = len(missing)
+
+            def _push_emb_progress(done, batch_total, phase_msg):
+                if progress_cb:
+                    frac = (float(done) / float(batch_total)) if batch_total else 0.0
+                    progress_cb(
+                        20 + int(frac * 20),
+                        "{} ({}/{}; ~{} missing)".format(
+                            phase_msg, done, batch_total, max(0, missing_n - done)
+                        ),
+                    )
+
             if progress_cb:
-                progress_cb(20, "Computing missing embeddings...")
-            sync._compute_pending_embeddings()
+                progress_cb(20, "Computing missing embeddings (~{})...".format(missing_n))
+            sync._compute_pending_embeddings(progress_cb=_push_emb_progress)
 
     if progress_cb:
         progress_cb(45, "Scoring entries...")

@@ -141,23 +141,42 @@ def pull_all_entry_types(
     return total
 
 
-def _compute_pending_embeddings():
-    """Compute and store embeddings for all entries that lack them."""
+def _compute_pending_embeddings(progress_cb=None) -> int:
+    """
+    Compute and store embeddings for entries that lack them (up to 1000 per call).
+
+    Optional ``progress_cb(done, total, message)`` for UI updates during long runs.
+    Returns the number of entries embedded (0 on failure or none pending).
+    """
     unembedded = db.get_entries_without_embeddings(limit=1000)
-    if not unembedded:
-        return
-    logger.info("Computing embeddings for %d entries...", len(unembedded))
+    total = len(unembedded)
+    if not total:
+        return 0
+    logger.info("Computing embeddings for %d entries...", total)
     try:
         from pipeline import embed_entries, release_embedder
-        emb_bytes_list = embed_entries(unembedded)
+
+        if progress_cb:
+            progress_cb(
+                0, total,
+                "Loading E5 model (first run may download ~1 GB; can take several minutes)",
+            )
+
+        def on_batch(done, batch_total):
+            if progress_cb:
+                progress_cb(done, batch_total, "Encoding entries")
+
+        emb_bytes_list = embed_entries(unembedded, progress_cb=on_batch)
         updates = []
         for entry, emb_bytes in zip(unembedded, emb_bytes_list):
             updates.append((emb_bytes, entry["entry_type"], entry["entry_id"]))
         db.store_embeddings_batch(updates)
         logger.info("Stored %d embeddings.", len(updates))
         release_embedder()
+        return len(updates)
     except Exception as e:
-        logger.warning("Failed to compute embeddings: %s", e)
+        logger.exception("Failed to compute embeddings: %s", e)
+        return 0
 
 
 def profile_satellite_blank(profile: Optional[Dict]) -> bool:
