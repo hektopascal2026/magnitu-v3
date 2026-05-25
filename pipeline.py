@@ -70,6 +70,14 @@ def _holdout_test_fraction(min_class_count: int, n: int) -> float:
     return max(float(test_size), 0.1)
 
 
+def _min_class_count_in_labels(y_list: List[str]) -> int:
+    """Smallest class count in a label list (0 when empty)."""
+    if not y_list:
+        return 0
+    counts = pd.Series(y_list).value_counts()
+    return int(counts.min())
+
+
 def _repair_stratified_holdout(is_test, y_arr, keys):
     """Ensure each class with >=2 rows has at least one train and one test sample."""
     is_test = np.asarray(is_test, dtype=bool).copy()
@@ -338,16 +346,31 @@ def _collect_oof_logits(
     oof_y = [None] * n_samples
 
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
-    for train_idx, val_idx in skf.split(X, y_enc):
-        pipe = build_transformer_head_pipeline()
-        fit_kwargs = _transformer_fit_kwargs(
-            sw_arr[train_idx] if sw_arr is not None else None
+    try:
+        split_iter = skf.split(X, y_enc)
+    except ValueError:
+        logger.warning(
+            "OOF StratifiedKFold skipped: rarest class has fewer than %d train samples",
+            n_folds,
         )
-        pipe.fit(X[train_idx], y_enc[train_idx], **fit_kwargs)
-        logits_val = logits_for_classifier_head(pipe, X[val_idx])
-        for j, vi in enumerate(val_idx):
-            oof_logits[vi] = logits_val[j]
-            oof_y[vi] = y_list[vi]
+        return np.array([]), []
+    try:
+        for train_idx, val_idx in split_iter:
+            pipe = build_transformer_head_pipeline()
+            fit_kwargs = _transformer_fit_kwargs(
+                sw_arr[train_idx] if sw_arr is not None else None
+            )
+            pipe.fit(X[train_idx], y_enc[train_idx], **fit_kwargs)
+            logits_val = logits_for_classifier_head(pipe, X[val_idx])
+            for j, vi in enumerate(val_idx):
+                oof_logits[vi] = logits_val[j]
+                oof_y[vi] = y_list[vi]
+    except ValueError:
+        logger.warning(
+            "OOF fold fit failed (class too small for %d-fold split); calibration skipped",
+            n_folds,
+        )
+        return np.array([]), []
 
     valid_idx = [i for i in range(n_samples) if oof_logits[i] is not None]
     if not valid_idx:
@@ -1180,7 +1203,8 @@ def _train_transformer(profile_id: int = 1) -> dict:
     y_train_enc = le.transform(y_train)
     fit_kwargs = _transformer_fit_kwargs(sw_train)
 
-    n_folds = _oof_fold_count(len(y_train), int(min_class_count))
+    train_min_class = _min_class_count_in_labels(y_train)
+    n_folds = _oof_fold_count(len(y_train), train_min_class)
     class_names_fit = le.classes_.tolist()
     oof_samples = 0
     if n_folds >= 2:
@@ -1418,7 +1442,8 @@ def _train_tfidf(profile_id: int = 1) -> dict:
     X_tr, y_tr = X_train, y_train
     sw_tr = sw_train
     X_val, y_val = None, None
-    if min_class_count >= 2 and len(X_train) >= 30:
+    train_min_class = _min_class_count_in_labels(y_train)
+    if train_min_class >= 2 and len(X_train) >= 30:
         try:
             xtr, xv, ytr, yv, sw_tr_new, _sw_v = train_test_split(
                 X_train, y_train, sw_train,

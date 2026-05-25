@@ -421,6 +421,59 @@ except Exception as e:
     fail(repr(e))
 
 
+# ─── Rare class after holdout (Christof 500: StratifiedKFold n_splits=2) ───
+print("\n=== rare class in train fold (OOF must not crash) ===")
+
+t("transformer train with 2 rarest-class rows survives holdout + OOF")
+try:
+    import numpy as np
+    from pipeline import embedding_to_bytes, _oof_fold_count, _min_class_count_in_labels
+
+    conn = db.get_db()
+    conn.execute("DELETE FROM labels WHERE profile_id=1")
+    conn.execute("DELETE FROM models WHERE profile_id=1")
+    conn.execute("DELETE FROM entries")
+    conn.commit()
+    conn.close()
+
+    rng = np.random.RandomState(11)
+    dim = 768
+    dist = (
+        [("noise", i) for i in range(19)]
+        + [("background", 100 + i) for i in range(7)]
+        + [("important", 200 + i) for i in range(3)]
+        + [("investigation_lead", 300 + i) for i in range(2)]
+    )
+    fake_entries = []
+    for cls, eid in dist:
+        fake_entries.append({
+            "entry_type": "feed_item", "entry_id": eid,
+            "title": "Item {} {}".format(cls, eid),
+            "description": "desc", "content": "body",
+            "link": "", "author": "", "published_date": "2025-01-01",
+            "source_name": "s", "source_category": "", "source_type": "rss",
+        })
+    db.upsert_entries(fake_entries)
+    updates = []
+    for i, e in enumerate(fake_entries):
+        v = rng.randn(dim).astype("float32")
+        updates.append((embedding_to_bytes(v), e["entry_type"], e["entry_id"]))
+    db.store_embeddings_batch(updates)
+    for cls, eid in dist:
+        db.set_label("feed_item", eid, cls)
+
+    cfg_rare = dict(config.DEFAULTS)
+    cfg_rare["model_architecture"] = "transformer"
+    cfg_rare["min_labels_to_train"] = 20
+    config.save_config(cfg_rare)
+
+    res = pipeline.train(profile_id=1)
+    assert res["success"], "train failed: {}".format(res.get("error", ""))
+    ok()
+except Exception as e:
+    fail(repr(e))
+
+
 try:
     t("suggested_recipe_top_keywords heuristic")
     assert config.suggested_recipe_top_keywords(0) == 200
