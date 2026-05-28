@@ -17,7 +17,7 @@ import logging
 import httpx
 from typing import List, Dict, Optional, Callable
 
-from config import get_config
+from config import get_config, save_config
 import db
 from magnitu.accent_theme import parse_accent_from_magnitu_status
 from magnitu.entry_sources import SEISMO_ENTRY_PULL_SPECS
@@ -120,7 +120,13 @@ def pull_all_entry_types(
     """
     remote_entries = {}
     try:
-        remote_entries = get_status().get("entries", {}) or {}
+        status = get_status()
+        remote_entries = status.get("entries", {}) or {}
+        pruning_days = status.get("entry_pruning_days") or status.get("pruning_days")
+        if pruning_days is not None:
+            cfg = get_config()
+            cfg["seismo_pruning_days"] = int(pruning_days)
+            save_config(cfg)
     except Exception as exc:
         logger.warning("Could not read magnitu_status for pull limits: %s", exc)
 
@@ -416,6 +422,25 @@ def push_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> dict:
     else:
         labels_to_push = all_labels
 
+    # Filter out labels outside Seismo's active pruning window to prevent ghost/orphaned entries
+    cfg = get_config()
+    pruning_days = cfg.get("seismo_pruning_days")
+    if pruning_days and pruning_days > 0 and labels_to_push:
+        try:
+            conn = db.get_db()
+            rows = conn.execute("""
+                SELECT entry_type, entry_id FROM entries
+                WHERE published_date >= date('now', ?)
+            """, (f"-{pruning_days} days",)).fetchall()
+            conn.close()
+            valid_keys = {(r["entry_type"], r["entry_id"]) for r in rows}
+            labels_to_push = [
+                lbl for lbl in labels_to_push
+                if (lbl["entry_type"], lbl["entry_id"]) in valid_keys
+            ]
+        except Exception as e:
+            logger.warning("Failed to filter labels using pruning window: %s", e)
+
     if not labels_to_push:
         return {"success": True, "pushed": 0}
 
@@ -493,6 +518,14 @@ def test_connection(seismo_target: Optional[Dict] = None) -> tuple:
         if _magnitu_status_reports_ok(status):
             entries = status.get("entries") if isinstance(status.get("entries"), dict) else {}
             total = entries.get("total", 0)
+            pruning_days = status.get("entry_pruning_days") or status.get("pruning_days")
+            if pruning_days is not None:
+                try:
+                    cfg = get_config()
+                    cfg["seismo_pruning_days"] = int(pruning_days)
+                    save_config(cfg)
+                except Exception:
+                    pass
             return (
                 True,
                 "Connected. Seismo has {} entries.".format(total),

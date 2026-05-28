@@ -138,6 +138,9 @@ DEFAULTS = {
     "seismo_push_batch_size": 75,
     # Target max JSON body bytes per POST (nginx client_max_body_size is often 1m).
     "seismo_push_max_body_bytes": 524288,
+    # Shared Seismo database pruning policy: max days of data Seismo retains.
+    # Dynamically fetched from Seismo. Scores/labels pushed are constrained to this.
+    "seismo_pruning_days": 0,
 }
 
 # Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).

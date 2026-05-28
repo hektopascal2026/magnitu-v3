@@ -622,6 +622,33 @@ except Exception as e:
 
 
 # ═══════════════════════════════════════════
+#  9. Seismo Database Pruning Policy
+# ═══════════════════════════════════════════
+print("\n=== 9. Seismo Database Pruning Policy ===")
+
+t = test("test_connection parses and saves entry_pruning_days")
+try:
+    def pruning_status_request(method, url, params=None, **kwargs):
+        return make_mock_response(200, {"status": "ok", "entries": {"total": 42}, "entry_pruning_days": 90})
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.side_effect = pruning_status_request
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = lambda s, *a: None
+        mock_client_cls.return_value = mock_client
+
+        success, msg, status = sync.test_connection()
+
+    assert success
+    cfg = config.get_config()
+    assert cfg.get("seismo_pruning_days") == 90, "seismo_pruning_days not saved to config"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+# ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════
 print("\n" + "=" * 50)

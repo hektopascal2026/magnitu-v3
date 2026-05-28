@@ -384,11 +384,16 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
     if not model_info:
         raise ValueError("No trained model for this profile. Train first.")
 
-    all_entries = db.get_all_entries()
+    cfg = get_config()
+    pruning_days = cfg.get("seismo_pruning_days")
+    if pruning_days and pruning_days > 0:
+        all_entries = db.get_recent_entries(days=pruning_days)
+    else:
+        all_entries = db.get_all_entries()
+
     if not all_entries:
         raise ValueError("No entries to score.")
 
-    cfg = get_config()
     if cfg.get("model_architecture") == "transformer":
         while True:
             missing = db.get_entries_without_embeddings(limit=5000)
