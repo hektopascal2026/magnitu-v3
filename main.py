@@ -390,8 +390,10 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
 
     cfg = get_config()
     if cfg.get("model_architecture") == "transformer":
-        missing = db.get_entries_without_embeddings(limit=5000)
-        if missing:
+        while True:
+            missing = db.get_entries_without_embeddings(limit=5000)
+            if not missing:
+                break
             missing_n = len(missing)
 
             def _push_emb_progress(done, batch_total, phase_msg):
@@ -406,7 +408,9 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
 
             if progress_cb:
                 progress_cb(20, "Computing missing embeddings (~{})...".format(missing_n))
-            sync._compute_pending_embeddings(progress_cb=_push_emb_progress)
+            computed = sync._compute_pending_embeddings(progress_cb=_push_emb_progress)
+            if computed <= 0:
+                break
 
     if progress_cb:
         progress_cb(45, "Scoring entries...")
@@ -420,6 +424,13 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
         entry_count = db.get_entry_count()
         raise ValueError(
             "No scores produced. Embeddings: {}/{} entries.".format(emb_count, entry_count)
+        )
+
+    if len(scores) < len(all_entries):
+        skipped = len(all_entries) - len(scores)
+        logger.warning(
+            "Scoring subset only: %d / %d entries scored. %d entries skipped (likely due to missing embeddings beyond the on-the-fly cap).",
+            len(scores), len(all_entries), skipped
         )
 
     if progress_cb:

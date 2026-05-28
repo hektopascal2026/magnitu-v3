@@ -521,7 +521,7 @@ def _get_embedder():
     logger.info("Tokenizer ready for %s", model_name)
 
     device = _select_device()
-    model_dtype = torch.float16 if device.type in ("cuda", "mps") else torch.float32
+    model_dtype = torch.float16 if device.type == "cuda" else torch.float32
 
     logger.info(
         "Loading E5 weights: %s (device=%s, dtype=%s) ...",
@@ -529,7 +529,7 @@ def _get_embedder():
     )
     model = AutoModel.from_pretrained(
         model_name,
-        dtype=model_dtype,
+        torch_dtype=model_dtype,
         low_cpu_mem_usage=True,
     )
     model.eval()
