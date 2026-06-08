@@ -86,7 +86,9 @@ def derive_profile_identity_from_push_url(seismo_url: str):
 
     slug = slugify(base)
     disp = re.sub(r"[-_]+", " ", base).strip()
-    if disp:
+    if disp.lower() == "eu":
+        display_name = "EU"
+    elif disp:
         display_name = disp[0].upper() + disp[1:] if len(disp) > 1 else disp.upper()
     else:
         display_name = slug.replace("-", " ").title() if slug else "Satellite"
@@ -233,6 +235,9 @@ def _migrate_db(conn: sqlite3.Connection):
         conn.execute(
             "ALTER TABLE profiles ADD COLUMN gemini_persona TEXT DEFAULT NULL"
         )
+
+    # Ensure correct capitalization for existing EU profiles
+    conn.execute("UPDATE profiles SET display_name = 'EU' WHERE display_name = 'Eu' AND slug = 'eu'")
 
     conn.commit()
 
