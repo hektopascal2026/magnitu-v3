@@ -342,6 +342,11 @@ def _sync_pull_impl(
         logger.warning("Label pull failed during sync: %s", e)
         db.log_sync("pull", 0, "FAILED label pull: {}".format(e))
 
+    try:
+        sync.refresh_profile_accent(profile)
+    except Exception as e:
+        logger.warning("Accent refresh failed during pull sync: %s", e)
+
     syncs = db.get_recent_syncs(1)
     sync_detail = syncs[0]["details"] if syncs else ""
 
