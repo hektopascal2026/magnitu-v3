@@ -355,12 +355,31 @@
         taskProgressMeta.textContent = (meta || (pct || 0) + '%');
     }
 
-    function pollJob(jobId, onDone, onFail) {
+    function formatJobEta(pct, startedMs) {
+        if (!startedMs || pct <= 2 || pct >= 100) return '';
+        var elapsed = Date.now() - startedMs;
+        if (elapsed < 2000 || pct <= 0) return '';
+        var remainingMs = elapsed * (100 - pct) / pct;
+        if (remainingMs < 3000) return ' · almost done';
+        var sec = Math.ceil(remainingMs / 1000);
+        if (sec < 60) return ' · ~' + sec + 's left';
+        return ' · ~' + Math.ceil(sec / 60) + ' min left';
+    }
+
+    function pollJob(jobId, onDone, onFail, startedMs) {
+        var t0 = startedMs || Date.now();
         var timer = setInterval(function() {
             fetch('/api/jobs/' + jobId)
                 .then(function(r) { return r.json(); })
                 .then(function(job) {
-                    setProgress(true, job.message || 'Working...', job.progress || 0, (job.progress || 0) + '%');
+                    var pct = job.progress || 0;
+                    var eta = formatJobEta(pct, t0);
+                    setProgress(
+                        true,
+                        job.message || 'Working...',
+                        pct,
+                        pct + '%' + eta
+                    );
                     if (job.status === 'success') {
                         clearInterval(timer);
                         onDone(job.result || {});
@@ -474,9 +493,11 @@
     var trainBtn = document.getElementById('trainBtn');
     if (trainBtn) {
         trainBtn.addEventListener('click', function() {
-            this.disabled = true;
-            this.textContent = 'Training...';
-            fetch(P + '/api/train', { method: 'POST' })
+            trainBtn.disabled = true;
+            trainBtn.textContent = 'Training...';
+            setProgress(true, 'Starting training...', 1, '1%');
+            var trainStarted = Date.now();
+            fetch(P + '/api/train?background=true', { method: 'POST' })
                 .then(function(r) {
                     if (!r.ok) {
                         return r.text().then(function(t) {
@@ -486,17 +507,36 @@
                     return r.json();
                 })
                 .then(function(data) {
-                    if (data.success) {
-                        flash('Model v' + data.version + ' trained! Accuracy: ' + (data.accuracy * 100).toFixed(1) + '%, F1: ' + (data.f1_score * 100).toFixed(1) + '%', 'success');
-                        setTimeout(function() { location.reload(); }, statusDoneMs);
-                    } else {
-                        flash('Training failed: ' + (data.error || 'Unknown error'), 'error');
+                    if (!data.success || !data.job_id) {
+                        throw new Error(data.error || data.detail || 'Failed to start training');
                     }
+                    pollJob(
+                        data.job_id,
+                        function(result) {
+                            setProgress(true, 'Training complete', 100, '100%');
+                            var msg = 'Model v' + result.version + ' trained! Accuracy: ' +
+                                (result.accuracy * 100).toFixed(1) + '%, F1: ' +
+                                (result.f1_score * 100).toFixed(1) + '%';
+                            if (result.recipe_quality !== undefined) {
+                                msg += ', recipe quality ' + (result.recipe_quality * 100).toFixed(0) + '%';
+                            }
+                            flash(msg, 'success');
+                            setTimeout(function() { location.reload(); }, statusDoneMs);
+                        },
+                        function(errMsg) {
+                            flash('Training failed: ' + errMsg, 'error');
+                            trainBtn.disabled = false;
+                            trainBtn.textContent = 'Train';
+                            setProgress(false);
+                        },
+                        trainStarted
+                    );
                 })
-                .catch(function(err) { flash('Training error: ' + err.message, 'error'); })
-                .finally(function() {
+                .catch(function(err) {
+                    flash('Training error: ' + err.message, 'error');
                     trainBtn.disabled = false;
                     trainBtn.textContent = 'Train';
+                    setProgress(false);
                 });
         });
     }

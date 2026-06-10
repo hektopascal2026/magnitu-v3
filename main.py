@@ -1577,22 +1577,27 @@ async def sync_health(slug: str):
 
 # ─── API: Training — profile-scoped ──────────────────────────────────────────
 
-@app.post("/p/{slug}/api/train")
-async def train_model(slug: str):
-    import asyncio
-    profile = _get_profile_or_404(slug)
-    profile_id = profile["id"]
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, lambda: pipeline.train(profile_id=profile_id)
-    )
-    if not result.get("success"):
-        return JSONResponse(result, status_code=400)
+def _train_impl(progress_cb=None, profile_id: int = 1) -> dict:
+    """Train model, distill recipe, and evaluate recipe quality."""
 
-    recipe = await loop.run_in_executor(
-        None, lambda: distiller.distill_recipe(profile_id=profile_id)
-    )
+    def step(pct: int, msg: str) -> None:
+        if progress_cb:
+            progress_cb(pct, msg)
+
+    step(2, "Preparing training...")
+
+    def train_progress(inner_pct: int, msg: str) -> None:
+        outer = 5 + int(inner_pct * 0.68)
+        step(outer, msg)
+
+    result = pipeline.train(profile_id=profile_id, progress_cb=train_progress)
+    if not result.get("success"):
+        raise ValueError(result.get("error", "Training failed"))
+
+    step(75, "Distilling recipe for Seismo...")
+    recipe = distiller.distill_recipe(profile_id=profile_id)
     if recipe:
+        step(90, "Evaluating recipe quality...")
         quality = distiller.evaluate_recipe_quality(recipe, profile_id=profile_id)
         result["recipe_version"] = recipe.get("version")
         result["recipe_quality"] = quality
@@ -1606,7 +1611,39 @@ async def train_model(slug: str):
             )
         else:
             result["recipe_note"] = "No recipe generated — model may not have enough data."
+
+    step(100, "Training complete")
     return result
+
+
+@app.post("/p/{slug}/api/train")
+async def train_model(slug: str, background: bool = False):
+    import asyncio
+    profile = _get_profile_or_404(slug)
+    profile_id = profile["id"]
+    if background:
+        job_id = _create_job("train")
+        with _JOB_LOCK:
+            if job_id in _JOBS:
+                _JOBS[job_id]["profile_id"] = profile_id
+        t = threading.Thread(
+            target=lambda: _run_job(
+                job_id,
+                lambda cb: _train_impl(progress_cb=cb, profile_id=profile_id),
+            ),
+            daemon=True,
+        )
+        t.start()
+        return {"success": True, "job_id": job_id}
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: _train_impl(profile_id=profile_id)
+        )
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 # ─── API: Explain / Keywords — profile-scoped ────────────────────────────────

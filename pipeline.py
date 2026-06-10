@@ -331,6 +331,7 @@ def _collect_oof_logits(
     sample_weight,
     label_encoder,
     n_folds: int,
+    fold_progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Out-of-fold logits on the training fold for stable temperature scaling.
@@ -356,7 +357,9 @@ def _collect_oof_logits(
         )
         return np.array([]), []
     try:
+        fold_num = 0
         for train_idx, val_idx in split_iter:
+            fold_num += 1
             pipe = build_transformer_head_pipeline()
             fit_kwargs = _transformer_fit_kwargs(
                 sw_arr[train_idx] if sw_arr is not None else None
@@ -366,6 +369,8 @@ def _collect_oof_logits(
             for j, vi in enumerate(val_idx):
                 oof_logits[vi] = logits_val[j]
                 oof_y[vi] = y_list[vi]
+            if fold_progress_cb:
+                fold_progress_cb(fold_num, n_folds)
     except ValueError:
         logger.warning(
             "OOF fold fit failed (class too small for %d-fold split); calibration skipped",
@@ -1096,12 +1101,13 @@ def _get_architecture() -> str:
     return config.get("model_architecture", "transformer")
 
 
-def train(profile_id: int = 1) -> dict:
+def train(profile_id: int = 1,
+          progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
     """Train a new model on labeled entries for the given profile."""
     arch = _get_architecture()
     if arch == "transformer":
-        return _train_transformer(profile_id=profile_id)
-    return _train_tfidf(profile_id=profile_id)
+        return _train_transformer(profile_id=profile_id, progress_cb=progress_cb)
+    return _train_tfidf(profile_id=profile_id, progress_cb=progress_cb)
 
 
 def get_active_model_paths(profile_id: int = 1) -> Optional[dict]:
@@ -1184,12 +1190,19 @@ class _LabelDecodingClassifier:
         return self._pipeline.predict_proba(X)
 
 
-def _train_transformer(profile_id: int = 1) -> dict:
+def _train_transformer(profile_id: int = 1,
+                       progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
     """Train a LogReg classifier on cached transformer embeddings for a profile."""
+
+    def _step(pct: int, msg: str) -> None:
+        if progress_cb:
+            progress_cb(max(0, min(100, int(pct))), msg)
+
     config = db.get_effective_config(profile_id)
     min_labels = config.get("min_labels_to_train", 20)
     embedding_dim = config.get("embedding_dim", 768)
 
+    _step(5, "Loading labels...")
     labeled = db.get_all_labels(profile_id)
     if len(labeled) < min_labels:
         return {
@@ -1200,7 +1213,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
             "label_count": len(labeled),
         }
 
-    # Batch-fetch all embeddings in one query
+    _step(8, "Loading embeddings...")
     conn = db.get_db()
     emb_map = {}
     rows = conn.execute(
@@ -1226,10 +1239,16 @@ def _train_transformer(profile_id: int = 1) -> dict:
         else:
             missing_embeddings.append(lbl)
 
-    # Compute missing embeddings on the fly
     if missing_embeddings:
-        logger.info("Computing %d missing embeddings for training", len(missing_embeddings))
-        emb_bytes = embed_entries(missing_embeddings)
+        n_miss = len(missing_embeddings)
+        logger.info("Computing %d missing embeddings for training", n_miss)
+        _step(10, "Computing {} missing embeddings...".format(n_miss))
+
+        def on_emb(done: int, total: int) -> None:
+            frac = float(done) / float(max(total, 1))
+            _step(10 + int(frac * 35), "Embedding {}/{}...".format(done, total))
+
+        emb_bytes = embed_entries(missing_embeddings, progress_cb=on_emb)
         updates = []
         for lbl, eb in zip(missing_embeddings, emb_bytes):
             updates.append((eb, lbl["entry_type"], lbl["entry_id"]))
@@ -1238,6 +1257,8 @@ def _train_transformer(profile_id: int = 1) -> dict:
             y_list.append(lbl["label"])
             lbl_list.append(lbl)
         db.store_embeddings_batch(updates)
+    else:
+        _step(45, "Embeddings ready")
 
     if len(X_list) < min_labels:
         return {
@@ -1246,6 +1267,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
             "label_count": len(labeled),
         }
 
+    _step(48, "Building train/test split...")
     X = np.array(X_list)
     y = y_list
     sw_all = compute_sample_weights(lbl_list, config)
@@ -1285,8 +1307,15 @@ def _train_transformer(profile_id: int = 1) -> dict:
     class_names_fit = le.classes_.tolist()
     oof_samples = 0
     if n_folds >= 2:
+        _step(50, "Calibration: {}-fold cross-validation...".format(n_folds))
+
+        def on_fold(done: int, total: int) -> None:
+            frac = float(done) / float(max(total, 1))
+            _step(50 + int(frac * 15), "Calibration fold {}/{}...".format(done, total))
+
         oof_logits, oof_y = _collect_oof_logits(
-            X_train, y_train, sw_train, le, n_folds
+            X_train, y_train, sw_train, le, n_folds,
+            fold_progress_cb=on_fold,
         )
         oof_samples = len(oof_y)
         if oof_samples >= 3:
@@ -1313,13 +1342,15 @@ def _train_transformer(profile_id: int = 1) -> dict:
         "class_names": class_names_fit,
     }
 
+    _step(68, "Fitting classifier...")
     clf_pipeline = build_transformer_head_pipeline()
     clf_pipeline.fit(X_train, y_train_enc, **fit_kwargs)
 
     clf = _LabelDecodingClassifier(clf_pipeline, le)
 
-    # Evaluate on held-out test using the same probabilities as scoring
+    _step(82, "Evaluating on holdout...")
     version = db.get_next_model_version(profile_id)
+    _step(90, "Saving model...")
     model_filename = "model_p{}_v{}.joblib".format(profile_id, version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(clf, model_path)
@@ -1351,6 +1382,8 @@ def _train_transformer(profile_id: int = 1) -> dict:
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
     report = json.loads(json.dumps(report, default=float))
+
+    _step(100, "Model trained")
 
     return {
         "success": True,
@@ -1475,11 +1508,18 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
 #  TF-IDF training + scoring (fallback)
 # ═══════════════════════════════════════════════════════════════════
 
-def _train_tfidf(profile_id: int = 1) -> dict:
+def _train_tfidf(profile_id: int = 1,
+                 progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
     """Train using the original TF-IDF + LogReg pipeline for a profile."""
+
+    def _step(pct: int, msg: str) -> None:
+        if progress_cb:
+            progress_cb(max(0, min(100, int(pct))), msg)
+
     config = db.get_effective_config(profile_id)
     min_labels = config.get("min_labels_to_train", 20)
 
+    _step(5, "Loading labels...")
     labeled = db.get_all_labels(profile_id)
     if len(labeled) < min_labels:
         return {
@@ -1490,6 +1530,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
             "label_count": len(labeled),
         }
 
+    _step(15, "Preparing text features...")
     df = _prepare_text(labeled)
     labels = [e["label"] for e in labeled]
     sw_all = compute_sample_weights(labeled, config)
@@ -1536,6 +1577,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
         except ValueError:
             pass
 
+    _step(35, "Building train/test split...")
     pipeline = build_tfidf_pipeline()
 
     use_sw = (
@@ -1545,6 +1587,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
     )
     fit_kwargs = {"classifier__sample_weight": np.asarray(sw_tr, dtype=np.float64)} if use_sw else {}
 
+    _step(45, "Fitting TF-IDF classifier...")
     try:
         pipeline.fit(X_tr, y_tr, **fit_kwargs)
     except ValueError:
@@ -1563,6 +1606,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
 
     class_names_fit = pipeline.classes_.tolist()
     if X_val is not None and len(X_val) >= 3:
+        _step(65, "Calibrating probabilities...")
         logits_val = logits_for_classifier_head(pipeline, X_val)
         temperature = _fit_temperature_scalar(
             logits_val, np.array(y_val), class_names_fit
@@ -1581,6 +1625,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
         "class_names": class_names_fit,
     }
 
+    _step(78, "Evaluating on holdout...")
     version = db.get_next_model_version(profile_id)
     model_filename = "model_p{}_v{}.joblib".format(profile_id, version)
     model_path = str(MODELS_DIR / model_filename)
@@ -1616,6 +1661,8 @@ def _train_tfidf(profile_id: int = 1) -> dict:
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
     report = json.loads(json.dumps(report, default=float))
+
+    _step(100, "Model trained")
 
     return {
         "success": True,
