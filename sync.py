@@ -321,6 +321,14 @@ def profile_satellite_blank(profile: Optional[Dict]) -> bool:
     ).strip()
 
 
+def _normalize_label_ts(value: str) -> str:
+    """Canonicalize 'YYYY-MM-DD HH:MM:SS' vs ISO-T variants for string compare."""
+    s = (value or "").strip().replace("T", " ")
+    if "+" in s:
+        s = s.split("+", 1)[0]
+    return s.rstrip("Z").strip()
+
+
 def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
     """Pull labels from Seismo and merge into this profile.
 
@@ -330,7 +338,7 @@ def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
 
     Raises ``ValueError`` if ``profile`` has only one of URL / API key set.
 
-    Conflict resolution: newer timestamp wins.
+    Conflict resolution: newer normalized timestamp wins; equal timestamps keep local.
     Returns count of labels imported or updated.
     """
     target = None
@@ -368,9 +376,12 @@ def pull_labels(profile_id: int = 1, profile: Optional[Dict] = None) -> int:
             local_time = (row["updated_at"] or "") if row else ""
             if existing["label"] != label:
                 conflicts += 1
-            if remote_time > local_time:
-                db.set_label(entry_type, entry_id, label, reasoning=reasoning,
-                             profile_id=profile_id)
+            if _normalize_label_ts(remote_time) > _normalize_label_ts(local_time):
+                db.set_label(
+                    entry_type, entry_id, label, reasoning=reasoning,
+                    profile_id=profile_id,
+                    label_source=existing.get("label_source", ""),
+                )
                 updated += 1
 
     total = imported + updated

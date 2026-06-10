@@ -319,7 +319,7 @@ def import_model(
             store_version = db.get_next_model_version(profile_id)
 
         if should_load:
-            dest = MODELS_DIR / "model_v{}.joblib".format(store_version)
+            dest = MODELS_DIR / "model_p{}_v{}.joblib".format(profile_id, store_version)
             shutil.copy2(str(model_file), str(dest))
 
             cal_file = tmp_dir / "calibration.json"
@@ -330,7 +330,9 @@ def import_model(
             recipe_file = tmp_dir / "recipe.json"
             recipe_dest = ""
             if recipe_file.exists():
-                recipe_dest = str(MODELS_DIR / "recipe_v{}.json".format(store_version))
+                recipe_dest = str(
+                    MODELS_DIR / "recipe_p{}_v{}.json".format(profile_id, store_version)
+                )
                 shutil.copy2(str(recipe_file), recipe_dest)
 
             pack_label_dist = (

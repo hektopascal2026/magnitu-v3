@@ -997,7 +997,6 @@ def build_tfidf_pipeline() -> Pipeline:
         max_features=10000,
         ngram_range=(1, 3),
         sublinear_tf=True,
-        strip_accents="unicode",
         min_df=2,
         max_df=0.95,
     )
@@ -1032,7 +1031,6 @@ def _relaxed_tfidf_vectorizer(min_df: int = 1) -> TfidfVectorizer:
         max_features=5000,
         ngram_range=(1, 3),
         sublinear_tf=True,
-        strip_accents="unicode",
         min_df=min_df,
         max_df=1.0 if min_df <= 1 else 0.95,
     )
@@ -1259,7 +1257,10 @@ def _train_transformer(profile_id: int = 1) -> dict:
         X_train, X_test = X, X
         y_train, y_test = y, y
         sw_train = sw_all
-        split_note = "All data used for training (some classes have <2 samples)"
+        split_note = (
+            "RESUBSTITUTION: train==test (some classes have <2 samples); "
+            "metrics are optimistic"
+        )
     else:
         test_size = _holdout_test_fraction(min_class_count, len(y))
         X_train, X_test, y_train, y_test, sw_train, _sw_test = (
@@ -1319,7 +1320,7 @@ def _train_transformer(profile_id: int = 1) -> dict:
 
     # Evaluate on held-out test using the same probabilities as scoring
     version = db.get_next_model_version(profile_id)
-    model_filename = "model_v{}.joblib".format(version)
+    model_filename = "model_p{}_v{}.joblib".format(profile_id, version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(clf, model_path)
     write_calibration_sidecar(model_path, cal_dict)
@@ -1500,7 +1501,10 @@ def _train_tfidf(profile_id: int = 1) -> dict:
         X_train, X_test = df, df
         y_train, y_test = labels, labels
         sw_train = sw_all
-        split_note = "All data used for training (some classes have <2 samples)"
+        split_note = (
+            "RESUBSTITUTION: train==test (some classes have <2 samples); "
+            "metrics are optimistic"
+        )
     else:
         test_size = _holdout_test_fraction(min_class_count, len(labels))
         X_train, X_test, y_train, y_test, sw_train, _sw_test = (
@@ -1550,7 +1554,6 @@ def _train_tfidf(profile_id: int = 1) -> dict:
                 max_features=5000,
                 ngram_range=(1, 3),
                 sublinear_tf=True,
-                strip_accents="unicode",
                 min_df=1,
                 max_df=1.0,
             ),
@@ -1579,7 +1582,7 @@ def _train_tfidf(profile_id: int = 1) -> dict:
     }
 
     version = db.get_next_model_version(profile_id)
-    model_filename = "model_v{}.joblib".format(version)
+    model_filename = "model_p{}_v{}.joblib".format(profile_id, version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(pipeline, model_path)
     write_calibration_sidecar(model_path, cal_dict)

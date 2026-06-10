@@ -1008,6 +1008,7 @@ def get_all_reasoning_texts(profile_id: int = 1) -> List[dict]:
         SELECT entry_type, entry_id, label, reasoning
         FROM labels
         WHERE profile_id = ? AND reasoning IS NOT NULL AND reasoning != ''
+              AND """ + _labels_confirmed_sql("") + """
         ORDER BY updated_at DESC
     """, (profile_id,)).fetchall()
     conn.close()

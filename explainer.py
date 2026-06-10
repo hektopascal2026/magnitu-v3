@@ -7,12 +7,16 @@ For TF-IDF models, provides keyword-level feature attribution.
 import numpy as np
 import joblib
 import json
-import re
 from pathlib import Path
 from typing import Optional
 
 import db
 from config import get_config
+from distiller import (
+    _seismo_tokens,
+    _seismo_score_text,
+    _build_normalized_keyword_lookup,
+)
 from pipeline import (
     load_active_model,
     _prepare_text,
@@ -24,17 +28,30 @@ from pipeline import (
     _relevance_from_probs,
 )
 
+_CLF_CACHE = {"path": None, "mtime": None, "clf": None}
+_RECIPE_CACHE = {"path": None, "mtime": None, "recipe": None}
 
-def _extract_recipe_tokens(text: str) -> list:
-    """Extract unigram, bigram, and trigram candidates for recipe matching."""
-    tokens = re.findall(r"\b[a-zA-Z0-9\u00C0-\u024F]{2,}\b", (text or "").lower())
-    grams = []
-    for n in (2, 3):
-        if len(tokens) < n:
-            break
-        for i in range(len(tokens) - n + 1):
-            grams.append(" ".join(tokens[i:i + n]))
-    return tokens + grams
+
+def _load_classifier_cached(model_path: str):
+    mtime = Path(model_path).stat().st_mtime
+    if _CLF_CACHE["path"] == model_path and _CLF_CACHE["mtime"] == mtime:
+        return _CLF_CACHE["clf"]
+    clf = joblib.load(model_path)
+    _CLF_CACHE.update({"path": model_path, "mtime": mtime, "clf": clf})
+    return clf
+
+
+def _load_recipe_cached(recipe_path: str) -> Optional[dict]:
+    mtime = Path(recipe_path).stat().st_mtime
+    if _RECIPE_CACHE["path"] == recipe_path and _RECIPE_CACHE["mtime"] == mtime:
+        return _RECIPE_CACHE["recipe"]
+    try:
+        with open(recipe_path) as f:
+            recipe = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    _RECIPE_CACHE.update({"path": recipe_path, "mtime": mtime, "recipe": recipe})
+    return recipe
 
 
 def _recipe_phrase_contributions(entry: dict, model_info: dict, probs: dict, limit: int = 8) -> list:
@@ -42,32 +59,28 @@ def _recipe_phrase_contributions(entry: dict, model_info: dict, probs: dict, lim
     recipe_path = model_info.get("recipe_path", "")
     if not recipe_path or not Path(recipe_path).exists():
         return []
-    try:
-        with open(recipe_path) as f:
-            recipe = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    recipe = _load_recipe_cached(recipe_path)
+    if not recipe:
         return []
 
-    keywords = recipe.get("keywords", {})
-    text = "{} {} {}".format(
-        entry.get("title", ""),
-        entry.get("description", ""),
-        entry.get("content", ""),
-    )
-    all_tokens = _extract_recipe_tokens(text)
+    lookup = _build_normalized_keyword_lookup(recipe.get("keywords", {}))
+    text = _seismo_score_text(entry)
+    all_tokens = _seismo_tokens(text)
 
     phrase_scores = {}
+    matched = set()
     for tok in all_tokens:
         if " " not in tok:
             continue
-        cls_wts = keywords.get(tok)
-        if not cls_wts:
+        if tok not in lookup or tok in matched:
             continue
+        matched.add(tok)
+        cls_wts = lookup[tok]
         weighted = 0.0
         for cls, p in probs.items():
             weighted += float(cls_wts.get(cls, 0.0)) * float(p)
         if abs(weighted) > 1e-6:
-            phrase_scores[tok] = phrase_scores.get(tok, 0.0) + weighted
+            phrase_scores[tok] = weighted
 
     items = sorted(phrase_scores.items(), key=lambda kv: abs(kv[1]), reverse=True)[:limit]
     return [
@@ -171,7 +184,7 @@ def _explain_transformer(entry: dict, model_info: dict) -> Optional[dict]:
     if not model_path or not Path(model_path).exists():
         return None
 
-    clf = joblib.load(model_path)
+    clf = _load_classifier_cached(model_path)
     config = get_config()
     embedding_dim = config.get("embedding_dim", 768)
 

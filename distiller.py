@@ -76,6 +76,92 @@ LEGAL_TEMPLATE_PHRASES = {
     "administrative procedure": {"noise": 0.3, "background": 0.15},
 }
 
+# Mirrors RecipeScorer.php tokenizer: split on anything outside this class.
+_SEISMO_WORD_RE = re.compile(
+    r"[^a-zA-Z0-9äöüàéèêïôùûçÄÖÜÀÉÈÊÏÔÙÛÇß]+"
+)
+_SEISMO_MAX_NGRAM = 3  # RecipeScorer::MAX_NGRAM
+
+
+def _seismo_tokenize(text: str) -> list:
+    """PHP-parity word split: lowercase, keep 1-char tokens and accents."""
+    return [w for w in _SEISMO_WORD_RE.split((text or "").lower()) if w]
+
+
+def _seismo_tokens(text: str) -> list:
+    """Unigrams through trigrams, space-joined, PHP-parity."""
+    words = _seismo_tokenize(text)
+    out = []
+    n = len(words)
+    for i in range(n):
+        chunk = words[i]
+        out.append(chunk)
+        for span in range(2, min(_SEISMO_MAX_NGRAM, n - i) + 1):
+            chunk = chunk + " " + words[i + span - 1]
+            out.append(chunk)
+    return out
+
+
+def _seismo_score_text(entry: dict) -> str:
+    """Text Seismo's PHP actually scores, per entry family.
+
+    feed_item/email: title + (content or description).
+    lex_item/calendar_event: title + description ONLY (synopsis;
+    full content is for Magnitu export, not PHP recipe scoring).
+    """
+    et = (entry.get("entry_type") or "").strip()
+    title = entry.get("title") or ""
+    if et in ("lex_item", "calendar_event"):
+        body = entry.get("description") or ""
+    else:
+        body = entry.get("content") or entry.get("description") or ""
+    return title + " " + body
+
+
+def _normalize_recipe_key(keyword: str) -> str:
+    return " ".join(_seismo_tokenize(keyword))
+
+
+def _build_normalized_keyword_lookup(keywords: dict) -> dict:
+    """Merge recipe keywords to PHP-normalized keys (sums duplicate keys)."""
+    lookup = {}
+    for raw_key, cls_wts in keywords.items():
+        norm_key = _normalize_recipe_key(raw_key)
+        if not norm_key:
+            continue
+        if norm_key not in lookup:
+            lookup[norm_key] = {}
+        for cls, wt in cls_wts.items():
+            lookup[norm_key][cls] = lookup[norm_key].get(cls, 0.0) + float(wt)
+    return lookup
+
+
+def _accumulate_recipe_class_scores(entry: dict, keywords: dict, source_weights: dict,
+                                    classes: list) -> dict:
+    """PHP-parity class logits: once-per-token hits, synopsis-aware text."""
+    # PHP additionally expands keywords via swiss_dictionary.json (not modeled here).
+    lookup = _build_normalized_keyword_lookup(keywords)
+    text = _seismo_score_text(entry)
+    tokens = _seismo_tokens(text)
+
+    class_scores = {c: 0.0 for c in classes}
+    matched = set()
+    for token in tokens:
+        if token not in lookup or token in matched:
+            continue
+        matched.add(token)
+        for cls, wt in lookup[token].items():
+            if cls in class_scores:
+                class_scores[cls] += wt
+
+    src = entry.get("source_type", "")
+    if src in source_weights:
+        for cls, wt in source_weights[src].items():
+            if cls in class_scores:
+                class_scores[cls] += wt
+
+    return class_scores
+
 
 def _tokenize_text(text: str) -> list:
     """Tokenize text into lowercase word tokens with unicode support."""
@@ -215,13 +301,9 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     else:
         keywords, source_weights = _stabilize_export_weights(keywords, source_weights)
 
-    # Floor weights for curated anchor concepts. _stabilize_export_weights caps
-    # every phrase at recipe_max_phrase_abs (default 0.24), which silently
-    # squashes the high IL priors LEGAL_TEMPLATE_PHRASES seeds in
-    # _boost_legal_templates (e.g. "member states only": 0.55 → 0.24). The
-    # floor pass restores those seeded values per (phrase, class) so Seismo's
-    # PHP softmax sees diagnostic concepts at their full editorial weight.
-    # Documented in seismo_0.5/README.md "Scoring tuning (May 2026)".
+    # Floor weights for curated anchor concepts. When cap optimization runs,
+    # floors are part of that objective; this pass is idempotent for optimized
+    # recipes and still required for the stabilize-only path.
     keywords = _apply_floor_weights(keywords)
 
     # Build recipe
@@ -249,7 +331,7 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
         recipe["export_caps"] = cap_params
 
     # Save recipe to disk
-    recipe_filename = "recipe_v{}.json".format(model_info["version"])
+    recipe_filename = "recipe_p{}_v{}.json".format(profile_id, model_info["version"])
     recipe_path = str(MODELS_DIR / recipe_filename)
     with open(recipe_path, "w") as f:
         json.dump(recipe, f, indent=2, ensure_ascii=False)
@@ -257,8 +339,8 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     # Update model record with recipe path
     conn = db.get_db()
     conn.execute(
-        "UPDATE models SET recipe_path = ? WHERE version = ?",
-        (recipe_path, model_info["version"])
+        "UPDATE models SET recipe_path = ? WHERE version = ? AND profile_id = ?",
+        (recipe_path, model_info["version"], profile_id)
     )
     conn.commit()
     conn.close()
@@ -284,25 +366,9 @@ def _normalize_weights(keywords: dict, source_weights: dict) -> tuple:
     magnitudes = []
 
     for entry in all_entries:
-        text = "{} {} {}".format(
-            entry.get("title", ""),
-            entry.get("description", ""),
-            entry.get("content", ""),
-        ).lower()
-        all_tokens = _extract_recipe_tokens(text)
-
-        class_scores = {c: 0.0 for c in classes}
-        for token in all_tokens:
-            if token in keywords:
-                for cls, wt in keywords[token].items():
-                    if cls in class_scores:
-                        class_scores[cls] += wt
-
-        src = entry.get("source_type", "")
-        if src in source_weights:
-            for cls, wt in source_weights[src].items():
-                if cls in class_scores:
-                    class_scores[cls] += wt
+        class_scores = _accumulate_recipe_class_scores(
+            entry, keywords, source_weights, classes
+        )
 
         mag = max(abs(v) for v in class_scores.values()) if class_scores else 0
         if mag > 0:
@@ -472,31 +538,29 @@ def _boost_from_reasoning(keywords: dict, profile_id: int = 1) -> dict:
     if not reasoning_labels:
         return keywords
 
-    BOOST_FACTOR = 1.5
+    BOOST_FACTOR = 1.5  # single documented multiplier; applies to unigrams AND phrases
 
+    pairs = set()
     for rl in reasoning_labels:
         reasoning = rl.get("reasoning", "")
         label = rl.get("label", "")
         if not reasoning or not label:
             continue
-
         tokens = _tokenize_text(reasoning)
-        phrases = _compose_ngrams(tokens, max_n=3)
-        # Unigrams + phrase patterns from the reasoning itself
-        for token in tokens + phrases:
+        for token in set(tokens + _compose_ngrams(tokens, max_n=3)):
             if " " not in token and len(token) < 3:
                 continue
-            phrase_boost = BOOST_FACTOR
-            if " " in token:
-                phrase_boost = 1.8
-            if token in keywords:
-                if label in keywords[token]:
-                    keywords[token][label] = round(keywords[token][label] * phrase_boost, 4)
-                else:
-                    keywords[token][label] = round(0.08 * phrase_boost, 4)
-            else:
-                base = 0.1 if " " not in token else 0.16
-                keywords[token] = {label: round(base, 4)}
+            pairs.add((token, label))
+
+    for token, label in pairs:
+        existing = keywords.get(token, {}).get(label)
+        if existing is not None and existing > 0:
+            new_w = existing * BOOST_FACTOR
+        else:
+            new_w = 0.16 if " " in token else 0.10
+            if existing is not None:
+                new_w = max(existing, new_w)
+        keywords.setdefault(token, {})[label] = round(new_w, 4)
 
     return keywords
 
@@ -540,26 +604,10 @@ def _boost_legal_templates(keywords: dict) -> dict:
 
 def _recipe_composite(entry: dict, keywords: dict, source_weights: dict,
                       classes: list, class_wts: list) -> float:
-    """Seismo-style composite relevance from a keyword recipe."""
-    text = "{} {} {}".format(
-        entry.get("title", ""),
-        entry.get("description", ""),
-        entry.get("content", ""),
-    ).lower()
-    all_tokens = _extract_recipe_tokens(text)
-
-    class_scores = {c: 0.0 for c in classes}
-    for token in all_tokens:
-        if token in keywords:
-            for cls, wt in keywords[token].items():
-                if cls in class_scores:
-                    class_scores[cls] += wt
-
-    src = entry.get("source_type", "")
-    if src in source_weights:
-        for cls, wt in source_weights[src].items():
-            if cls in class_scores:
-                class_scores[cls] += wt
+    """Seismo-style composite relevance from a keyword recipe (PHP parity)."""
+    class_scores = _accumulate_recipe_class_scores(
+        entry, keywords, source_weights, classes
+    )
 
     max_s = max(class_scores.values()) if class_scores else 0
     exp_scores = {c: np.exp(s - max_s) for c, s in class_scores.items()}
@@ -627,6 +675,7 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
                     "max_source_abs": max_s,
                 }
                 t_kw, t_sw = _stabilize_export_weights(keywords, source_weights, trial_caps)
+                t_kw = _apply_floor_weights({k: dict(v) for k, v in t_kw.items()})
                 paired_model = []
                 paired_recipe = []
                 for entry in eval_entries:
