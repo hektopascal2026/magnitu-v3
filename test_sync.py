@@ -649,6 +649,117 @@ except Exception as e:
 
 
 # ═══════════════════════════════════════════
+#  10. Entry pull — order=asc drain (Seismo F6)
+# ═══════════════════════════════════════════
+print("\n=== 10. Entry pull drain ===")
+
+def _mock_seismo_entry(entry_type, entry_id, title, published_date):
+    return {
+        "entry_type": entry_type,
+        "entry_id": entry_id,
+        "title": title,
+        "description": "",
+        "content": "",
+        "link": "",
+        "author": "",
+        "published_date": published_date,
+        "source_name": "",
+        "source_category": "",
+        "source_type": "rss",
+    }
+
+
+t = test("pull_entries drain uses order=asc and advances since")
+try:
+    calls = []
+
+    def drain_pages(method, url, params=None, **kwargs):
+        calls.append(dict(params or {}))
+        page = len(calls)
+        if page == 1:
+            return make_mock_response(200, {
+                "entries": [
+                    _mock_seismo_entry("feed_item", 1, "A", "2026-06-01 10:00:00"),
+                    _mock_seismo_entry("feed_item", 2, "B", "2026-06-02 12:00:00"),
+                ],
+                "order": "asc",
+                "sync": {
+                    "limit_per_family": 200,
+                    "by_type": {
+                        "feed_item": {
+                            "drain_complete": False,
+                            "recommended_next_since": "2026-06-02 12:00:00",
+                        }
+                    },
+                },
+            })
+        return make_mock_response(200, {
+            "entries": [
+                _mock_seismo_entry("feed_item", 3, "C", "2026-06-03 08:00:00"),
+            ],
+            "order": "asc",
+            "sync": {
+                "limit_per_family": 200,
+                "by_type": {
+                    "feed_item": {
+                        "drain_complete": True,
+                        "recommended_next_since": "2026-06-03 08:00:00",
+                    }
+                },
+            },
+        })
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.side_effect = drain_pages
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = lambda s, *a: None
+        mock_client_cls.return_value = mock_client
+
+        total = sync.pull_entries(entry_type="feed_item", drain=True, compute_embeddings=False)
+
+    assert total == 3, "Expected 3 entries across drain pages, got {}".format(total)
+    assert len(calls) == 2, "Expected 2 HTTP pages, got {}".format(len(calls))
+    assert calls[0]["order"] == "asc"
+    assert calls[0]["type"] == "feed_item"
+    assert calls[1]["order"] == "asc"
+    assert calls[1].get("since") == "2026-06-02 12:00:00"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("pull_entries without drain uses single desc request (no order=asc)")
+try:
+    single_call = {}
+
+    def single_page(method, url, params=None, **kwargs):
+        single_call.update(params or {})
+        return make_mock_response(200, {
+            "entries": [
+                _mock_seismo_entry("email", 9, "x", "2026-06-01 00:00:00"),
+            ],
+            "order": "desc",
+        })
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.side_effect = single_page
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = lambda s, *a: None
+        mock_client_cls.return_value = mock_client
+
+        n = sync.pull_entries(entry_type="email", compute_embeddings=False)
+
+    assert n == 1
+    assert single_call.get("order") is None, "Quick pull should not pass order=asc"
+    assert single_call["type"] == "email"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+# ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════
 print("\n" + "=" * 50)

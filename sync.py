@@ -24,6 +24,9 @@ from magnitu.entry_sources import SEISMO_ENTRY_PULL_SPECS
 
 logger = logging.getLogger(__name__)
 
+# Seismo MagnituExportRepository::MAX_LIMIT — per-family page size on magnitu_entries.
+SEISMO_ENTRIES_PAGE_SIZE = 200
+
 INCOMPLETE_SATELLITE_CREDENTIALS_MSG = (
     "Incomplete satellite credentials on this profile: set both Seismo URL and "
     "API key for this satellite, or clear both to use global mothership settings only."
@@ -85,60 +88,184 @@ def _profile_target(profile: Optional[Dict]) -> Optional[Dict]:
 
 # ─── Pull (always mothership — global config) ────────────────────────────────
 
+def _max_published_date(entries: List[Dict]) -> Optional[str]:
+    """Latest ``published_date`` in a shaped Seismo entry batch (UTC strings)."""
+    best = ""
+    for entry in entries:
+        raw = (entry.get("published_date") or "").strip()
+        if raw and raw > best:
+            best = raw
+    return best or None
+
+
+def _entry_sync_hints(
+    data: dict,
+    entry_type: str,
+    page_size: int,
+    entries: List[Dict],
+) -> dict:
+    """Per-family pagination hints from Seismo ``sync.by_type`` (0.8+), with fallback."""
+    sync = data.get("sync") or {}
+    by_type = sync.get("by_type") or {}
+    hints = by_type.get(entry_type)
+    if isinstance(hints, dict) and hints:
+        return hints
+
+    limit = int(sync.get("limit_per_family") or page_size)
+    count = len(entries)
+    drain_complete = count < limit
+    recommended = None
+    if not drain_complete:
+        recommended = _max_published_date(entries)
+    return {
+        "drain_complete": drain_complete,
+        "recommended_next_since": recommended,
+    }
+
+
+def _pull_entry_type_drain(
+    entry_type: str,
+    since: Optional[str] = None,
+    page_size: int = SEISMO_ENTRIES_PAGE_SIZE,
+) -> int:
+    """Drain one family with ``order=asc`` until Seismo reports ``drain_complete``.
+
+    Avoids skipping rows when more than ``page_size`` entries share a ``since``
+    window (Seismo returns oldest-first; cursor advances via ``recommended_next_since``).
+    """
+    page_size = max(1, min(int(page_size), SEISMO_ENTRIES_PAGE_SIZE))
+    cursor = since
+    total = 0
+    pages = 0
+    max_pages = 5000
+
+    while pages < max_pages:
+        params = {
+            "action": "magnitu_entries",
+            "type": entry_type,
+            "limit": str(page_size),
+            "order": "asc",
+        }
+        if cursor:
+            params["since"] = cursor
+
+        data = _request("GET", params).json()
+        entries = data.get("entries", [])
+        if entries:
+            db.upsert_entries(entries)
+            total += len(entries)
+
+        hints = _entry_sync_hints(data, entry_type, page_size, entries)
+        if hints.get("drain_complete", True):
+            break
+
+        next_since = hints.get("recommended_next_since")
+        if not next_since:
+            logger.warning(
+                "Entry drain for %s stopped after page %d: no recommended_next_since",
+                entry_type,
+                pages + 1,
+            )
+            break
+        if cursor == next_since:
+            logger.warning(
+                "Entry drain for %s stopped: cursor stuck at %s after page %d",
+                entry_type,
+                cursor,
+                pages + 1,
+            )
+            break
+
+        cursor = next_since
+        pages += 1
+
+    if total:
+        db.log_sync(
+            "pull",
+            total,
+            "type={}, drain_pages={}, since_start={}".format(
+                entry_type, pages + 1, since or ""
+            ),
+        )
+    return total
+
+
 def pull_entries(
     since: str = None,
     entry_type: str = "all",
     limit: int = 500,
     compute_embeddings: bool = True,
+    drain: bool = False,
 ) -> int:
     """Fetch entries from mothership Seismo and store locally.
 
     Entries are shared across profiles (single local cache).
+
+    When ``drain`` is true or ``since`` is set, pulls with ``order=asc`` in pages
+    until ``sync.by_type.<type>.drain_complete`` (safe backfill / incremental).
+
+    Otherwise fetches a single newest-first page (quick refresh, max 200 rows).
     """
-    params = {"action": "magnitu_entries", "type": entry_type, "limit": str(limit)}
-    if since:
-        params["since"] = since
-    data = _request("GET", params).json()
-    entries = data.get("entries", [])
-    if entries:
-        db.upsert_entries(entries)
-        db.log_sync("pull", len(entries), "type={}, since={}".format(entry_type, since))
+    if entry_type == "all":
+        raise ValueError(
+            "pull_entries(entry_type='all') is unsupported; use pull_all_entry_types()"
+        )
+
+    page_size = max(1, min(int(limit), SEISMO_ENTRIES_PAGE_SIZE))
+
+    if drain or since:
+        total = _pull_entry_type_drain(entry_type, since=since, page_size=page_size)
+    else:
+        params = {
+            "action": "magnitu_entries",
+            "type": entry_type,
+            "limit": str(page_size),
+        }
+        data = _request("GET", params).json()
+        entries = data.get("entries", [])
+        if entries:
+            db.upsert_entries(entries)
+            db.log_sync("pull", len(entries), "type={}, since=".format(entry_type))
+        total = len(entries)
+
     cfg = get_config()
     if compute_embeddings and cfg.get("model_architecture") == "transformer":
         _compute_pending_embeddings()
-    return len(entries)
+    return total
 
 
 def pull_all_entry_types(
     since: str = None,
     compute_embeddings: bool = True,
+    drain: bool = None,
 ) -> int:
     """Pull every Seismo entry type (feed, email, lex, leg calendar).
 
-    Incremental sync uses this instead of a single ``type=all`` request so leg
-    calendar events and large lex corpora are not truncated by ``limit``.
+    One family per HTTP sequence (never ``type=all``) so each corpus is drained
+    with ``order=asc`` when ``since`` is set or ``drain=True``. Without ``since``,
+    each family gets one newest-first page (200 rows) for a lightweight refresh.
     """
-    remote_entries = {}
+    if drain is None:
+        drain = bool(since)
+
     try:
         status = get_status()
-        remote_entries = status.get("entries", {}) or {}
         pruning_days = status.get("entry_pruning_days") or status.get("pruning_days")
         if pruning_days is not None:
             cfg = get_config()
             cfg["seismo_pruning_days"] = int(pruning_days)
             save_config(cfg)
     except Exception as exc:
-        logger.warning("Could not read magnitu_status for pull limits: %s", exc)
+        logger.warning("Could not read magnitu_status for pull: %s", exc)
 
     total = 0
-    for entry_type, status_key in SEISMO_ENTRY_PULL_SPECS:
-        expected = int(remote_entries.get(status_key, 0) or 0)
-        limit = max(500, expected + 100) if expected else 500
+    for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
         total += pull_entries(
             since=since,
             entry_type=entry_type,
-            limit=limit,
+            limit=SEISMO_ENTRIES_PAGE_SIZE,
             compute_embeddings=False,
+            drain=drain,
         )
 
     cfg = get_config()

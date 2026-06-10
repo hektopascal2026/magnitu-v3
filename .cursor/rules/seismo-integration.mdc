@@ -13,7 +13,9 @@ Magnitu connects to **Seismo** (separate repo, PHP app). Seismo is a feed aggreg
 
 All requests go to seismo's `index.php` with `api_key` as a query parameter (`?api_key=...`):
 
-- `GET ?action=magnitu_entries` — fetch entries (params: `since`, `type`, `limit`)
+- `GET ?action=magnitu_entries` — fetch entries (params: `since`, `type`, `limit`, `order`)
+  - `limit` is per family (max 200). Default `order=desc` (newest first).
+  - Incremental / full backfill: `order=asc`, drain pages until `sync.by_type.<type>.drain_complete`, advance `since` to `recommended_next_since` (see Seismo README).
 - `POST ?action=magnitu_scores` — push batch scores (body: `{scores: [...], model_version}`)
 - `GET/POST ?action=magnitu_recipe` — GET returns recipe; POST uploads new recipe
 - `GET/POST ?action=magnitu_labels` — GET returns all labels; POST upserts labels (body: `{labels: [{entry_type, entry_id, label, reasoning, labeled_at}]}`)
@@ -47,4 +49,5 @@ Seismo's PHP tokenizes text, matches against keywords, sums weights per class, a
 - Do NOT change `entry_type` values — must match Seismo: `feed_item`, `email`, `lex_item`, `calendar_event` (Leg)
 - The `source_type` values from seismo are: `rss`, `substack`, `email`, `lex_eu`, `lex_ch`
 - Sync module (`sync.py`) handles all API communication — keep it as the single point of contact
+- `pull_entries(..., drain=True)` and `pull_all_entry_types(since=…)` use `order=asc` pagination; do not advance `since` to the newest row on a full DESC batch
 - Python 3.9 compatibility required (no `X | Y` type unions, use `Optional[X]` / `typing`)

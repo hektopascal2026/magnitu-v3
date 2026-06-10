@@ -263,13 +263,11 @@ def _sync_pull_impl(
         from magnitu.entry_sources import SEISMO_ENTRY_PULL_SPECS
 
         for idx, (entry_type, status_key) in enumerate(SEISMO_ENTRY_PULL_SPECS):
-            expected = int(remote_entries.get(status_key, 0) or 0)
-            limit = max(1000, expected + 250)
             if progress_cb:
                 progress_cb(10 + idx * 20, "Pulling {} entries...".format(entry_type))
             fetched = sync.pull_entries(
                 entry_type=entry_type,
-                limit=limit,
+                drain=True,
                 compute_embeddings=False,
             )
             entries_by_type[entry_type] = fetched
