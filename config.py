@@ -123,6 +123,8 @@ DEFAULTS = {
     "embedding_extractive_window": 280,
     # Multiplier applied to labels that have a non-empty reasoning note. 1 = off.
     "reasoning_weight_boost": 1.0,
+    # Training weight for confirmed Gemini labels (1.0 = same as human labels).
+    "synthetic_label_weight": 0.5,
     # Regex patterns (or plain phrases) that flag legislative signal in an entry.
     # When matched, the phrase is prepended to the embedded text AND the recipe
     # keyword for it is boosted toward investigation_lead.
@@ -163,6 +165,7 @@ PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
     "label_time_decay_priority_exempt",
     "label_time_decay_noise_accel",
     "reasoning_weight_boost",
+    "synthetic_label_weight",
     "gemini_mode",
 })
 

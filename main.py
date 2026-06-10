@@ -371,6 +371,35 @@ def _sync_pull_impl(
     return result
 
 
+def _rank_normalize_push_scores(scores: List[Dict]) -> List[Dict]:
+    """Replace relevance_score with percentile rank (ties share mean rank).
+
+    Monotone transform: Seismo only sorts/thresholds, so ordering is preserved
+    while spreading scores over (0, 1] and removing the ~0.5 composite attractor.
+    """
+    n = len(scores)
+    if n < 2:
+        return scores
+    order = sorted(range(n), key=lambda i: scores[i]["relevance_score"])
+    ranks = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while (
+            j + 1 < n
+            and scores[order[j + 1]]["relevance_score"]
+            == scores[order[i]]["relevance_score"]
+        ):
+            j += 1
+        mean_rank = (i + j + 2) / 2.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = mean_rank
+        i = j + 1
+    for idx, row in enumerate(scores):
+        row["relevance_score"] = round(ranks[idx] / n, 4)
+    return scores
+
+
 def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
     import httpx as _httpx
 
@@ -475,6 +504,8 @@ def _sync_push_impl(progress_cb=None, profile_id: int = 1) -> dict:
             "label_count":       model_info.get("label_count", 0),
             "architecture":      model_info.get("architecture", "tfidf"),
         }
+
+    scores = _rank_normalize_push_scores(scores)
 
     if progress_cb:
         progress_cb(78, "Pushing scores to Seismo...")

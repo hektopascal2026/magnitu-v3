@@ -73,7 +73,7 @@
                 <div class="about-step-number">3</div>
                 <div class="about-step-body">
                     <h4>Train</h4>
-                    <p>Magnitu builds a completely new model from all your historical labels. You need at least {{ config.min_labels_to_train or 20 }} labels to start.</p>
+                    <p>Magnitu builds a new classifier from your confirmed labels (minimum {{ config.min_labels_to_train or 20 }}). Training runs as a background job with a progress bar — embedding missing rows, calibration folds, recipe distillation, and ETA while you keep working.</p>
                 </div>
             </div>
             <div class="about-step">
@@ -137,23 +137,25 @@
     <div class="about-section">
         <h3>How Magnitu Reads Text</h3>
         <p><strong>Language Model:</strong> Magnitu uses a pre-trained multilingual embedding model (default <code>{{ config.transformer_model_name or 'intfloat/multilingual-e5-base' }}</code>). It is contrastively trained for semantic similarity across 100+ languages, so terms like <em>"Untersuchung"</em> and <em>"investigation"</em> land near each other in vector space. Document text is prefixed with <code>passage:</code> at embed time, as required by the E5 family.</p>
-        <p><strong>Meaning Vectors:</strong> Each article is converted into a 768-dimensional semantic fingerprint derived from its title (repeated for architectural emphasis), description, and a body text excerpt (up to {{ config.embedding_content_cap or 3000 }} characters). Crucially, structured environmental context (such as publisher authority and feed types) is woven into <strong>fluent natural language sentences</strong> rather than injected as raw code-style database strings. This perfectly aligns the incoming metadata with the multilingual model's native language distribution, maximizing classification consistency. Long documents also contribute extractive snippets from the full body when legal patterns match beyond the excerpt cap. Up to {{ config.embedding_max_tokens or 512 }} tokens are encoded per entry; embeddings are computed once at sync and cached.</p>
+        <p><strong>Meaning Vectors:</strong> Each article becomes a 768-dimensional fingerprint from its title (repeated for emphasis), description, and body excerpt. Publisher and source context are woven in as <strong>natural-language sentences</strong>, not raw field dumps. Legal-pattern hits pull extractive snippets from the full body. Long text is split into several ~1800-character chunks, each encoded by E5 ({{ config.embedding_max_tokens or 512 }} tokens per chunk), then <strong>length-weighted mean-pooled</strong> into one vector — so statutory bodies beyond the first window still matter. Embeddings are computed at sync and cached; run <strong>Full Sync</strong> after upgrades to refresh long lex items.</p>
 
         <h3>Training & Distillation</h3>
-        <p><strong>The Classifier Head:</strong> Each training cycle fits a non-linear <strong>Multi-Layer Perceptron (MLP) neural network head</strong> on top of your cached embeddings (optimized with architectural early-stopping and balanced class weights). This allows Magnitu to map complex geometric intersections between overlapping topics—such as isolating specific corporate entities only when they cross paths with explicit regulatory compliance terms—which a simple linear separator would misclassify.</p>
-        <p><strong>Knowledge Distillation:</strong> Because Seismo runs on standard PHP, it cannot execute heavy Python neural networks natively. To bridge this gap, Magnitu uses <strong>Soft-Label Knowledge Distillation</strong>: a simpler TF-IDF student model is trained on the teacher's continuous <em>confidence spectrum</em> (the full probability array) across all entries using a multi-output continuous regression network. By extracting a regression matrix of weighted keywords (unigrams, bigrams, and trigrams) instead of discrete classification tags, the distilled JSON recipe retains the deep model's nuanced uncertainty profiles for millisecond live scoring.</p>
+        <p><strong>The Classifier Head:</strong> A regularized <strong>logistic regression</strong> head on frozen E5 embeddings (balanced class weights, optional per-label sample weights from time-decay and reasoning boost). Stable entry-id holdout (~10–20% test) keeps metrics comparable across retrains.</p>
+        <p><strong>Synthetic vs human labels:</strong> Confirmed Gemini labels train at <strong>{{ config.synthetic_label_weight or 0.5 }}×</strong> the weight of human labels by default (<code>synthetic_label_weight</code> in profile training settings; set <code>1.0</code> to disable). Pending Gemini batch rows are excluded from recipe reasoning boost until you Accept.</p>
+        <p><strong>Knowledge Distillation:</strong> Seismo runs keyword recipes in PHP, not neural nets. Magnitu trains a <strong>TF-IDF + LogReg student</strong> on the transformer's soft class probabilities across all entries, with human labels overriding at 3× weight. Keyword coefficients (unigrams through trigrams, plus source-type features) become the recipe. Export tuning uses a scorer that mirrors Seismo's PHP rules (once per keyword, synopsis-only for lex/Leg, accents preserved).</p>
     </div>
 
     <div class="about-section">
         <h3>Relevance Scores & Measuring Quality</h3>
-        <p>Every entry gets a relevance score from 0 to 1 (shown as a percentage). Class probabilities are calibrated with <strong>temperature scaling</strong> fit on out-of-fold predictions from the training fold, so scores are less overconfident before push. <em>Note:</em> If a profile's data pool lacks diverse representation (such as classes containing fewer than two total examples), the calibration system safely defaults to an inactive baseline (T=1.0) to prevent dataset distortion.</p>
-        <p>The final score is a weighted composite of calibrated probabilities:</p>
+        <p>Every entry gets a relevance score from 0 to 1. Class probabilities use <strong>temperature scaling</strong> fit on out-of-fold logits (T=1.0 when classes are too sparse for OOF). Locally, the score is a weighted composite of those probabilities:</p>
         <ul>
             <li>Investigation Lead: <strong>Weight 1.0</strong></li>
             <li>Important: <strong>Weight 0.66</strong></li>
             <li>Background: <strong>Weight 0.33</strong></li>
             <li>Noise: <strong>Weight 0.0</strong></li>
         </ul>
+
+        <p>On <strong>Push to Seismo</strong>, scores in that batch are converted to <strong>percentile ranks</strong> (0–1, ties averaged) before upload. Ordering is unchanged, but the spread avoids everything clustering near 0.5 — Seismo only sorts and thresholds, so this is safe. Top/Mismatch views in Magnitu still show the raw model composite.</p>
 
         <h4>Measuring Quality</h4>
         <p>Magnitu holds back ~10–20% of your labels as a <strong>stable test set</strong> (the same entries stay in test across retrains, keyed by entry id). It calculates <strong>Accuracy</strong> and an <strong>F1 Score</strong>, which is crucial because it penalizes models that inflate accuracy by simply calling everything "noise".</p>
@@ -164,7 +166,7 @@
         <div class="about-detail-grid">
             <div class="about-detail">
                 <span class="about-detail-label">Text Length</span>
-                <span class="about-detail-value">Keyword weights in the recipe are normalized to compensate. Local transformer body excerpts are capped at {{ config.embedding_content_cap or 3000 }} characters ({{ config.embedding_max_tokens or 512 }} tokens at encode time).</span>
+                <span class="about-detail-value">Recipe weights are length-normalized for PHP. Embeddings use chunk pooling (~1800 chars per E5 window, up to 4–6 chunks) so long lex/Leg bodies are not truncated to a single 512-token slice.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Source Bias</span>
@@ -211,11 +213,15 @@
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Recipe Optimization</span>
-                <span class="about-detail-value">Automated. Runs an architectural bounded minimization routine (L-BFGS-B) during distillation. It automatically pinpoints the exact mathematical keyword ceilings and unigram caps needed to maximize recipe quality scores.</span>
+                <span class="about-detail-value">Optional grid search over export caps (unigram / phrase / source ceilings) to maximize correlation between the local model and the PHP-parity recipe scorer on labeled holdout entries. Legal-template floors apply inside the search.</span>
             </div>
             <div class="about-detail">
                 <span class="about-detail-label">Reasoning-Weight Boost</span>
                 <span class="about-detail-value">Default Off. Assigns a heavier training multiplier to labels with reasoning.</span>
+            </div>
+            <div class="about-detail">
+                <span class="about-detail-label">Synthetic Label Weight</span>
+                <span class="about-detail-value">Default 0.5. Confirmed Gemini labels count at this fraction of human label weight during training and distillation (1.0 = off).</span>
             </div>
         </div>
     </div>

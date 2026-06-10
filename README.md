@@ -30,19 +30,23 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
 - **Sync modes**
   - **Sync**: quick incremental pull from mothership
   - **Full Sync**: source-by-source backfill + repeated embedding passes until coverage is complete
-  - Live progress bar (phase label + percentage) for sync and push
+  - Live progress bar (phase label + percentage + ETA) for sync, **train**, and push
 - **Scoring quality**
   - **Temperature calibration**: probabilities are fit via out-of-fold logits on the training fold so they are less overconfident before being pushed
-  - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; the embedding is invalidated when those fields change on sync
+  - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; long bodies use **chunk pooling** (several E5 windows, length-weighted mean) so lex/Leg statutory text beyond the first ~512 tokens still influences the vector
   - **Lead discovery blend** (optional, 0–0.25): gently emphasises `investigation_lead` probability in the relevance score pushed to Seismo
+  - **Rank-normalized push scores**: on Push, relevance scores sent to Seismo are replaced with their percentile rank within the batch (ordering preserved; spreads scores across the full range instead of clustering near ~0.5). Local Top/Mismatch views still use the raw model composite
+  - **Synthetic label down-weight** (default `synthetic_label_weight: 0.5`): confirmed Gemini labels count half as much as human labels during training and recipe distillation; set `1.0` to disable
 - **Advanced training knobs** (Settings → Advanced training, all opt-in)
   - **Label time-decay** and **reasoning-weight boost** — stored **per profile** (each workspace can use different values)
   - **Legal-signal patterns** — **global** (one list for all profiles; changing them invalidates shared embeddings)
   - Full reference with defaults, tradeoffs, and tuning guidance below: [Training Settings Reference](#training-settings-reference)
 - **Recipe distillation**
   - Unigrams, bigrams, trigrams; both positive and negative signals per class
-  - Legal-template priors and reasoning-phrase boosts
-  - Knowledge distillation for transformer models (TF-IDF student learns from transformer predictions)
+  - Legal-template priors and reasoning-phrase boosts (1.5×, deduped per phrase)
+  - Knowledge distillation for transformer models (TF-IDF student learns from transformer soft labels; human labels weighted 3×)
+  - Recipe export tuned against a **PHP-parity scorer** (once-per-keyword hit, synopsis-only lex/Leg text, accent-preserving tokens) so normalization and cap optimization match what Seismo actually runs
+  - Per-profile model/recipe files (`model_p{id}_v{n}.joblib`, `recipe_p{id}_v{n}.json`) — multi-profile desks cannot overwrite each other's classifiers
 - **Explainability**
   - Per-entry explanation showing top weighted features
   - Dashboard: learned legal-phrase patterns with impact scores
@@ -197,7 +201,7 @@ Settings are split into **global** (apply to every profile) and **per-profile**.
 ### Per-profile
 - **Push target URL + API key** — which Seismo instance receives this profile's scores and recipe. Leave blank to fall back to the mothership.
 - **Training Settings** (minimum labels, recipe top keywords, alert threshold, lead discovery blend) — saved per profile when you click **Save** on that profile's Settings page. New profiles inherit global defaults until you change and save them there.
-- **Advanced training** (label time-decay, decay floor, reasoning-weight boost) — also per profile. **Legal-signal patterns** remain global (see above).
+- **Advanced training** (label time-decay, decay floor, reasoning-weight boost, synthetic label weight) — also per profile. **Legal-signal patterns** remain global (see above).
 
 ## Training Settings Reference
 
@@ -244,7 +248,13 @@ Minimum weight after unlimited decay.
 Multiplier for labels that carry a written reasoning note. Labels receive `sample_weight` on the transformer and TF-IDF paths by this factor.
 - `1.0` = off; `1.3 – 1.5` = gentle boost (recommended starting point); `2.0` = strong; above `3.0` = experimental.
 - **Heuristic**: if a minority of your labels have reasoning (say 10–30%), you can afford a stronger boost. If most labels have reasoning, stay near `1.0` — the boost stops being informative.
-- The model never reads the reasoning text; only the *presence* of reasoning changes the label's weight.
+- The model never reads the reasoning text; only the *presence* of reasoning changes the label's weight. Reasoning phrases are also boosted in the distilled recipe (see About page).
+
+**Synthetic label weight** — default `0.5`, range `0.0 – 1.0`  
+Training multiplier for labels with `label_source = Gemini` (confirmed synthetic batch rows only; pending Accept rows are excluded from recipe reasoning boost).
+- `0.5` = Gemini labels count half as much as human labels in the classifier and in distillation hard-label overrides.
+- `1.0` = legacy behaviour (Gemini and human labels weigh equally).
+- Use after large synthetic batches so human corrections stay authoritative.
 
 **Legal-signal patterns** — default empty (list of strings), **global (all profiles)**  
 Phrases (literal or regex) that, when matched in an entry's text, are:
@@ -260,7 +270,23 @@ Phrases (literal or regex) that, when matched in an entry's text, are:
 - **Example set for Swiss KMU/Export**: `Drittland`, `Binnenmarkt`, `EWR`, `CE-Kennzeichnung`, `Ursprungserzeugnis`, `Konformitätsbewertung`, `Marktüberwachung`, `Gleichwertigkeit`, `Zollkodex`, `Ursprungsregel`.
 
 ### When to retrain
-Training is manual — click **Train** on the Model page. As a rule of thumb: retrain after every **10–20 new labels** during active labeling, or after any large labeling session. Training is cheap with cached embeddings (seconds to a minute for most setups), so retraining often is the right move.
+Training is manual — click **Train** on the Label page (background job with progress bar). As a rule of thumb: retrain after every **10–20 new labels** during active labeling, or after any large labeling session. Training is cheap with cached embeddings (seconds to a few minutes; first E5 load or many missing embeddings takes longer).
+
+## Scoring pipeline reference
+
+Design notes and implementation plans live in `docs/scoring-fix-plan.md` and `docs/sharpness-fix-plan.md`. Summary of what ships in this tree:
+
+| Area | Behaviour |
+|------|-----------|
+| **Local model** | E5 embeddings + LogReg head; temperature calibration on OOF logits |
+| **Push to Seismo** | Percentile rank within the pushed batch (monotone; safe for sorting/thresholds) |
+| **Recipe** | Distilled TF-IDF student → keyword JSON; PHP scorer parity for tuning; legal-template floors |
+| **Multi-profile** | Separate `model_p*_*` / `recipe_p*_*` files per profile |
+| **Long documents** | Chunk pooling at embed time (4 chunks news, 6 lex/Leg); re-embed after upgrade for full benefit |
+| **Gemini labels** | `synthetic_label_weight` (default 0.5) in per-profile training settings |
+| **Label sync** | Normalized timestamp compare; `label_source` preserved on remote merge |
+
+Seismo evaluates the **recipe** on new/unscored rows; Magnitu-pushed **scores** take precedence when present. Recipe and push scores are related but not identical — rank normalization applies only to the pushed score batch.
 
 ## Database Migration
 

@@ -678,6 +678,9 @@ def invalidate_embedder_cache():
 
 CONTENT_CAP = 3000
 LEGAL_CONTENT_CAP = 12000  # lex / Leg statutory body text from Seismo
+EMBED_CHUNK_CHARS = 1800   # ~512 E5 tokens per chunk
+MAX_EMBED_CHUNKS = 4
+MAX_EMBED_CHUNKS_LEGAL = 6
 EMBEDDING_MAX_LENGTH = 512
 SOURCE_NAME_CAP = 120
 SOURCE_CATEGORY_CAP = 80
@@ -858,6 +861,37 @@ def _build_entry_text(entry: dict, legal_patterns: Optional[List[str]] = None) -
     return body
 
 
+def _split_text_chunks(text: str, chunk_chars: int = EMBED_CHUNK_CHARS,
+                       max_chunks: int = MAX_EMBED_CHUNKS) -> List[str]:
+    """Split text into <=max_chunks windows, snapping cuts back to whitespace."""
+    text = text or ""
+    if len(text) <= chunk_chars:
+        return [text] if text else [""]
+    chunks = []
+    pos = 0
+    n = len(text)
+    while pos < n and len(chunks) < max_chunks:
+        remaining = max_chunks - len(chunks)
+        end = min(pos + chunk_chars, n)
+        is_last = remaining == 1 or end >= n
+        if not is_last and end < n:
+            snap_start = max(pos, end - 200)
+            cut = text.rfind(" ", snap_start, end)
+            if cut > pos:
+                end = cut
+        piece = text[pos:end].strip()
+        if piece:
+            chunks.append(piece)
+        if end <= pos:
+            end = min(pos + chunk_chars, n)
+        pos = end
+        while pos < n and text[pos].isspace():
+            pos += 1
+    if not chunks:
+        return [text[:chunk_chars]]
+    return chunks
+
+
 def embed_entries(
     entries: List[dict],
     progress_cb: Optional[Callable[[int, int], None]] = None,
@@ -869,14 +903,42 @@ def embed_entries(
         "Preparing entry text for %d rows (lex/Leg bodies can take minutes before E5 loads)...",
         n,
     )
-    texts = []
+    chunk_texts = []
+    chunk_meta = []
     for i, entry in enumerate(entries):
-        texts.append(_build_entry_text(entry, legal_patterns=patterns))
+        text = _build_entry_text(entry, legal_patterns=patterns)
+        max_c = (
+            MAX_EMBED_CHUNKS_LEGAL
+            if is_legal_training_entry(entry)
+            else MAX_EMBED_CHUNKS
+        )
+        for ch in _split_text_chunks(text, max_chunks=max_c):
+            chunk_texts.append(ch)
+            chunk_meta.append((i, len(ch)))
         if n <= 50 or (i + 1) % 50 == 0 or (i + 1) == n:
             logger.info("  entry text prep %d / %d", i + 1, n)
-    logger.info("Entry text ready; loading E5 and encoding %d texts", n)
-    embeddings = compute_embeddings(texts, progress_cb=progress_cb)
-    return [embedding_to_bytes(emb) for emb in embeddings]
+    logger.info(
+        "Entry text ready; loading E5 and encoding %d chunks (%d entries)",
+        len(chunk_texts), n,
+    )
+    if not chunk_texts:
+        return []
+    chunk_embeddings = compute_embeddings(chunk_texts, progress_cb=progress_cb)
+    by_entry_vecs = {}
+    by_entry_wts = {}
+    for (entry_idx, char_len), emb in zip(chunk_meta, chunk_embeddings):
+        by_entry_vecs.setdefault(entry_idx, []).append(emb)
+        by_entry_wts.setdefault(entry_idx, []).append(max(char_len, 1))
+    out = []
+    for i in range(n):
+        vecs = by_entry_vecs.get(i)
+        if not vecs:
+            out.append(embedding_to_bytes(np.zeros(768, dtype=np.float32)))
+            continue
+        wts = by_entry_wts[i]
+        pooled = np.average(np.vstack(vecs), axis=0, weights=wts)
+        out.append(embedding_to_bytes(pooled))
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -923,9 +985,18 @@ def _decay_half_life_for_label(label: str, base_half_life: float,
     return base_half_life
 
 
+def _synthetic_label_weight(config: dict) -> float:
+    """Training/distillation multiplier for confirmed Gemini labels (1.0 = off)."""
+    try:
+        syn_w = float(config.get("synthetic_label_weight", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        syn_w = 0.5
+    return max(0.0, min(1.0, syn_w))
+
+
 def compute_sample_weights(labeled: List[dict],
                             config: Optional[dict] = None) -> np.ndarray:
-    """Per-label training weight combining time decay and reasoning boost.
+    """Per-label training weight combining time decay, reasoning boost, and source.
 
     - Time decay: ``weight = 0.5 ** (age_days / half_life)`` clamped to a floor.
       Uses ``updated_at`` when present (freshly re-labeled rows stay strong)
@@ -933,7 +1004,8 @@ def compute_sample_weights(labeled: List[dict],
       When decay is enabled, ``investigation_lead`` and ``important`` skip decay
       by default; ``noise`` decays faster (``label_time_decay_noise_accel``).
     - Reasoning boost: multiplied in for labels with a non-empty reasoning note.
-    - Both default to no-op so existing models train identically.
+    - Synthetic labels (``label_source == "Gemini"``): multiplied by
+      ``synthetic_label_weight`` (default 0.5; set 1.0 to disable).
     """
     if config is None:
         config = get_config()
@@ -974,6 +1046,12 @@ def compute_sample_weights(labeled: List[dict],
             reason = (lbl.get("reasoning") or "").strip()
             if reason:
                 weights[i] *= boost
+
+    syn_w = _synthetic_label_weight(config)
+    if syn_w < 1.0:
+        for i, lbl in enumerate(labeled):
+            if (lbl.get("label_source") or "") == "Gemini":
+                weights[i] *= syn_w
 
     return weights
 
@@ -1795,10 +1873,11 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
         for s in scores
     }
 
-    human_labels = {
-        db.entry_key_from_mapping(lbl): lbl["label"]
+    human_label_rows = {
+        db.entry_key_from_mapping(lbl): lbl
         for lbl in db.get_all_labels(profile_id)
     }
+    syn_w = _synthetic_label_weight(config)
 
     scored_entries = []
     targets = []
@@ -1806,9 +1885,13 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
 
     for entry in all_entries:
         key = db.entry_key_from_mapping(entry)
-        if key in human_labels:
+        if key in human_label_rows:
+            lbl_row = human_label_rows[key]
+            hard_w = HUMAN_DISTILL_WEIGHT
+            if (lbl_row.get("label_source") or "") == "Gemini":
+                hard_w *= syn_w
             scored_entries.append(entry)
-            targets.append({"hard": human_labels[key], "weight": HUMAN_DISTILL_WEIGHT})
+            targets.append({"hard": lbl_row["label"], "weight": hard_w})
         elif use_soft and teacher_prob_map.get(key):
             scored_entries.append(entry)
             targets.append({"soft": teacher_prob_map[key]})
