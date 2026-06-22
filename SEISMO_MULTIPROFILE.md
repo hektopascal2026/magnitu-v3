@@ -128,7 +128,7 @@ Unchanged. Desks must accept and store them like the mothership.
 {
   "version": 5,
   "classes": ["investigation_lead", "important", "background", "noise"],
-  "class_weights": [1.0, 0.66, 0.33, 0.0],
+  "class_weights": [1.0, 0.80, 0.20, 0.0],
   "keywords": { "leaked documents": {"investigation_lead": 0.82} },
   "source_weights": { "rss": {"important": 0.2} },
   "alert_threshold": 0.75

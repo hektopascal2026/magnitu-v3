@@ -468,7 +468,7 @@ try:
     assert "classes" in recipe
     assert recipe["classes"] == ["investigation_lead", "important", "background", "noise"]
     assert "class_weights" in recipe
-    assert recipe["class_weights"] == [1.0, 0.66, 0.33, 0.0]
+    assert recipe["class_weights"] == [1.0, 0.80, 0.20, 0.0]
     ok()
 except Exception as e:
     fail(str(e))

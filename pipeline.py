@@ -46,10 +46,16 @@ CLASSES = ["investigation_lead", "important", "background", "noise"]
 
 CLASS_WEIGHT_MAP = {
     "investigation_lead": 1.0,
-    "important": 0.66,
-    "background": 0.33,
+    "important": 0.80,
+    "background": 0.20,
     "noise": 0.0,
 }
+
+
+def class_weight_list(class_names: Optional[List[str]] = None) -> List[float]:
+    """Ordered class weights for recipe JSON (same order as ``CLASSES`` by default)."""
+    names = class_names if class_names is not None else CLASSES
+    return [CLASS_WEIGHT_MAP.get(c, 0.0) for c in names]
 
 
 _STABLE_HOLDOUT_SALT = b"magnitu-v3-stable-holdout-v1"

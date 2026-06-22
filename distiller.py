@@ -28,6 +28,7 @@ from pipeline import (
     score_entries,
     train_tfidf_student,
     build_tfidf_pipeline,
+    class_weight_list,
     _prepare_text,
 )
 
@@ -323,7 +324,7 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
         },
         "alert_threshold": config.get("alert_threshold", 0.75),
         "classes": ["investigation_lead", "important", "background", "noise"],
-        "class_weights": [1.0, 0.66, 0.33, 0.0],
+        "class_weights": class_weight_list(),
         "keywords": keywords,
         "source_weights": source_weights,
     }
@@ -627,7 +628,7 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
     """
     cfg = get_config()
     classes = ["investigation_lead", "important", "background", "noise"]
-    class_wts = [1.0, 0.66, 0.33, 0.0]
+    class_wts = class_weight_list()
 
     labels = db.get_all_labels(profile_id=profile_id)
     entry_map = {
@@ -734,7 +735,7 @@ def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
     kw = recipe.get("keywords", {})
     source_weights_map = recipe.get("source_weights", {})
     classes = recipe.get("classes", ["investigation_lead", "important", "background", "noise"])
-    class_wts = recipe.get("class_weights", [1.0, 0.66, 0.33, 0.0])
+    class_wts = recipe.get("class_weights", class_weight_list())
 
     paired_model = []
     paired_recipe = []

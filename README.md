@@ -278,7 +278,8 @@ Design notes and implementation plans live in `docs/scoring-fix-plan.md` and `do
 
 | Area | Behaviour |
 |------|-----------|
-| **Local model** | E5 embeddings + LogReg head; temperature calibration on OOF logits |
+| **Class weights** | Single source in `pipeline.CLASS_WEIGHT_MAP` (1.0 / 0.80 / 0.20 / 0.0); exported in recipe JSON |
+| **Score audit** | `python scripts/analyze_score_distributions.py` — raw vs push-rank vs recipe histograms |
 | **Push to Seismo** | Percentile rank within the pushed batch (monotone; safe for sorting/thresholds) |
 | **Recipe** | Distilled TF-IDF student → keyword JSON; PHP scorer parity for tuning; legal-template floors |
 | **Multi-profile** | Separate `model_p*_*` / `recipe_p*_*` files per profile |

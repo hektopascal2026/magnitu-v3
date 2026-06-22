@@ -257,7 +257,7 @@ try:
     recipe = {
         "version": 7,
         "classes": ["investigation_lead", "important", "background", "noise"],
-        "class_weights": [1.0, 0.66, 0.33, 0.0],
+        "class_weights": [1.0, 0.80, 0.20, 0.0],
         "keywords": {"corruption": {"investigation_lead": 0.5}},
         "source_weights": {"rss": {"important": 0.1}},
     }

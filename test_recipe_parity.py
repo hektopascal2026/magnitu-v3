@@ -5,6 +5,7 @@ from unittest import mock
 import db
 import distiller
 import explainer
+import pipeline
 import sync
 
 
@@ -33,7 +34,7 @@ class TestRecipeCompositeParity(unittest.TestCase):
             "source_type": "rss",
         }
         classes = ["investigation_lead", "important", "background", "noise"]
-        class_wts = [1.0, 0.66, 0.33, 0.0]
+        class_wts = pipeline.class_weight_list(classes)
         scores = distiller._accumulate_recipe_class_scores(
             entry, keywords, {}, classes
         )
