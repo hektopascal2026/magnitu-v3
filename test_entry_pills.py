@@ -17,28 +17,41 @@ def fail(msg):
     print("  FAIL:", msg)
 
 
-def test_feed_rss_category():
+def test_feed_rss_source_name():
     pills = entry_pill_texts({
         "entry_type": "feed_item",
         "source_type": "rss",
         "source_category": "NZZ",
         "source_name": "Neue Zürcher Zeitung",
     })
-    if pills != ["NZZ"]:
-        fail("rss category: %r" % pills)
+    if pills != ["Neue Zürcher Zeitung"]:
+        fail("rss source_name: %r" % pills)
     else:
         ok()
 
 
-def test_feed_rss_title_when_unsortiert():
+def test_feed_rss_ignores_category():
     pills = entry_pill_texts({
         "entry_type": "feed_item",
         "source_type": "rss",
-        "source_category": "unsortiert",
+        "source_category": "politics",
         "source_name": "Long Feed Title Here",
     })
     if pills != ["Long Feed Title Here"]:
-        fail("unsortiert fallback: %r" % pills)
+        fail("category ignored: %r" % pills)
+    else:
+        ok()
+
+
+def test_feed_rss_empty_name():
+    pills = entry_pill_texts({
+        "entry_type": "feed_item",
+        "source_type": "rss",
+        "source_category": "NZZ",
+        "source_name": "",
+    })
+    if pills != []:
+        fail("empty name: %r" % pills)
     else:
         ok()
 
@@ -156,8 +169,9 @@ def test_calendar_event():
 
 if __name__ == "__main__":
     print("=== entry_pills ===")
-    test_feed_rss_category()
-    test_feed_rss_title_when_unsortiert()
+    test_feed_rss_source_name()
+    test_feed_rss_ignores_category()
+    test_feed_rss_empty_name()
     test_scraper()
     test_parl_press_mm()
     test_parl_press_sda()

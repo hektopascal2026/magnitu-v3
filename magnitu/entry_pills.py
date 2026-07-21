@@ -3,7 +3,7 @@ Seismo timeline source-pill label text (see docs/magnitu-entry-pills.md).
 
 Returns human-readable strings only — Magnitu keeps its own CSS classes.
 """
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 _PILL_LABEL_MAX = 32
 
@@ -63,13 +63,6 @@ def _truncate_label(text: str, max_len: int = _PILL_LABEL_MAX) -> str:
     return s[:max_len] + "…"
 
 
-def _label_from_category_or_title(category: Optional[str], title: Optional[str]) -> str:
-    c = (category or "").strip()
-    if c and c.lower() != "unsortiert":
-        return c
-    return (title or "").strip()
-
-
 def _lex_source_key(entry: dict) -> str:
     st = (entry.get("source_type") or "").strip().lower()
     if st.startswith("lex_"):
@@ -114,14 +107,12 @@ def _feed_item_pills(entry: dict) -> List[str]:
         primary = "🇨🇭 Parl SDA" if is_sda else "🇨🇭 Parl MM"
         return [primary, _parl_press_meta_label(entry, is_sda)]
     if st == "scraper":
-        name = (entry.get("source_name") or "").strip() or "Scraper"
-        return ["🌐 " + name]
-    label = _truncate_label(
-        _label_from_category_or_title(
-            entry.get("source_category"),
-            entry.get("source_name"),
+        name = _truncate_label(
+            (entry.get("source_name") or "").strip() or "Scraper"
         )
-    )
+        return ["🌐 " + name]
+    # Seismo 1.0: always feeds.title (source_name); category is routing only.
+    label = _truncate_label(entry.get("source_name") or "")
     if not label:
         return []
     return [label]

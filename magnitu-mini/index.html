@@ -434,12 +434,6 @@ body {
         return s.slice(0, max) + '…';
     }
 
-    function labelFromCategoryOrTitle(category, title) {
-        var c = (category || '').trim();
-        if (c && c.toLowerCase() !== 'unsortiert') return c;
-        return (title || '').trim();
-    }
-
     function feedItemPillTexts(entry) {
         var st = (entry.source_type || '').trim().toLowerCase();
         if (st === 'parl_press') {
@@ -454,9 +448,10 @@ body {
             return [isSda ? '🇨🇭 Parl SDA' : '🇨🇭 Parl MM', meta];
         }
         if (st === 'scraper') {
-            return ['🌐 ' + ((entry.source_name || '').trim() || 'Scraper')];
+            return ['🌐 ' + truncatePillLabel((entry.source_name || '').trim() || 'Scraper')];
         }
-        var label = truncatePillLabel(labelFromCategoryOrTitle(entry.source_category, entry.source_name));
+        // Seismo 1.0: always feeds.title (source_name); category is routing only.
+        var label = truncatePillLabel(entry.source_name || '');
         return label ? [label] : [];
     }
 
