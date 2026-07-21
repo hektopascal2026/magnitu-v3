@@ -46,9 +46,9 @@ Shaping lives in `src/Controller/MagnituController.php`:
 - `shapeLexItem()`
 - `shapeCalendarEvent()`
 
-### Known API gap (email)
+### Email pill text (API = dashboard)
 
-The dashboard prefers `email_subscriptions.display_name` for the pill text. The API does **not** export that field today — only `source_name` (from name/email) and `source_category` (`sender_tags.tag`, default `unclassified`). For labels like “Admin.ch”, use `source_name` when it matches, or coordinate an API extension (e.g. `source_label`).
+`shapeEmail()` sets `source_name` to the matched `email_subscriptions.display_name` when available; otherwise `from_name` / `from_email`. Magnitu and the label UI both read `source_name` for the peach pill.
 
 ---
 
@@ -142,16 +142,16 @@ Example: “Neue Zürcher Zeitung” on light blue = RSS pill (`entry-tag--feed-
 ```json
 "source_type": "email",
 "source_category": "<sender_tags.tag or 'unclassified'>",
-"source_name": "<from_name or from_email>"
+"source_name": "<subscription display_name, else from_name or from_email>"
 ```
 
-### Pill (dashboard)
+### Pill (dashboard and Magnitu API)
 
 | Condition | Class | Background | Text |
 |-----------|-------|------------|------|
-| `subscription_display_name` set | `entry-tag--email-sender` | `#FFDBBB` | display name |
-| Else if `sender_tag` set and ≠ `unclassified` | same | same | `sender_tag` |
-| Else | **no pill** | | |
+| Matched subscription with `display_name` | `entry-tag--email-sender` | `#FFDBBB` | display name (`source_name`) |
+| Else if `sender_tag` set and ≠ `unclassified` | same | same | `sender_tag` (dashboard only when no sub label) |
+| Else | API: From name in `source_name`; dashboard: **no pill** if no tag | | |
 
 Example: “Admin.ch” on peach = email pill (`entry-tag--email-sender`, `#FFDBBB`).
 
@@ -306,7 +306,7 @@ function emailPill(entry) {
   if (tag === 'unclassified' && !name) return null;
   return {
     css: 'entry-tag entry-tag--email-sender',
-    text: name || tag, // prefer subscription display_name when API adds it
+    text: name || tag, // source_name is subscription display_name when matched
   };
 }
 ```
@@ -328,6 +328,5 @@ Apply base `.entry-tag` styles (padding, 2px black border, 12px font) on every p
 
 ## Coordination / future API fields
 
-1. **`source_label` (email)** — export `email_subscriptions.display_name` when matched.
-2. **`guid` (feed_item)** — needed for reliable `parl_press` SDA vs MM without guessing from title.
-3. **Score badge** — separate from source pills; classes `magnitu-badge-*` by relevance band.
+1. **`guid` (feed_item)** — needed for reliable `parl_press` SDA vs MM without guessing from title.
+2. **Score badge** — separate from source pills; classes `magnitu-badge-*` by relevance band.
