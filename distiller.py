@@ -321,6 +321,9 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
         "metrics": {
             "accuracy": round(model_info.get("accuracy", 0), 4),
             "f1_macro": round(model_info.get("f1_score", 0), 4),
+            "ranking_auc": round(model_info.get("ranking_auc", 0.0) or 0.0, 4),
+            "precision_at_30": round(model_info.get("precision_at_30", 0.0) or 0.0, 4),
+            "lead_recall_at_30": round(model_info.get("lead_recall_at_30", 0.0) or 0.0, 4),
         },
         "alert_threshold": config.get("alert_threshold", 0.75),
         "classes": ["investigation_lead", "important", "background", "noise"],
@@ -331,17 +334,30 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     if cap_params:
         recipe["export_caps"] = cap_params
 
+    # Recipe quality (model↔recipe correlation on real entries) — single source
+    # of truth: computed once here, written into the recipe file and the models
+    # row. Previously this was recomputed by the caller and never persisted, so
+    # the models.recipe_quality column stayed 0.0.
+    try:
+        quality = float(
+            evaluate_recipe_quality(recipe, profile_id=profile_id) or 0.0
+        )
+    except Exception:
+        quality = 0.0
+    recipe.setdefault("metrics", {})["recipe_quality"] = round(quality, 4)
+
     # Save recipe to disk
     recipe_filename = "recipe_p{}_v{}.json".format(profile_id, model_info["version"])
     recipe_path = str(MODELS_DIR / recipe_filename)
     with open(recipe_path, "w") as f:
         json.dump(recipe, f, indent=2, ensure_ascii=False)
 
-    # Update model record with recipe path
+    # Update model record with recipe path and the persisted quality
     conn = db.get_db()
     conn.execute(
-        "UPDATE models SET recipe_path = ? WHERE version = ? AND profile_id = ?",
-        (recipe_path, model_info["version"], profile_id)
+        "UPDATE models SET recipe_path = ?, recipe_quality = ? "
+        "WHERE version = ? AND profile_id = ?",
+        (recipe_path, quality, model_info["version"], profile_id)
     )
     conn.commit()
     conn.close()

@@ -220,6 +220,16 @@ def _migrate_db(conn: sqlite3.Connection):
             "ALTER TABLE models ADD COLUMN label_distribution TEXT DEFAULT '{}'"
         )
 
+    # ── Ranking-quality metrics on the stable holdout ─────────────────────────
+    # AUC / precision@30 / investigation_lead recall@30. Old rows keep 0.0 and
+    # render as "not available" in the UI; new trains populate them.
+    model_cols3 = {r[1] for r in conn.execute("PRAGMA table_info(models)").fetchall()}
+    for col in ("ranking_auc", "precision_at_30", "lead_recall_at_30"):
+        if col not in model_cols3:
+            conn.execute(
+                "ALTER TABLE models ADD COLUMN {} REAL DEFAULT 0.0".format(col)
+            )
+
     prof_cols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
     if "accent_color" not in prof_cols:
         conn.execute("ALTER TABLE profiles ADD COLUMN accent_color TEXT")
@@ -291,6 +301,9 @@ def init_db():
             model_path      TEXT    DEFAULT '',
             recipe_path     TEXT    DEFAULT '',
             recipe_quality  REAL    DEFAULT 0.0,
+            ranking_auc      REAL    DEFAULT 0.0,
+            precision_at_30  REAL    DEFAULT 0.0,
+            lead_recall_at_30 REAL   DEFAULT 0.0,
             architecture    TEXT    DEFAULT 'tfidf',
             trained_at      TEXT    DEFAULT (datetime('now')),
             is_active       INTEGER DEFAULT 0
@@ -1080,7 +1093,10 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
                       recipe_quality: float = 0.0,
                       architecture: str = "tfidf",
                       profile_id: int = 1,
-                      label_distribution: Optional[dict] = None) -> int:
+                      label_distribution: Optional[dict] = None,
+                      ranking_auc: float = 0.0,
+                      precision_at_30: float = 0.0,
+                      lead_recall_at_30: float = 0.0) -> int:
     """Save a model training record and set it as active for this profile."""
     dist_json = "{}"
     if label_distribution is not None:
@@ -1091,11 +1107,12 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
         INSERT INTO models (profile_id, version, accuracy, f1_score, precision_score,
                            recall_score, label_count, feature_count, model_path,
                            recipe_path, recipe_quality, is_active, architecture,
-                           label_distribution)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                           label_distribution, ranking_auc, precision_at_30,
+                           lead_recall_at_30)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
     """, (profile_id, version, accuracy, f1, precision, recall, label_count,
           feature_count, model_path, recipe_path, recipe_quality, architecture,
-          dist_json))
+          dist_json, ranking_auc, precision_at_30, lead_recall_at_30))
     model_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()

@@ -291,6 +291,11 @@ try:
     assert result["accuracy"] >= 0
     assert pipeline.calibration_sidecar_path(result["model_path"]).exists(), \
         "TF-IDF training should write a calibration sidecar JSON"
+    # Ranking metrics must be computed and persisted on every train
+    for k in ("ranking_auc", "precision_at_30", "lead_recall_at_30"):
+        assert k in result, "train result missing " + k
+    m = db.get_active_model(1)
+    assert m is not None and "ranking_auc" in m, "models row missing ranking_auc column"
     ok()
 except Exception as e:
     fail(str(e))
@@ -375,7 +380,7 @@ try:
         "source_category": "News",
     })
     assert "Swiss legal publication" in txt
-    assert "Published by SRF" in txt
+    assert "Published by SRG" in txt
     assert "Category: News" in txt
     assert "Hello" in txt
     ok()
@@ -469,6 +474,16 @@ try:
     assert recipe["classes"] == ["investigation_lead", "important", "background", "noise"]
     assert "class_weights" in recipe
     assert recipe["class_weights"] == [1.0, 0.80, 0.20, 0.0]
+    # distill_recipe must persist recipe_quality to the models row (WP-A):
+    # the DB column must equal the value recorded in the recipe metrics.
+    assert "recipe_quality" in recipe.get("metrics", {}), \
+        "recipe metrics missing recipe_quality"
+    am = db.get_active_model(1)
+    assert am is not None and am["recipe_quality"] is not None, \
+        "models.recipe_quality not populated after distill"
+    assert abs(am["recipe_quality"] - recipe["metrics"]["recipe_quality"]) < 1e-3, \
+        "DB recipe_quality {} != recipe metrics {}".format(
+            am["recipe_quality"], recipe["metrics"]["recipe_quality"])
     ok()
 except Exception as e:
     fail(str(e))
@@ -947,15 +962,17 @@ try:
     old_ts = (now - timedelta(days=240)).strftime("%Y-%m-%d %H:%M:%S")
     fresh_ts = now.strftime("%Y-%m-%d %H:%M:%S")
     labeled = [
-        {"label": "important", "reasoning": "", "updated_at": fresh_ts, "created_at": None},
-        {"label": "important", "reasoning": "", "updated_at": old_ts, "created_at": None},
+        {"label": "background", "reasoning": "", "updated_at": fresh_ts, "created_at": None},
+        {"label": "background", "reasoning": "", "updated_at": old_ts, "created_at": None},
     ]
     cfg = {"label_time_decay_days": 120, "label_time_decay_floor": 0.25,
            "reasoning_weight_boost": 1.0}
     w = pipeline.compute_sample_weights(labeled, config=cfg)
     assert abs(w[0] - 1.0) < 1e-3, "fresh label should be ~1.0, got {}".format(w[0])
-    # 240/120 = 2 half-lives → 0.25 which is right at the floor
-    assert 0.24 <= w[1] <= 0.26, "old label should be near floor 0.25, got {}".format(w[1])
+    # priority labels (investigation_lead/important) are exempt from decay by
+    # design (see "label-aware decay preserves priority labels"); background
+    # decays at the base rate → 240/120 = 2 half-lives → 0.25 = floor.
+    assert 0.24 <= w[1] <= 0.26, "old background label should be near floor 0.25, got {}".format(w[1])
     ok()
 except Exception as e:
     fail(str(e))
@@ -1098,6 +1115,97 @@ except Exception as e:
 # ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════
+print("\n=== 12. Ranking metrics & recipe_quality telemetry ===")
+
+t = test("_ranking_metrics helper: normal fold")
+try:
+    cn = ["background", "important", "investigation_lead", "noise"]
+    # relevant entries get high composite → high AUC
+    P = np.array([
+        [0.7, 0.1, 0.1, 0.1], [0.1, 0.6, 0.2, 0.1], [0.1, 0.2, 0.6, 0.1],
+        [0.1, 0.1, 0.1, 0.7], [0.1, 0.1, 0.1, 0.7], [0.2, 0.2, 0.1, 0.5],
+        [0.1, 0.1, 0.1, 0.7], [0.6, 0.1, 0.1, 0.2],
+    ] * 4)
+    y = np.array(["important", "important", "investigation_lead",
+                  "noise", "background", "background", "noise", "background"] * 4)
+    r = pipeline._ranking_metrics(P, cn, y)
+    assert 0.0 < r["ranking_auc"] <= 1.0, r
+    assert 0.0 <= r["precision_at_30"] <= 1.0, r
+    assert 0.0 <= r["lead_recall_at_30"] <= 1.0, r
+    assert r["ranking_note"] == "" or "holdout" not in r["ranking_note"].lower() \
+        or r["ranking_auc"] > 0, r
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("_ranking_metrics helper: degenerate fold does not raise")
+try:
+    cn = ["background", "important", "investigation_lead", "noise"]
+    P = np.full((6, 4), 0.25)
+    y_only_one_relevant = np.array(
+        ["important", "noise", "noise", "noise", "noise", "noise"]
+    )
+    r = pipeline._ranking_metrics(P, cn, y_only_one_relevant)
+    assert r["ranking_auc"] == 0.0, "degenerate fold must yield AUC 0.0"
+    assert "AUC undefined" in r["ranking_note"], r["ranking_note"]
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("save_model_record round-trips ranking columns")
+try:
+    conn = db.get_db()
+    conn.execute("DELETE FROM models WHERE version = 8888")
+    conn.commit()
+    conn.close()
+    db.save_model_record(
+        version=8888, accuracy=0.5, f1=0.4, precision=0.3, recall=0.3,
+        label_count=50, feature_count=768, model_path="/tmp/rank.joblib",
+        architecture="transformer", profile_id=1,
+        ranking_auc=0.817, precision_at_30=0.87, lead_recall_at_30=0.31,
+    )
+    m = db.get_active_model(1)
+    assert m is not None and m["version"] == 8888
+    assert abs(m["ranking_auc"] - 0.817) < 1e-6, m["ranking_auc"]
+    assert abs(m["precision_at_30"] - 0.87) < 1e-6, m["precision_at_30"]
+    assert abs(m["lead_recall_at_30"] - 0.31) < 1e-6, m["lead_recall_at_30"]
+    conn = db.get_db()
+    conn.execute("DELETE FROM models WHERE version = 8888")
+    conn.commit()
+    conn.close()
+    ok()
+except Exception as e:
+    fail(str(e))
+
+t = test("recipe_quality UPDATE path persists (distiller contract)")
+try:
+    db.save_model_record(
+        version=8889, accuracy=0.5, f1=0.4, precision=0.3, recall=0.3,
+        label_count=50, feature_count=768, model_path="/tmp/rq.joblib",
+        architecture="transformer", profile_id=1,
+    )
+    before = db.get_active_model(1)["recipe_quality"]
+    assert before == 0.0, "freshly inserted row should default recipe_quality to 0.0"
+    # Same UPDATE distiller.distill_recipe issues:
+    conn = db.get_db()
+    conn.execute(
+        "UPDATE models SET recipe_path = ?, recipe_quality = ? "
+        "WHERE version = ? AND profile_id = ?",
+        ("/tmp/rq.json", 0.636, 8889, 1),
+    )
+    conn.commit()
+    conn.close()
+    after = db.get_active_model(1)["recipe_quality"]
+    assert abs(after - 0.636) < 1e-6, "recipe_quality not persisted: {}".format(after)
+    conn = db.get_db()
+    conn.execute("DELETE FROM models WHERE version = 8889")
+    conn.commit()
+    conn.close()
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
 print("\n" + "=" * 50)
 print("Results: {} passed, {} failed".format(PASS, FAIL))
 if ERRORS:

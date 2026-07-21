@@ -1628,10 +1628,12 @@ def _train_impl(progress_cb=None, profile_id: int = 1) -> dict:
     step(75, "Distilling recipe for Seismo...")
     recipe = distiller.distill_recipe(profile_id=profile_id)
     if recipe:
-        step(90, "Evaluating recipe quality...")
-        quality = distiller.evaluate_recipe_quality(recipe, profile_id=profile_id)
+        # Recipe quality is computed once and persisted inside distill_recipe;
+        # read it back instead of recomputing (keeps a single source of truth).
+        step(90, "Recording recipe quality...")
+        active = db.get_active_model(profile_id) or {}
         result["recipe_version"] = recipe.get("version")
-        result["recipe_quality"] = quality
+        result["recipe_quality"] = active.get("recipe_quality", 0.0)
         result["recipe_keywords"] = len(recipe.get("keywords", {}))
     else:
         arch = result.get("architecture", "tfidf")

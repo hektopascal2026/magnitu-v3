@@ -27,7 +27,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score, f1_score, precision_score, recall_score,
-    classification_report,
+    classification_report, roc_auc_score,
 )
 
 from typing import Optional, List, Tuple, Dict, Callable
@@ -426,6 +426,93 @@ def _relevance_from_probs(probs: Dict[str, float], class_names: List[str]) -> fl
     return float(
         sum(probs.get(c, 0.0) * CLASS_WEIGHT_MAP.get(c, 0.0) for c in class_names)
     )
+
+
+# Classes that count as "relevant" for ranking metrics — the positive-weight
+# classes in CLASS_WEIGHT_MAP. Argmax accuracy reads pessimistically for this
+# task; these ranking metrics reflect the live ranking job instead.
+_RANKING_RELEVANT_CLASSES = {"investigation_lead", "important"}
+_RANKING_K = 30  # matches the Top-30 review page
+
+
+def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
+    """Ranking quality of the (calibrated) composite on a holdout.
+
+    Returns ranking_auc, precision_at_k, lead_recall_at_k (all in [0, 1]) and a
+    ranking_note explaining any degeneracy. 0.0 means "not available", not
+    "zero quality" — the UI renders 0.0 as "—".
+
+    - composite is CLASS_WEIGHT_MAP applied to the per-class probs (exactly what
+      gets pushed, modulo the monotone rank-normalization, which preserves AUC);
+    - "relevant" = investigation_lead + important;
+    - precision@k = share of relevant among the top-k by composite;
+    - lead_recall@k = fraction of all investigation_lead labels in the top-k.
+    Guards: AUC is undefined when either class has <2 holdout samples → 0.0;
+    k is clipped to the holdout size and noted when the fold is smaller than k.
+    """
+    out = {
+        "ranking_auc": 0.0,
+        "precision_at_30": 0.0,
+        "lead_recall_at_30": 0.0,
+        "ranking_note": "",
+    }
+    notes = []
+    try:
+        y_arr = np.asarray(y_true)
+    except Exception:
+        return out
+    n = len(y_arr)
+    if n == 0:
+        out["ranking_note"] = "empty holdout"
+        return out
+
+    probs_arr = np.asarray(probs, dtype=float)
+    # Per-class weight vector looked up by class name. The model may emit fewer
+    # probability columns than class_names when the training fold lacked a class
+    # (e.g. a class with zero samples is dropped). Align to the probability
+    # columns positionally — the same alignment argmax already relies on — and
+    # note it so the metric is never silently wrong.
+    n_cols = probs_arr.shape[1] if probs_arr.ndim == 2 else 0
+    if n_cols and n_cols != len(class_names):
+        notes.append(
+            "model emits {} of {} classes".format(n_cols, len(class_names))
+        )
+    w = np.array(
+        [CLASS_WEIGHT_MAP.get(class_names[i], 0.0) for i in range(n_cols)],
+        dtype=float,
+    )
+    composite = probs_arr.dot(w) if n_cols else np.zeros(probs_arr.shape[0])
+
+    rel = np.array(
+        [1 if (y in _RANKING_RELEVANT_CLASSES) else 0 for y in y_arr], dtype=int
+    )
+    n_rel = int(rel.sum())
+    n_neg = n - n_rel
+    if n_rel < 2 or n_neg < 2:
+        notes.append(
+            "holdout has <2 relevant or <2 irrelevant; AUC undefined"
+        )
+    else:
+        try:
+            out["ranking_auc"] = float(roc_auc_score(rel, composite))
+        except Exception:
+            notes.append("AUC computation failed")
+
+    k_eff = min(k, n)
+    if k_eff < k:
+        notes.append("precision/lead-recall over top-{} (holdout<{})".format(k_eff, k))
+    order = np.argsort(-composite)[:k_eff]
+    if k_eff > 0:
+        out["precision_at_30"] = float(rel[order].mean())
+        n_lead_total = int(np.sum(y_arr == "investigation_lead"))
+        if n_lead_total > 0:
+            top_labels = y_arr[order]
+            out["lead_recall_at_30"] = float(
+                np.sum(top_labels == "investigation_lead") / n_lead_total
+            )
+
+    out["ranking_note"] = "; ".join(s for s in notes if s)
+    return out
 
 
 def _discovery_adjusted_relevance(composite: float, p_lead: float,
@@ -1448,6 +1535,8 @@ def _train_transformer(profile_id: int = 1,
     prec = precision_score(y_test, y_pred, average="macro", zero_division=0)
     rec = recall_score(y_test, y_pred, average="macro", zero_division=0)
 
+    rank = _ranking_metrics(probs_test, cn, y_test)
+
     label_dist = {k: int(v) for k, v in labels_series.value_counts().items()}
 
     db.save_model_record(
@@ -1462,6 +1551,9 @@ def _train_transformer(profile_id: int = 1,
         architecture="transformer",
         profile_id=profile_id,
         label_distribution=label_dist,
+        ranking_auc=rank["ranking_auc"],
+        precision_at_30=rank["precision_at_30"],
+        lead_recall_at_30=rank["lead_recall_at_30"],
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -1477,6 +1569,10 @@ def _train_transformer(profile_id: int = 1,
         "f1_score": round(f1, 4),
         "precision": round(prec, 4),
         "recall": round(rec, 4),
+        "ranking_auc": round(rank["ranking_auc"], 4),
+        "precision_at_30": round(rank["precision_at_30"], 4),
+        "lead_recall_at_30": round(rank["lead_recall_at_30"], 4),
+        "ranking_note": rank["ranking_note"],
         "label_count": len(labeled),
         "label_distribution": label_dist,
         "feature_count": int(X.shape[1]),
@@ -1724,6 +1820,8 @@ def _train_tfidf(profile_id: int = 1,
     prec = precision_score(y_test, y_pred, average="macro", zero_division=0)
     rec = recall_score(y_test, y_pred, average="macro", zero_division=0)
 
+    rank = _ranking_metrics(probs_test, cn, y_test)
+
     tfidf = pipeline.named_steps["features"].transformers_[0][1]
     feature_count = len(tfidf.vocabulary_) if hasattr(tfidf, "vocabulary_") else 0
 
@@ -1741,6 +1839,9 @@ def _train_tfidf(profile_id: int = 1,
         architecture="tfidf",
         profile_id=profile_id,
         label_distribution=label_dist,
+        ranking_auc=rank["ranking_auc"],
+        precision_at_30=rank["precision_at_30"],
+        lead_recall_at_30=rank["lead_recall_at_30"],
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -1756,6 +1857,10 @@ def _train_tfidf(profile_id: int = 1,
         "f1_score": round(f1, 4),
         "precision": round(prec, 4),
         "recall": round(rec, 4),
+        "ranking_auc": round(rank["ranking_auc"], 4),
+        "precision_at_30": round(rank["precision_at_30"], 4),
+        "lead_recall_at_30": round(rank["lead_recall_at_30"], 4),
+        "ranking_note": rank["ranking_note"],
         "label_count": len(labeled),
         "label_distribution": label_dist,
         "feature_count": int(feature_count),
