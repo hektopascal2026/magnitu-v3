@@ -145,17 +145,34 @@ def main():
             continue
             
         logger.info("Processing desk: %s", url)
-        
-        slug = db.slugify(url)
+
+        # Prefer registry slug (e.g. "sicherheit"); never slugify the full URL
+        # (that yields https-seismo-live-… and misses desktop profiles).
+        slug = (desk.get("slug") or "").strip()
+        display_name, derived_slug = db.derive_profile_identity_from_push_url(url)
+        if slug:
+            slug = db.slugify(slug)
+        else:
+            slug = derived_slug
+
         prof = db.get_profile_by_slug(slug)
         if not prof:
-            prof = db.create_profile(slug=slug, display_name=url, seismo_url=url, api_key=api_key)
+            prof = db.create_profile(
+                slug=slug,
+                display_name=display_name or slug,
+                seismo_url=url,
+                api_key=api_key,
+            )
         else:
             conn = db.get_db()
-            conn.execute("UPDATE profiles SET seismo_url=?, api_key=? WHERE id=?", (url, api_key, prof["id"]))
+            conn.execute(
+                "UPDATE profiles SET seismo_url=?, api_key=?, display_name=COALESCE(NULLIF(display_name,''), ?) WHERE id=?",
+                (url, api_key, display_name or slug, prof["id"]),
+            )
             conn.commit()
             conn.close()
-            
+            prof = db.get_profile_by_slug(slug)
+
         profile_id = prof["id"]
         
         # 1. Sync Labels

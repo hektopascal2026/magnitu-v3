@@ -14,10 +14,14 @@ Push (scores, recipe, labels to Seismo) uses the same rules via ``_profile_targe
 """
 import json
 import logging
-import httpx
-from typing import List, Dict, Optional, Callable
+import hashlib
+import os
+from pathlib import Path
+from typing import List, Dict, Optional, Callable, Tuple
 
-from config import get_config, save_config
+import httpx
+
+from config import get_config, save_config, MODELS_DIR
 import db
 from magnitu.accent_theme import parse_accent_from_magnitu_status
 from magnitu.entry_sources import SEISMO_ENTRY_PULL_SPECS
@@ -49,6 +53,9 @@ def _request(method: str, params: dict,
     seismo_target: optional dict with keys 'seismo_url' and 'api_key'.
     When provided, overrides the global config.  Used by push operations
     so each profile can target its own Seismo instance.
+
+    When ``MAGNITU_ML_WORKER_TOKEN`` is set, sends ``X-Magnitu-Ml-Worker`` so
+    Seismo's Magnitu ML writer lock accepts VPS worker Push (laptop fails closed).
     """
     cfg = get_config()
     if seismo_target:
@@ -57,8 +64,12 @@ def _request(method: str, params: dict,
     else:
         url = cfg["seismo_url"]
         params["api_key"] = cfg["api_key"]
+    headers = dict(kwargs.pop("headers", None) or {})
+    worker_token = (os.environ.get("MAGNITU_ML_WORKER_TOKEN") or "").strip()
+    if worker_token:
+        headers["X-Magnitu-Ml-Worker"] = worker_token
     with httpx.Client(timeout=30.0) as client:
-        resp = client.request(method, url, params=params, **kwargs)
+        resp = client.request(method, url, params=params, headers=headers or None, **kwargs)
         resp.raise_for_status()
         return resp
 
@@ -728,3 +739,141 @@ def maybe_profile_accent_from_status(status: dict, profile_id: int) -> None:
             db.set_profile_accent_color(profile_id, hex_color)
     except Exception as ex:
         logger.warning("Accent from magnitu_status ignored: %s", ex)
+
+
+# ─── Model vault (mothership; vault password, not desk api_key) ───────────────
+
+def _vault_url_and_headers(vault_password: str) -> Tuple[str, Dict[str, str]]:
+    """Mothership URL + vault password header (never uses profile satellite)."""
+    cfg = get_config()
+    url = (cfg.get("seismo_url") or "").strip()
+    if not url:
+        raise ValueError("seismo_url is not configured.")
+    password = (vault_password or "").strip()
+    if not password:
+        raise ValueError("Vault password is required.")
+    return url, {"X-Magnitu-Vault-Password": password}
+
+
+def vault_list(vault_password: str) -> dict:
+    """List ``.magnitu`` packages on the Seismo mothership model vault."""
+    url, headers = _vault_url_and_headers(vault_password)
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.get(
+            url,
+            params={"action": "magnitu_vault_list"},
+            headers=headers,
+        )
+        if resp.status_code >= 400:
+            detail = resp.text
+            try:
+                err = resp.json()
+                if isinstance(err, dict) and err.get("error"):
+                    detail = err["error"]
+            except Exception:
+                pass
+            raise ValueError(detail)
+        data = resp.json()
+    if not isinstance(data, dict):
+        raise ValueError("Unexpected vault list response.")
+    return data
+
+
+def vault_download(
+    vault_password: str,
+    model_uuid: str,
+    dest_path: Optional[str] = None,
+) -> str:
+    """Download a package by ``model_uuid`` into MODELS_DIR/inbox (or dest_path).
+
+    Returns the local file path. Verifies ``X-Magnitu-Sha256`` when present.
+    """
+    uuid = (model_uuid or "").strip().replace("-", "").lower()
+    if len(uuid) != 32 or any(c not in "0123456789abcdef" for c in uuid):
+        raise ValueError("model_uuid must be a 32-char hex id.")
+
+    url, headers = _vault_url_and_headers(vault_password)
+    if dest_path:
+        out = Path(dest_path)
+    else:
+        inbox = MODELS_DIR / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        out = inbox / "{}.magnitu".format(uuid)
+
+    with httpx.Client(timeout=600.0) as client:
+        with client.stream(
+            "GET",
+            url,
+            params={"action": "magnitu_vault_download", "model_uuid": uuid},
+            headers=headers,
+        ) as resp:
+            resp.raise_for_status()
+            expected_sha = (resp.headers.get("X-Magnitu-Sha256") or "").strip().lower()
+            hasher = hashlib.sha256()
+            tmp = out.with_suffix(out.suffix + ".part")
+            with open(tmp, "wb") as f:
+                for chunk in resp.iter_bytes():
+                    if chunk:
+                        f.write(chunk)
+                        hasher.update(chunk)
+            got = hasher.hexdigest()
+            if expected_sha and got != expected_sha:
+                tmp.unlink(missing_ok=True)
+                raise ValueError(
+                    "Downloaded package sha256 mismatch (expected {}, got {}).".format(
+                        expected_sha, got
+                    )
+                )
+            tmp.replace(out)
+
+    db.log_sync("pull", 1, "vault package {} downloaded".format(uuid[:8]))
+    return str(out)
+
+
+def vault_upload(
+    vault_password: str,
+    package_path: str,
+    overwrite: bool = False,
+) -> dict:
+    """Upload a local ``.magnitu`` file to the mothership vault."""
+    path = Path(package_path)
+    if not path.is_file():
+        raise FileNotFoundError("Package not found: {}".format(package_path))
+    if not path.name.lower().endswith(".magnitu"):
+        raise ValueError("File must end with .magnitu")
+
+    url, headers = _vault_url_and_headers(vault_password)
+    data = {"overwrite": "1" if overwrite else "0"}
+    with httpx.Client(timeout=600.0) as client:
+        with open(path, "rb") as f:
+            files = {"file": (path.name, f, "application/zip")}
+            resp = client.post(
+                url,
+                params={"action": "magnitu_vault_upload"},
+                headers=headers,
+                data=data,
+                files=files,
+            )
+        if resp.status_code >= 400:
+            detail = resp.text
+            try:
+                err = resp.json()
+                if isinstance(err, dict) and err.get("error"):
+                    detail = err["error"]
+            except Exception:
+                pass
+            raise httpx.HTTPStatusError(
+                "Vault upload failed: {}".format(detail),
+                request=resp.request,
+                response=resp,
+            )
+        result = resp.json()
+    if not isinstance(result, dict):
+        raise ValueError("Unexpected vault upload response.")
+    db.log_sync(
+        "push", 1,
+        "vault package uploaded ({})".format(
+            (result.get("package") or {}).get("model_uuid", "?")[:8]
+        ),
+    )
+    return result
