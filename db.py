@@ -1096,22 +1096,26 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
                       label_distribution: Optional[dict] = None,
                       ranking_auc: float = 0.0,
                       precision_at_30: float = 0.0,
-                      lead_recall_at_30: float = 0.0) -> int:
-    """Save a model training record and set it as active for this profile."""
+                      lead_recall_at_30: float = 0.0,
+                      is_active: bool = True) -> int:
+    """Save a model training record and set it as active for this profile (if is_active=True)."""
     dist_json = "{}"
     if label_distribution is not None:
         dist_json = json.dumps(label_distribution, ensure_ascii=False)
     conn = get_db()
-    conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
+    if is_active:
+        conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
+    
+    active_int = 1 if is_active else 0
     conn.execute("""
         INSERT INTO models (profile_id, version, accuracy, f1_score, precision_score,
                            recall_score, label_count, feature_count, model_path,
                            recipe_path, recipe_quality, is_active, architecture,
                            label_distribution, ranking_auc, precision_at_30,
                            lead_recall_at_30)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (profile_id, version, accuracy, f1, precision, recall, label_count,
-          feature_count, model_path, recipe_path, recipe_quality, architecture,
+          feature_count, model_path, recipe_path, recipe_quality, active_int, architecture,
           dist_json, ranking_auc, precision_at_30, lead_recall_at_30))
     model_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()

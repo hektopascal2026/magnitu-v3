@@ -1273,12 +1273,13 @@ def _get_architecture() -> str:
 
 
 def train(profile_id: int = 1,
-          progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
+          progress_cb: Optional[Callable[[int, str], None]] = None,
+          activate: bool = True) -> dict:
     """Train a new model on labeled entries for the given profile."""
     arch = _get_architecture()
     if arch == "transformer":
-        return _train_transformer(profile_id=profile_id, progress_cb=progress_cb)
-    return _train_tfidf(profile_id=profile_id, progress_cb=progress_cb)
+        return _train_transformer(profile_id=profile_id, progress_cb=progress_cb, activate=activate)
+    return _train_tfidf(profile_id=profile_id, progress_cb=progress_cb, activate=activate)
 
 
 def get_active_model_paths(profile_id: int = 1) -> Optional[dict]:
@@ -1362,7 +1363,8 @@ class _LabelDecodingClassifier:
 
 
 def _train_transformer(profile_id: int = 1,
-                       progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
+                       progress_cb: Optional[Callable[[int, str], None]] = None,
+                       activate: bool = True) -> dict:
     """Train a LogReg classifier on cached transformer embeddings for a profile."""
 
     def _step(pct: int, msg: str) -> None:
@@ -1554,6 +1556,7 @@ def _train_transformer(profile_id: int = 1,
         ranking_auc=rank["ranking_auc"],
         precision_at_30=rank["precision_at_30"],
         lead_recall_at_30=rank["lead_recall_at_30"],
+        is_active=activate,
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -1689,8 +1692,9 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
 # ═══════════════════════════════════════════════════════════════════
 
 def _train_tfidf(profile_id: int = 1,
-                 progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
-    """Train using the original TF-IDF + LogReg pipeline for a profile."""
+                 progress_cb: Optional[Callable[[int, str], None]] = None,
+                 activate: bool = True) -> dict:
+    """Train a TF-IDF LogReg classifier for a profile."""
 
     def _step(pct: int, msg: str) -> None:
         if progress_cb:
@@ -1842,6 +1846,7 @@ def _train_tfidf(profile_id: int = 1,
         ranking_auc=rank["ranking_auc"],
         precision_at_30=rank["precision_at_30"],
         lead_recall_at_30=rank["lead_recall_at_30"],
+        is_active=activate,
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
