@@ -143,10 +143,12 @@ def _pull_entry_type_drain(
     """Drain one family with ``order=asc`` until Seismo reports ``drain_complete``.
 
     Avoids skipping rows when more than ``page_size`` entries share a ``since``
-    window (Seismo returns oldest-first; cursor advances via ``recommended_next_since``).
+    window (Seismo returns oldest-first; cursor advances via ``recommended_next_since``
+    and optional ``recommended_after_id`` for dense same-timestamp pages).
     """
     page_size = max(1, min(int(page_size), SEISMO_ENTRIES_PAGE_SIZE))
     cursor = since
+    after_id: Optional[int] = None
     total = 0
     pages = 0
     max_pages = 5000
@@ -160,6 +162,8 @@ def _pull_entry_type_drain(
         }
         if cursor:
             params["since"] = cursor
+        if after_id:
+            params["after_id"] = str(after_id)
 
         data = _request("GET", params).json()
         entries = data.get("entries", [])
@@ -172,6 +176,14 @@ def _pull_entry_type_drain(
             break
 
         next_since = hints.get("recommended_next_since")
+        raw_after = hints.get("recommended_after_id")
+        try:
+            next_after = int(raw_after) if raw_after is not None else None
+        except (TypeError, ValueError):
+            next_after = None
+        if next_after is not None and next_after <= 0:
+            next_after = None
+
         if not next_since:
             logger.warning(
                 "Entry drain for %s stopped after page %d: no recommended_next_since",
@@ -179,16 +191,18 @@ def _pull_entry_type_drain(
                 pages + 1,
             )
             break
-        if cursor == next_since:
+        if cursor == next_since and next_after == after_id:
             logger.warning(
-                "Entry drain for %s stopped: cursor stuck at %s after page %d",
+                "Entry drain for %s stopped: cursor stuck at %s after_id=%s page %d",
                 entry_type,
                 cursor,
+                after_id,
                 pages + 1,
             )
             break
 
         cursor = next_since
+        after_id = next_after
         pages += 1
 
     if total:
@@ -296,12 +310,17 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
     """Incremental ``since`` per entry_type from the local SQLite cache.
 
     Uses ``MAX(published_date)`` but **caps at UTC now** so future-dated rows
-    (calendar/session dates, bad feed timestamps) cannot freeze the drain.
+    (bad feed timestamps) cannot freeze the drain. ``calendar_event`` is always
+    ``None`` (full family drain): Seismo pages Leg by ``fetched_at``, which the
+    local store overwrites on upsert, and ``event_date`` is the wrong cursor.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_db()
     out: Dict[str, Optional[str]] = {}
     for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
+        if entry_type == "calendar_event":
+            out[entry_type] = None
+            continue
         row = conn.execute(
             """
             SELECT MAX(published_date) AS m FROM entries
