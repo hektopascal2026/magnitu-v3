@@ -19,6 +19,7 @@ import sync
 import pipeline
 import distiller
 from config import get_config
+from magnitu.time_display import format_seismo_timestamp
 from model_manager import export_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -79,6 +80,24 @@ def enforce_embedding_store_cap(max_bytes=5 * 1024 * 1024 * 1024):
         conn.commit()
         logger.info("Pruned %d embeddings.", len(ids_to_prune))
     conn.close()
+
+
+def _model_meta_for_push(profile_id: int, model_row: Dict) -> Optional[Dict]:
+    """Build Seismo ``model_meta`` so desk ``model_trained_at`` advances on promote."""
+    profile_info = db.get_model_profile(profile_id)
+    if not profile_info or not model_row:
+        return None
+    return {
+        "model_name": profile_info.get("model_name", ""),
+        "model_uuid": profile_info.get("model_uuid", ""),
+        "model_description": profile_info.get("description", ""),
+        "model_version": model_row.get("version"),
+        "model_trained_at": format_seismo_timestamp(model_row.get("trained_at", "")),
+        "accuracy": model_row.get("accuracy", 0.0),
+        "f1_score": model_row.get("f1_score", 0.0),
+        "label_count": model_row.get("label_count", 0),
+        "architecture": model_row.get("architecture", "tfidf"),
+    }
 
 
 def _rank_normalize_push_scores(scores: List[Dict]) -> List[Dict]:
@@ -419,7 +438,13 @@ def main():
                     scores = pipeline.score_entries(recent_entries, profile_id=profile_id)
                     if scores:
                         scores = _rank_normalize_push_scores(scores)
-                        sync.push_scores(scores, model_version=current_model["version"], profile=prof)
+                        model_meta = _model_meta_for_push(profile_id, current_model)
+                        sync.push_scores(
+                            scores,
+                            model_version=current_model["version"],
+                            model_meta=model_meta,
+                            profile=prof,
+                        )
                         logger.info("Pushed %d rank-normalized scores.", len(scores))
             except Exception as e:
                 logger.error("Error during score push: %s", e)

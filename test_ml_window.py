@@ -80,19 +80,36 @@ def test_ml_window_main_promotes(mock_export, mock_distiller, mock_pipeline, moc
     
     # Mock db
     mock_db.slugify.return_value = "foo"
+    mock_db.derive_profile_identity_from_push_url.return_value = ("Foo", "foo")
     mock_db.get_profile_by_slug.return_value = {"id": 1}
     mock_db.get_all_labels.return_value = [1] * 20
-    
+    mock_db.get_model_profile.return_value = {
+        "model_name": "Foo",
+        "model_uuid": "uuid-1",
+        "description": "desk",
+    }
+
     # Database connection mock
     mock_conn = MagicMock()
     mock_db.get_db.return_value = mock_conn
     mock_conn.execute.return_value.fetchone.return_value = [20]
     
     # Mock model
+    active_v2 = {
+        "trained_at": "2020-01-01T00:00:00Z",
+        "precision_at_30": 0.5,
+        "f1_score": 0.5,
+        "version": 2,
+        "recipe_path": "recipe.json",
+        "accuracy": 0.5,
+        "label_count": 20,
+        "architecture": "tfidf",
+    }
     mock_db.get_active_model.side_effect = [
         {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 1}, # before train
-        {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 2, "recipe_path": "recipe.json"}, # after promote
-        {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 2, "recipe_path": "recipe.json"}  # for score pushing
+        active_v2,  # after promote
+        active_v2,  # score push
+        active_v2,  # report label counts
     ]
     
     # Mock train returns success + better metrics
@@ -105,7 +122,9 @@ def test_ml_window_main_promotes(mock_export, mock_distiller, mock_pipeline, moc
     
     # Mock sync compute pending (1st call returns 1, 2nd call returns 0)
     mock_sync._compute_pending_embeddings.side_effect = [1, 0]
-    
+    mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
+    mock_sync.entry_store_watermarks.return_value = {}
+
     # Mock get_recent_entries
     mock_db.get_recent_entries.return_value = [{"id": 1}]
     mock_pipeline.score_entries.return_value = [{"id": 1, "relevance_score": 0.5}]
@@ -121,7 +140,10 @@ def test_ml_window_main_promotes(mock_export, mock_distiller, mock_pipeline, moc
     mock_export.assert_called_once_with(profile_id=1)
     mock_sync.vault_upload.assert_called_once()
     mock_sync.push_scores.assert_called_once()
-    
+    push_kwargs = mock_sync.push_scores.call_args.kwargs
+    assert push_kwargs.get("model_meta") is not None
+    assert "model_trained_at" in push_kwargs["model_meta"]
+
     # Ensure compute embeddings looped twice
     assert mock_sync._compute_pending_embeddings.call_count == 2
     mock_sync.vault_upload.assert_called_once_with(vault_password="vault-secret", package_path=mock_export.return_value, overwrite=True)
@@ -138,9 +160,15 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     
     # Mock db
     mock_db.slugify.return_value = "foo"
+    mock_db.derive_profile_identity_from_push_url.return_value = ("Foo", "foo")
     mock_db.get_profile_by_slug.return_value = {"id": 1}
     mock_db.get_all_labels.return_value = [1] * 20
-    
+    mock_db.get_model_profile.return_value = {
+        "model_name": "Foo",
+        "model_uuid": "uuid-1",
+        "description": "desk",
+    }
+
     # Database connection mock
     mock_conn = MagicMock()
     mock_db.get_db.return_value = mock_conn
@@ -159,7 +187,9 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     
     # Mock sync compute pending
     mock_sync._compute_pending_embeddings.side_effect = [0]
-    
+    mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
+    mock_sync.entry_store_watermarks.return_value = {}
+
     # Mock get_recent_entries
     mock_db.get_recent_entries.return_value = []
     

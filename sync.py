@@ -16,6 +16,7 @@ import json
 import logging
 import hashlib
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Callable, Tuple
 
@@ -292,7 +293,12 @@ def pull_all_entry_types(
 
 
 def entry_store_watermarks() -> Dict[str, Optional[str]]:
-    """Max non-empty published_date per entry_type in the local SQLite cache."""
+    """Incremental ``since`` per entry_type from the local SQLite cache.
+
+    Uses ``MAX(published_date)`` but **caps at UTC now** so future-dated rows
+    (calendar/session dates, bad feed timestamps) cannot freeze the drain.
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_db()
     out: Dict[str, Optional[str]] = {}
     for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
@@ -305,7 +311,16 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
             """,
             (entry_type,),
         ).fetchone()
-        out[entry_type] = row["m"] if row and row["m"] else None
+        m = row["m"] if row and row["m"] else None
+        if m and str(m) > now:
+            logger.warning(
+                "Watermark for %s capped from %s to now (%s)",
+                entry_type,
+                m,
+                now,
+            )
+            m = now
+        out[entry_type] = m
     conn.close()
     return out
 
@@ -318,6 +333,7 @@ def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
     # Seismo MagnituExportRepository::MAX_IDS_PER_REQUEST
     chunk_size = 100
     total = 0
+    missing_total = 0
     for i in range(0, len(ids), chunk_size):
         chunk = ids[i : i + chunk_size]
         params = {
@@ -327,14 +343,34 @@ def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
         }
         data = _request("GET", params).json()
         entries = data.get("entries") or []
+        missing = data.get("missing_ids")
+        if isinstance(missing, list) and missing:
+            missing_total += len(missing)
+            logger.warning(
+                "ids= backfill %s: %d missing of %d requested (sample=%s)",
+                entry_type,
+                len(missing),
+                len(chunk),
+                missing[:8],
+            )
+        elif len(entries) < len(chunk):
+            missing_total += len(chunk) - len(entries)
+            logger.warning(
+                "ids= backfill %s: returned %d of %d (no missing_ids field)",
+                entry_type,
+                len(entries),
+                len(chunk),
+            )
         if entries:
             db.upsert_entries(entries)
             total += len(entries)
-    if total:
+    if total or missing_total:
         db.log_sync(
             "pull",
             total,
-            "type={}, ids_backfill={}".format(entry_type, total),
+            "type={}, ids_backfill={}, missing={}".format(
+                entry_type, total, missing_total
+            ),
         )
     return total
 
