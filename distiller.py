@@ -40,15 +40,24 @@ LOW_SIGNAL_STOPWORDS = {
     "einen", "und", "oder", "aber", "in", "im", "am", "an", "auf", "aus", "von",
     "mit", "ohne", "zu", "zum", "zur", "für", "ist", "sind", "war", "waren", "wird",
     "werden", "nach", "bei", "als", "auch", "wie", "was", "wo", "wenn", "dass",
+    "sich", "noch", "nur", "schon", "sehr", "hier", "dort", "dann", "weil",
     # English
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "at", "for", "with",
     "by", "from", "is", "are", "was", "were", "be", "been", "being", "that", "this",
+    "it", "its", "as", "into", "over", "under", "than",
     # French
     "le", "la", "les", "de", "des", "du", "un", "une", "et", "ou", "dans", "sur", "pour",
     "avec", "sans", "est", "sont", "été", "ce", "cette", "ces",
     # Italian
     "il", "lo", "gli", "i", "l", "di", "del", "della", "dei", "delle", "un", "una",
     "e", "o", "in", "su", "per", "con", "senza", "è", "sono", "era", "che",
+}
+
+# Exact tokens never exported (URL / host debris). Mirrored in Seismo
+# RecipeKeywordDenylist::DENIED_EXACT.
+DENIED_EXACT_TOKENS = {
+    "http", "https", "www", "com", "org", "net", "html", "htm", "php",
+    "google", "facebook", "twitter", "linkedin", "youtube",
 }
 
 LEGAL_TEMPLATE_PHRASES = {
@@ -188,13 +197,36 @@ def _extract_recipe_tokens(text: str) -> list:
     return tokens + _compose_ngrams(tokens, max_n=3)
 
 
-def _is_low_signal_unigram(token: str) -> bool:
-    """Return True for unigrams that are too generic to export."""
-    if " " in token:
-        return False
-    if len(token) < 3:
+def _is_low_signal_feature(token: str) -> bool:
+    """Return True for unigrams/n-grams too generic to export.
+
+    Seismo RecipeKeywordDenylist mirrors this: URL debris, bare years,
+    short unigrams, stopword unigrams, and n-grams whose every token is a
+    stopword/denied/year (e.g. ``in der``, ``on the``).
+    """
+    key = " ".join(_seismo_tokenize(token or ""))
+    if not key:
         return True
-    return token in LOW_SIGNAL_STOPWORDS
+    if key in DENIED_EXACT_TOKENS:
+        return True
+    if re.fullmatch(r"\d{4}", key):
+        return True
+    parts = key.split()
+    if len(parts) == 1:
+        w = parts[0]
+        if len(w) < 3:
+            return True
+        return w in LOW_SIGNAL_STOPWORDS
+    for w in parts:
+        if w in DENIED_EXACT_TOKENS or w in LOW_SIGNAL_STOPWORDS or re.fullmatch(r"\d{4}", w):
+            continue
+        return False
+    return True
+
+
+def _is_low_signal_unigram(token: str) -> bool:
+    """Backward-compatible alias for ``_is_low_signal_feature``."""
+    return _is_low_signal_feature(token)
 
 
 def _clip(value: float, max_abs: float) -> float:
