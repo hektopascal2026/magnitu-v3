@@ -141,14 +141,14 @@ def _label_counts(profile_id: int, trained_at: Optional[str] = None) -> Dict[str
 
 
 def _should_promote(current_model: Optional[dict], res: dict) -> bool:
-    """Promote gate: p@30 win, or clear F1 win without ranking collapse.
+    """Promote gate: clear p@30 win or clear F1 win, each with slack on the other.
 
-    Smart-queue labeling adds hard/uncertain rows. That can flatten noisy
-    p@30 (often precision@holdout_size when n<30) while macro-F1 improves.
-    Allow promote when:
-      (1) p@30 improves by ≥ PROMOTE_MARGIN and F1 does not drop by ≥ margin, or
+    Smart-queue labeling and ~20-row holdouts make both metrics noisy. Allow
+    promote when:
+      (1) p@30 improves by ≥ PROMOTE_MARGIN and F1 does not drop by
+          ≥ PROMOTE_RANKING_SLACK, or
       (2) F1 improves by ≥ PROMOTE_MARGIN and p@30 does not drop by
-          ≥ PROMOTE_RANKING_SLACK (wider than margin — holdout ranking noise).
+          ≥ PROMOTE_RANKING_SLACK.
     Ties / within-margin keep the old model.
     """
     if not current_model:
@@ -159,9 +159,9 @@ def _should_promote(current_model: Optional[dict], res: dict) -> bool:
     old_f1 = float(current_model.get("f1_score") or 0.0)
     p30_up = new_p30 >= old_p30 + PROMOTE_MARGIN
     f1_up = new_f1 >= old_f1 + PROMOTE_MARGIN
-    f1_ok = new_f1 >= old_f1 - PROMOTE_MARGIN
     p30_not_collapsed = new_p30 >= old_p30 - PROMOTE_RANKING_SLACK
-    return (p30_up and f1_ok) or (f1_up and p30_not_collapsed)
+    f1_not_collapsed = new_f1 >= old_f1 - PROMOTE_RANKING_SLACK
+    return (p30_up and f1_not_collapsed) or (f1_up and p30_not_collapsed)
 
 
 def _embed_pending_until_done() -> None:
