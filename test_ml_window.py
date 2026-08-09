@@ -34,10 +34,15 @@ def test_should_promote_p30_path():
     old = {"precision_at_30": 0.5, "f1_score": 0.5}
     assert ml_window._should_promote(old, {"precision_at_30": 0.52, "f1_score": 0.5})
     assert not ml_window._should_promote(old, {"precision_at_30": 0.505, "f1_score": 0.5})
-    # Clear p@30 win with small F1 dip inside slack (live EU v6-like)
+    # EU-like p@30 win with tiny F1 dip inside PROMOTE_MARGIN
     assert ml_window._should_promote(
         {"precision_at_30": 0.133, "f1_score": 0.322},
-        {"precision_at_30": 0.192, "f1_score": 0.274},
+        {"precision_at_30": 0.192, "f1_score": 0.315},
+    )
+    # Digital-like: p@30 up but F1 drops beyond margin → reject
+    assert not ml_window._should_promote(
+        {"precision_at_30": 0.167, "f1_score": 0.415},
+        {"precision_at_30": 0.200, "f1_score": 0.382},
     )
 
 
