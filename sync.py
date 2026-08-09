@@ -249,15 +249,18 @@ def pull_all_entry_types(
     since: str = None,
     compute_embeddings: bool = True,
     drain: bool = None,
+    per_type_since: Optional[Dict[str, Optional[str]]] = None,
 ) -> int:
     """Pull every Seismo entry type (feed, email, lex, leg calendar).
 
     One family per HTTP sequence (never ``type=all``) so each corpus is drained
     with ``order=asc`` when ``since`` is set or ``drain=True``. Without ``since``,
     each family gets one newest-first page (200 rows) for a lightweight refresh.
+
+    ``per_type_since`` overrides ``since`` per entry_type (incremental watermarks).
     """
     if drain is None:
-        drain = bool(since)
+        drain = bool(since) or bool(per_type_since)
 
     try:
         status = get_status()
@@ -271,8 +274,11 @@ def pull_all_entry_types(
 
     total = 0
     for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
+        type_since = since
+        if per_type_since is not None:
+            type_since = per_type_since.get(entry_type)
         total += pull_entries(
-            since=since,
+            since=type_since,
             entry_type=entry_type,
             limit=SEISMO_ENTRIES_PAGE_SIZE,
             compute_embeddings=False,
@@ -283,6 +289,118 @@ def pull_all_entry_types(
     if compute_embeddings and cfg.get("model_architecture") == "transformer":
         _compute_pending_embeddings()
     return total
+
+
+def entry_store_watermarks() -> Dict[str, Optional[str]]:
+    """Max non-empty published_date per entry_type in the local SQLite cache."""
+    conn = db.get_db()
+    out: Dict[str, Optional[str]] = {}
+    for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
+        row = conn.execute(
+            """
+            SELECT MAX(published_date) AS m FROM entries
+             WHERE entry_type = ?
+               AND published_date IS NOT NULL
+               AND TRIM(published_date) != ''
+            """,
+            (entry_type,),
+        ).fetchone()
+        out[entry_type] = row["m"] if row and row["m"] else None
+    conn.close()
+    return out
+
+
+def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
+    """Fetch exact mothership rows by id (Seismo ``magnitu_entries&ids=``)."""
+    ids = sorted({int(i) for i in ids if int(i) > 0})
+    if not ids:
+        return 0
+    # Seismo MagnituExportRepository::MAX_IDS_PER_REQUEST
+    chunk_size = 100
+    total = 0
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i : i + chunk_size]
+        params = {
+            "action": "magnitu_entries",
+            "type": entry_type,
+            "ids": ",".join(str(x) for x in chunk),
+        }
+        data = _request("GET", params).json()
+        entries = data.get("entries") or []
+        if entries:
+            db.upsert_entries(entries)
+            total += len(entries)
+    if total:
+        db.log_sync(
+            "pull",
+            total,
+            "type={}, ids_backfill={}".format(entry_type, total),
+        )
+    return total
+
+
+def backfill_orphan_label_entries(profile_id: int) -> Tuple[int, int]:
+    """Pull mothership entries for labels missing from the local entry store.
+
+    Returns ``(orphan_before, fetched)``.
+    """
+    conn = db.get_db()
+    rows = conn.execute(
+        """
+        SELECT l.entry_type, l.entry_id
+          FROM labels l
+          LEFT JOIN entries e
+            ON e.entry_type = l.entry_type AND e.entry_id = l.entry_id
+         WHERE l.profile_id = ?
+           AND e.rowid IS NULL
+        """,
+        (profile_id,),
+    ).fetchall()
+    conn.close()
+    orphan_before = len(rows)
+    if orphan_before == 0:
+        return 0, 0
+
+    by_type: Dict[str, List[int]] = {}
+    for r in rows:
+        by_type.setdefault(str(r["entry_type"]), []).append(int(r["entry_id"]))
+
+    fetched = 0
+    for entry_type, id_list in by_type.items():
+        try:
+            fetched += pull_entries_by_ids(entry_type, id_list)
+        except Exception as exc:
+            logger.warning(
+                "Orphan ids backfill failed for %s (%d ids): %s",
+                entry_type,
+                len(id_list),
+                exc,
+            )
+    return orphan_before, fetched
+
+
+def post_ml_window_report(report: Dict) -> None:
+    """POST window summary to mothership ``magnitu_ml_window_report``."""
+    cfg = get_config()
+    url = (cfg.get("seismo_url") or "").strip()
+    if not url:
+        raise ValueError("seismo_url missing for window report")
+    worker_token = (os.environ.get("MAGNITU_ML_WORKER_TOKEN") or "").strip()
+    if not worker_token:
+        raise ValueError("MAGNITU_ML_WORKER_TOKEN missing for window report")
+    headers = {
+        "Content-Type": "application/json",
+        "X-Magnitu-Ml-Worker": worker_token,
+    }
+    params = {"action": "magnitu_ml_window_report"}
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            url,
+            params=params,
+            headers=headers,
+            content=json.dumps(report),
+        )
+        resp.raise_for_status()
 
 
 def _compute_pending_embeddings(progress_cb=None) -> int:

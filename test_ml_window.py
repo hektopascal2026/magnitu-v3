@@ -25,6 +25,34 @@ def test_empty_or_single_score():
     assert ml_window._rank_normalize_push_scores([]) == []
     assert ml_window._rank_normalize_push_scores([{"id": 1, "relevance_score": 0.5}]) == [{"id": 1, "relevance_score": 0.5}]
 
+
+def test_should_promote_cold_start():
+    assert ml_window._should_promote(None, {"precision_at_30": 0.1, "f1_score": 0.2})
+
+
+def test_should_promote_p30_path():
+    old = {"precision_at_30": 0.5, "f1_score": 0.5}
+    assert ml_window._should_promote(old, {"precision_at_30": 0.52, "f1_score": 0.5})
+    assert not ml_window._should_promote(old, {"precision_at_30": 0.505, "f1_score": 0.5})
+
+
+def test_should_promote_f1_path_with_ranking_slack():
+    # Live EU-like: p@30 dipped within slack, F1 clearly up → promote
+    old = {"precision_at_30": 0.133, "f1_score": 0.322}
+    assert ml_window._should_promote(
+        old, {"precision_at_30": 0.111, "f1_score": 0.405}
+    )
+    # Equal p@30, better F1 → promote (was rejected under strict p@30-only)
+    assert ml_window._should_promote(
+        {"precision_at_30": 0.2, "f1_score": 0.3},
+        {"precision_at_30": 0.2, "f1_score": 0.4},
+    )
+    # Ranking collapsed beyond slack → reject even if F1 up a bit
+    assert not ml_window._should_promote(
+        {"precision_at_30": 0.5, "f1_score": 0.4},
+        {"precision_at_30": 0.4, "f1_score": 0.42},
+    )
+
 @patch("ml_window.os.path.exists")
 @patch("ml_window.open")
 @patch("ml_window.json.load")
