@@ -26,6 +26,24 @@ def test_empty_or_single_score():
     assert ml_window._rank_normalize_push_scores([{"id": 1, "relevance_score": 0.5}]) == [{"id": 1, "relevance_score": 0.5}]
 
 
+def test_is_oom_kill_returncode():
+    assert ml_window._is_oom_kill_returncode(137)
+    assert ml_window._is_oom_kill_returncode(-9)
+    assert not ml_window._is_oom_kill_returncode(1)
+    assert not ml_window._is_oom_kill_returncode(0)
+
+
+def test_sort_prepared_desks_unbaked_first():
+    prepared = [
+        {"slug": "eu", "do_train": False, "report": {"labels_since_train": 0}},
+        {"slug": "digital", "do_train": True, "report": {"labels_since_train": 15}},
+        {"slug": "sicherheit", "do_train": True, "report": {"labels_since_train": 20}},
+        {"slug": "seismo", "do_train": False, "report": {"labels_since_train": 3}},
+    ]
+    ordered = ml_window._sort_prepared_desks(prepared)
+    assert [d["slug"] for d in ordered] == ["sicherheit", "digital", "seismo", "eu"]
+
+
 def test_should_promote_cold_start():
     assert ml_window._should_promote(None, {"precision_at_30": 0.1, "f1_score": 0.2})
 
@@ -69,9 +87,19 @@ def test_should_promote_f1_path_with_ranking_slack():
 @patch("ml_window.db")
 @patch("ml_window.sync")
 @patch("ml_window.pipeline")
-@patch("ml_window.distiller")
+@patch("ml_window._distill_recipe_in_subprocess", return_value=0)
 @patch("ml_window.export_model")
-def test_ml_window_main_promotes(mock_export, mock_distiller, mock_pipeline, mock_sync, mock_db, mock_json_load, mock_open, mock_exists, monkeypatch):
+def test_ml_window_main_promotes(
+    mock_export,
+    mock_distill_sub,
+    mock_pipeline,
+    mock_sync,
+    mock_db,
+    mock_json_load,
+    mock_open,
+    mock_exists,
+    monkeypatch,
+):
     monkeypatch.setenv("SEISMO_DESKS_JSON", '[{"seismo_url": "foo", "api_key": "bar"}]')
     monkeypatch.setenv("MAGNITU_VAULT_PASSWORD", "vault-secret")
     
@@ -106,9 +134,10 @@ def test_ml_window_main_promotes(mock_export, mock_distiller, mock_pipeline, moc
         "architecture": "tfidf",
     }
     mock_db.get_active_model.side_effect = [
-        {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 1}, # before train
+        {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 1},  # before train
         active_v2,  # after promote
         active_v2,  # score push
+        active_v2,  # post-promote recipe path
         active_v2,  # report label counts
     ]
     
@@ -130,16 +159,21 @@ def test_ml_window_main_promotes(mock_export, mock_distiller, mock_pipeline, moc
     mock_pipeline.score_entries.return_value = [{"id": 1, "relevance_score": 0.5}]
     
     mock_exists.return_value = True
-    
+    order = []
+    mock_sync.push_scores.side_effect = lambda *a, **k: order.append("push")
+    mock_distill_sub.side_effect = lambda *a, **k: order.append("distill") or 0
+
     # Run
     res = ml_window.main()
     
     assert res == 0
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
-    mock_distiller.distill_recipe.assert_called_once_with(profile_id=1)
+    mock_distill_sub.assert_called_once_with(1)
+    mock_pipeline.release_embedder.assert_called()
     mock_export.assert_called_once_with(profile_id=1)
     mock_sync.vault_upload.assert_called_once()
     mock_sync.push_scores.assert_called_once()
+    assert order == ["push", "distill"]
     push_kwargs = mock_sync.push_scores.call_args.kwargs
     assert push_kwargs.get("model_meta") is not None
     assert "model_trained_at" in push_kwargs["model_meta"]

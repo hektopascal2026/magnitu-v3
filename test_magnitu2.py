@@ -928,12 +928,14 @@ try:
     cfg = config.get_config()
     for k in ("label_time_decay_days", "label_time_decay_floor",
               "label_time_decay_priority_exempt", "label_time_decay_noise_accel",
-              "distillation_soft_labels", "recipe_optimize_caps",
+              "distillation_soft_labels", "distillation_max_entries",
+              "recipe_optimize_caps",
               "reasoning_weight_boost", "legal_signal_patterns"):
         assert k in cfg, "missing default: " + k
     assert cfg["label_time_decay_days"] == 0
     assert cfg["label_time_decay_priority_exempt"] is True
     assert cfg["distillation_soft_labels"] is True
+    assert cfg["distillation_max_entries"] == 8000
     assert cfg["reasoning_weight_boost"] == 1.0
     assert cfg["legal_signal_patterns"] == []
     ok()
