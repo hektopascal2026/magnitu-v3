@@ -10,6 +10,7 @@ import sys
 import json
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
@@ -754,6 +755,91 @@ try:
     assert n == 1
     assert single_call.get("order") is None, "Quick pull should not pass order=asc"
     assert single_call["type"] == "email"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+# ═══════════════════════════════════════════
+#  Watermarks ignore future dates + heal stale cache
+# ═══════════════════════════════════════════
+print("\n=== Watermarks / future-date heal ===")
+
+def _clear_entries():
+    conn = db.get_db()
+    conn.execute("DELETE FROM entries")
+    conn.commit()
+    conn.close()
+
+
+t = test("entry_store_watermarks ignores future published_date for since cursor")
+try:
+    db.init_db()
+    _clear_entries()
+    db.upsert_entry(_mock_seismo_entry(
+        "feed_item", 101, "past", "2026-06-01 12:00:00",
+    ))
+    db.upsert_entry(_mock_seismo_entry(
+        "feed_item", 102, "future agenda", "2026-10-08 00:00:00",
+    ))
+    with patch("sync.heal_future_published_dates", return_value=0), \
+         patch("sync.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+        marks = sync.entry_store_watermarks()
+    assert marks.get("feed_item") == "2026-06-01 12:00:00", marks
+    assert marks.get("calendar_event") is None
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("heal_future_published_dates re-pulls mothership ids for future rows")
+try:
+    db.init_db()
+    _clear_entries()
+    db.upsert_entry(_mock_seismo_entry(
+        "feed_item", 950588, "bad year", "2028-03-31 00:00:00",
+    ))
+    pulled = []
+
+    def fake_pull(entry_type, ids):
+        pulled.append((entry_type, sorted(ids)))
+        db.upsert_entry(_mock_seismo_entry(
+            entry_type, ids[0], "fixed", "2026-03-30 07:12:35",
+        ))
+        return len(ids)
+
+    with patch("sync.pull_entries_by_ids", side_effect=fake_pull), \
+         patch("sync.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+        n = sync.heal_future_published_dates()
+    assert n == 1, n
+    assert pulled == [("feed_item", [950588])], pulled
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT published_date FROM entries WHERE entry_type='feed_item' AND entry_id=950588"
+    ).fetchone()
+    conn.close()
+    assert row["published_date"] == "2026-03-30 07:12:35", row["published_date"]
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("normalize prefers export_since over shaped published_date")
+try:
+    rows = sync._normalize_entries_for_store([{
+        "entry_type": "feed_item",
+        "entry_id": 950588,
+        "title": "x",
+        "published_date": "2028-03-31 00:00:00",
+        "export_since": "2026-03-30 07:12:35",
+    }])
+    assert rows[0]["published_date"] == "2026-03-30 07:12:35", rows[0]
+    assert sync._max_published_date([{
+        "published_date": "2028-03-31 00:00:00",
+        "export_since": "2026-03-30 07:12:35",
+    }]) == "2026-03-30 07:12:35"
     ok()
 except Exception as e:
     fail(str(e))

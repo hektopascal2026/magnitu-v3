@@ -100,11 +100,44 @@ def _profile_target(profile: Optional[Dict]) -> Optional[Dict]:
 
 # ─── Pull (always mothership — global config) ────────────────────────────────
 
+def _store_published_date(entry: Dict) -> str:
+    """Local cache / watermark key: prefer Seismo ``export_since`` (SQL column).
+
+    Shaped ``published_date`` may be ``event_meta.starts_at`` (or prose-parsed
+    dates inside article bodies) which must not drive incremental ``since``.
+    """
+    return (entry.get("export_since") or entry.get("published_date") or "").strip()
+
+
+def _normalize_entries_for_store(entries: List[Dict]) -> List[Dict]:
+    """Copy entries with ``published_date`` rewritten to the SQL since key."""
+    out: List[Dict] = []
+    for entry in entries:
+        row = dict(entry)
+        pub = _store_published_date(row)
+        if pub:
+            row["published_date"] = pub
+        for key in (
+            "title",
+            "description",
+            "content",
+            "link",
+            "author",
+            "source_name",
+            "source_category",
+        ):
+            row.setdefault(key, "")
+        row.setdefault("source_type", "rss")
+        row.setdefault("published_date", "")
+        out.append(row)
+    return out
+
+
 def _max_published_date(entries: List[Dict]) -> Optional[str]:
-    """Latest ``published_date`` in a shaped Seismo entry batch (UTC strings)."""
+    """Latest sync cursor key in a shaped Seismo entry batch (UTC strings)."""
     best = ""
     for entry in entries:
-        raw = (entry.get("published_date") or "").strip()
+        raw = _store_published_date(entry)
         if raw and raw > best:
             best = raw
     return best or None
@@ -168,7 +201,7 @@ def _pull_entry_type_drain(
         data = _request("GET", params).json()
         entries = data.get("entries", [])
         if entries:
-            db.upsert_entries(entries)
+            db.upsert_entries(_normalize_entries_for_store(entries))
             total += len(entries)
 
         hints = _entry_sync_hints(data, entry_type, page_size, entries)
@@ -250,7 +283,7 @@ def pull_entries(
         data = _request("GET", params).json()
         entries = data.get("entries", [])
         if entries:
-            db.upsert_entries(entries)
+            db.upsert_entries(_normalize_entries_for_store(entries))
             db.log_sync("pull", len(entries), "type={}, since=".format(entry_type))
         total = len(entries)
 
@@ -306,15 +339,70 @@ def pull_all_entry_types(
     return total
 
 
+def heal_future_published_dates(now: Optional[str] = None) -> int:
+    """Refresh local rows with ``published_date`` > now from mothership ``ids=``.
+
+    Bad RSS years (or titles containing a future year) can land once, then get
+    corrected on Seismo while Magnitu keeps the stale future date. That freezes
+    ``MAX(published_date)`` above ``now`` and only ever shows up as a watermark
+    cap warning — incremental ``since`` never re-pulls those ids. Leg
+    (``calendar_event``) is skipped: its cursor is not ``published_date``.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn = db.get_db()
+    rows = conn.execute(
+        """
+        SELECT entry_type, entry_id FROM entries
+         WHERE published_date IS NOT NULL
+           AND TRIM(published_date) != ''
+           AND published_date > ?
+           AND entry_type != 'calendar_event'
+        """,
+        (now,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return 0
+
+    by_type: Dict[str, List[int]] = {}
+    for r in rows:
+        by_type.setdefault(str(r["entry_type"]), []).append(int(r["entry_id"]))
+
+    fetched = 0
+    for entry_type, id_list in by_type.items():
+        try:
+            n = pull_entries_by_ids(entry_type, id_list)
+            fetched += n
+            logger.info(
+                "Healed %d/%d future-dated %s row(s) from mothership",
+                n,
+                len(id_list),
+                entry_type,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Future-date heal failed for %s (%d ids): %s",
+                entry_type,
+                len(id_list),
+                exc,
+            )
+    return fetched
+
+
 def entry_store_watermarks() -> Dict[str, Optional[str]]:
     """Incremental ``since`` per entry_type from the local SQLite cache.
 
-    Uses ``MAX(published_date)`` but **caps at UTC now** so future-dated rows
-    (bad feed timestamps) cannot freeze the drain. ``calendar_event`` is always
-    ``None`` (full family drain): Seismo pages Leg by ``fetched_at``, which the
-    local store overwrites on upsert, and ``event_date`` is the wrong cursor.
+    Uses ``MAX(published_date)`` among rows with ``published_date <= UTC now``
+    so future-dated rows (agenda/EP dates or bad feed timestamps) cannot freeze
+    the drain. Before computing, refreshes any local future-dated non-Leg rows
+    from mothership so corrected Seismo dates replace stale cache values.
+    ``calendar_event`` is always ``None`` (full family drain): Seismo pages Leg
+    by ``fetched_at``, which the local store overwrites on upsert, and
+    ``event_date`` is the wrong cursor.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    heal_future_published_dates(now)
     conn = db.get_db()
     out: Dict[str, Optional[str]] = {}
     for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
@@ -327,19 +415,11 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
              WHERE entry_type = ?
                AND published_date IS NOT NULL
                AND TRIM(published_date) != ''
+               AND published_date <= ?
             """,
-            (entry_type,),
+            (entry_type, now),
         ).fetchone()
-        m = row["m"] if row and row["m"] else None
-        if m and str(m) > now:
-            logger.warning(
-                "Watermark for %s capped from %s to now (%s)",
-                entry_type,
-                m,
-                now,
-            )
-            m = now
-        out[entry_type] = m
+        out[entry_type] = row["m"] if row and row["m"] else None
     conn.close()
     return out
 
@@ -381,7 +461,7 @@ def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
                 len(chunk),
             )
         if entries:
-            db.upsert_entries(entries)
+            db.upsert_entries(_normalize_entries_for_store(entries))
             total += len(entries)
     if total or missing_total:
         db.log_sync(
