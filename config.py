@@ -112,6 +112,10 @@ DEFAULTS = {
     "label_time_decay_noise_accel": 3.0,
     # Soft teacher probabilities for TF-IDF recipe distillation (vs hard argmax).
     "distillation_soft_labels": True,
+    # Cap teacher/student corpus size for recipe distillation (0 = no cap).
+    # Full-corpus distill OOM'd the 4G VPS cgroup at ~44k entries; keep all
+    # human labels and fill the rest with a stable unlabeled sample.
+    "distillation_max_entries": 8000,
     # Recipe export caps (tuned automatically when recipe_optimize_caps is True).
     "recipe_max_unigram_abs": 0.12,
     "recipe_max_phrase_abs": 0.24,

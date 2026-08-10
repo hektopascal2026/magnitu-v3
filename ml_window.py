@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
 Headless CLI worker for the VPS Magnitu ML window.
-Executes sync -> embed -> train (gated) -> promote (strict) -> score -> push.
+Executes sync -> embed -> train (gated) -> promote (strict) -> score/push
+-> distill/recipe/vault (post-promote, memory-isolated).
 Expects SEISMO_DESKS_JSON environment variable with a JSON list of desks.
 """
 import os
 import sys
 import json
 import logging
+import subprocess
+import gc
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -17,7 +20,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 import sync
 import pipeline
-import distiller
 from config import get_config
 from magnitu.time_display import format_seismo_timestamp
 from model_manager import export_model
@@ -31,6 +33,82 @@ PROMOTE_MARGIN = 0.01
 # ±0.01 bar on p@30 alone rejects models that clearly improve macro-F1 after
 # smart-queue labeling. Allow this much ranking noise when F1 clearly wins.
 PROMOTE_RANKING_SLACK = 0.05
+
+
+def _distill_recipe_in_subprocess(profile_id: int) -> int:
+    """
+    Run recipe distillation in a child process after the parent has released
+    heavy models. Peak RSS is roughly the child alone (not parent+child).
+    If the child is OOM-killed (exit 137), the parent can still finish the
+    window report and continue other desks.
+    """
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    env = os.environ.copy()
+    prior = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = app_dir if not prior else f"{app_dir}{os.pathsep}{prior}"
+    code = (
+        "import distiller, sys; "
+        f"r = distiller.distill_recipe(profile_id={int(profile_id)}); "
+        "sys.exit(0 if r is not None else 2)"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=app_dir,
+        env=env,
+        check=False,
+    )
+    return int(completed.returncode)
+
+
+def _is_oom_kill_returncode(rc: int) -> bool:
+    """True for cgroup/OOM SIGKILL. Python reports -9; shells often report 137."""
+    return rc in (137, -9)
+
+
+def _post_promote_recipe_and_vault(
+    profile_id: int,
+    url: str,
+    prof: dict,
+    vault_password: str,
+) -> bool:
+    """Distill + push recipe + vault upload. Returns False on soft failure."""
+    ok = True
+    # Free E5 (and friends) in the parent before the distill child starts.
+    try:
+        pipeline.release_embedder()
+    except Exception as e:
+        logger.warning("release_embedder before distill failed: %s", e)
+    gc.collect()
+
+    logger.info("Distilling recipe for %s (subprocess)...", url)
+    rc = _distill_recipe_in_subprocess(profile_id)
+    if _is_oom_kill_returncode(rc):
+        logger.error("Recipe distillation OOM-killed (rc=%s) for %s", rc, url)
+        ok = False
+    elif rc != 0:
+        logger.error("Recipe distillation failed for %s (exit %s)", url, rc)
+        ok = False
+
+    current_model = db.get_active_model(profile_id)
+    if current_model and current_model.get("recipe_path") and os.path.exists(current_model["recipe_path"]):
+        try:
+            with open(current_model["recipe_path"], "r") as rf:
+                recipe = json.load(rf)
+                sync.push_recipe(recipe, profile=prof)
+                logger.info("Recipe pushed for %s.", url)
+        except Exception as e:
+            logger.error("Failed to push recipe: %s", e)
+            ok = False
+
+    try:
+        logger.info("Exporting model to vault for %s...", url)
+        model_zip = export_model(profile_id=profile_id)
+        sync.vault_upload(vault_password=vault_password, package_path=model_zip, overwrite=True)
+        logger.info("Model uploaded to mothership vault.")
+    except Exception as e:
+        logger.error("Failed to upload model to vault: %s", e)
+        ok = False
+    return ok
 
 
 def enforce_embedding_store_cap(max_bytes=5 * 1024 * 1024 * 1024):
@@ -192,6 +270,33 @@ def _embed_pending_until_done() -> None:
             break
 
 
+def _should_train_desk(
+    current_model: Optional[dict],
+    labeled_count: int,
+    labels_since_train: int,
+    force_retrain: bool,
+) -> bool:
+    if force_retrain:
+        return True
+    if not current_model:
+        return labeled_count >= 15
+    trained_at = datetime.fromisoformat(current_model["trained_at"].replace("Z", ""))
+    days_since = (datetime.now(timezone.utc).replace(tzinfo=None) - trained_at).days
+    return labels_since_train >= 15 or days_since >= 14
+
+
+def _sort_prepared_desks(prepared: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Train candidates with the most unbaked labels first; slug ASC for ties."""
+    return sorted(
+        prepared,
+        key=lambda item: (
+            -(1 if item.get("do_train") else 0),
+            -int(item.get("report", {}).get("labels_since_train") or 0),
+            str(item.get("slug") or ""),
+        ),
+    )
+
+
 def main():
     cfg = get_config()
     mothership_url = cfg.get("seismo_url")
@@ -246,6 +351,8 @@ def main():
         logger.error("Failed shared entry pull/embed: %s", e)
         has_errors = True
 
+    # 1) Pull labels for every desk first, then train highest unbaked backlog.
+    prepared: List[Dict[str, Any]] = []
     for desk in desks:
         url = desk.get("seismo_url")
         api_key = desk.get("api_key")
@@ -255,8 +362,6 @@ def main():
             has_errors = True
             continue
 
-        logger.info("Processing desk: %s", url)
-
         # Prefer registry slug (e.g. "sicherheit"); never slugify the full URL
         # (that yields https-seismo-live-… and misses desktop profiles).
         slug = (desk.get("slug") or "").strip()
@@ -265,6 +370,8 @@ def main():
             slug = db.slugify(slug)
         else:
             slug = derived_slug
+
+        logger.info("Preparing desk: %s (slug=%s)", url, slug)
 
         prof = db.get_profile_by_slug(slug)
         if not prof:
@@ -303,7 +410,6 @@ def main():
             "candidate_version": None,
         }
 
-        # 1. Sync Labels
         try:
             pulled = sync.pull_labels(profile_id=profile_id, profile=prof)
             report["labels_pulled_new"] = int(pulled)
@@ -313,7 +419,6 @@ def main():
             desk_reports.append(report)
             continue
 
-        # 1b. Backfill mothership entries for labeled orphans, then embed.
         try:
             orphan_before, fetched = sync.backfill_orphan_label_entries(profile_id)
             if orphan_before:
@@ -337,18 +442,50 @@ def main():
             report["p30_old"] = current_model.get("precision_at_30")
             report["f1_old"] = current_model.get("f1_score")
 
-        do_train = force_retrain
-        if not current_model:
-            if len(labeled) >= 15:
-                do_train = True
-        else:
-            trained_at = datetime.fromisoformat(current_model["trained_at"].replace("Z", ""))
-            days_since = (datetime.now(timezone.utc).replace(tzinfo=None) - trained_at).days
-            new_labels = int(report["labels_since_train"])
+        do_train = _should_train_desk(
+            current_model,
+            len(labeled),
+            int(report["labels_since_train"]),
+            force_retrain,
+        )
+        prepared.append({
+            "url": url,
+            "slug": slug,
+            "prof": prof,
+            "profile_id": profile_id,
+            "report": report,
+            "current_model": current_model,
+            "do_train": do_train,
+        })
 
-            if new_labels >= 15 or days_since >= 14:
-                do_train = True
+    prepared = _sort_prepared_desks(prepared)
+    logger.info(
+        "Desk train order (unbaked labels first): %s",
+        ", ".join(
+            f"{item['slug']}(since={item['report'].get('labels_since_train', 0)},"
+            f"train={item['do_train']})"
+            for item in prepared
+        ) or "(none)",
+    )
 
+    # 2) Train / score-push / distill in priority order
+    for item in prepared:
+        url = item["url"]
+        slug = item["slug"]
+        prof = item["prof"]
+        profile_id = item["profile_id"]
+        report = item["report"]
+        current_model = item["current_model"]
+        do_train = item["do_train"]
+
+        logger.info(
+            "Processing desk: %s (labels_since_train=%s, do_train=%s)",
+            url,
+            report.get("labels_since_train"),
+            do_train,
+        )
+
+        promoted_this_desk = False
         if do_train:
             logger.info("Gate passed: training model for %s...", url)
             report["trained"] = True
@@ -375,6 +512,7 @@ def main():
 
                 if promoted:
                     report["promoted"] = True
+                    promoted_this_desk = True
                     logger.info("Model promoted! Activating version %s", res["version"])
                     conn = db.get_db()
                     conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
@@ -384,39 +522,9 @@ def main():
                     )
                     conn.commit()
                     conn.close()
-
-                    # Distill Recipe
-                    try:
-                        logger.info("Distilling recipe for %s...", url)
-                        distiller.distill_recipe(profile_id=profile_id)
-                    except Exception as e:
-                        logger.error("Failed to distill recipe: %s", e)
-                        has_errors = True
-
                     current_model = db.get_active_model(profile_id)
                     if current_model:
                         report["active_version"] = current_model.get("version")
-
-                    # Push recipe if distilled
-                    if current_model and current_model.get("recipe_path") and os.path.exists(current_model["recipe_path"]):
-                        try:
-                            with open(current_model["recipe_path"], "r") as rf:
-                                recipe = json.load(rf)
-                                sync.push_recipe(recipe, profile=prof)
-                                logger.info("Recipe pushed for %s.", url)
-                        except Exception as e:
-                            logger.error("Failed to push recipe: %s", e)
-                            has_errors = True
-
-                    # Export and push to Vault (mothership)
-                    try:
-                        logger.info("Exporting model to vault for %s...", url)
-                        model_zip = export_model(profile_id=profile_id)
-                        sync.vault_upload(vault_password=vault_password, package_path=model_zip, overwrite=True)
-                        logger.info("Model uploaded to mothership vault.")
-                    except Exception as e:
-                        logger.error("Failed to upload model to vault: %s", e)
-                        has_errors = True
 
                 else:
                     report["train_rejected"] = True
@@ -428,12 +536,13 @@ def main():
                         profile_id=profile_id,
                     )
 
-        # 3. Always score and push (using latest active model)
+        # Score + push BEFORE distill so desk model_meta advances even if
+        # recipe distillation is later OOM-killed under MemoryMax.
         current_model = db.get_active_model(profile_id)
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
-                recent_entries = db.get_recent_entries(days=14)
+                recent_entries = db.get_recent_entries(days=14, include_embedding=False)
                 if recent_entries:
                     scores = pipeline.score_entries(recent_entries, profile_id=profile_id)
                     if scores:
@@ -450,7 +559,12 @@ def main():
                 logger.error("Error during score push: %s", e)
                 has_errors = True
 
-        # Refresh counts after backfill/train (active model may have changed)
+        if promoted_this_desk:
+            if not _post_promote_recipe_and_vault(
+                profile_id, url, prof, vault_password,
+            ):
+                has_errors = True
+
         active_after = db.get_active_model(profile_id)
         report.update(
             _label_counts(
@@ -460,7 +574,7 @@ def main():
         )
         desk_reports.append(report)
 
-    # 4) Window report → Seismo Diagnostics
+    # 5) Window report → Seismo Diagnostics
     try:
         payload = {
             "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

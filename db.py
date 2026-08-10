@@ -778,21 +778,74 @@ def get_unlabeled_entries(limit: int = 30,
     return out
 
 
-def get_all_entries() -> List[dict]:
-    """Get all cached entries (global, not profile-scoped)."""
+_ENTRY_TEXT_COLUMNS = (
+    "id, entry_type, entry_id, title, description, content, link, author, "
+    "published_date, source_name, source_category, source_type, fetched_at"
+)
+
+
+def get_all_entries(*, include_embedding: bool = True) -> List[dict]:
+    """Get all cached entries (global, not profile-scoped).
+
+    Set ``include_embedding=False`` for text-only loads (recipe distillation)
+    so ~100MB+ of embedding BLOBs are not pulled into Python dicts.
+    """
     conn = get_db()
+    cols = "*" if include_embedding else _ENTRY_TEXT_COLUMNS
     rows = conn.execute(
-        "SELECT * FROM entries ORDER BY published_date DESC"
+        f"SELECT {cols} FROM entries ORDER BY published_date DESC"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def get_recent_entries(days: int = 7) -> List[dict]:
+def get_all_entry_keys() -> List[Tuple[str, Any]]:
+    """Lightweight (entry_type, entry_id) list for sampling without loading bodies."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT entry_type, entry_id FROM entries ORDER BY published_date DESC"
+    ).fetchall()
+    conn.close()
+    return [(r["entry_type"], r["entry_id"]) for r in rows]
+
+
+def get_entries_text_by_keys(keys: Sequence[Tuple[str, Any]]) -> List[dict]:
+    """Fetch text columns for the given entry keys (chunked; order follows keys)."""
+    if not keys:
+        return []
+    conn = get_db()
+    by_key = {}
+    chunk = 400
+    try:
+        for i in range(0, len(keys), chunk):
+            part = list(keys[i:i + chunk])
+            placeholders = ",".join(["(?,?)"] * len(part))
+            params: List[Any] = []
+            for entry_type, entry_id in part:
+                params.extend([entry_type, entry_id])
+            rows = conn.execute(
+                f"SELECT {_ENTRY_TEXT_COLUMNS} FROM entries "
+                f"WHERE (entry_type, entry_id) IN ({placeholders})",
+                params,
+            ).fetchall()
+            for row in rows:
+                by_key[entry_key_from_mapping(row)] = dict(row)
+    finally:
+        conn.close()
+    out = []
+    for key in keys:
+        row = by_key.get(key)
+        if row is not None:
+            out.append(row)
+    return out
+
+
+def get_recent_entries(days: int = 7, *, include_embedding: bool = True) -> List[dict]:
     """Get entries published within the last N days."""
     conn = get_db()
-    rows = conn.execute("""
-        SELECT * FROM entries
+    cols = "*" if include_embedding else _ENTRY_TEXT_COLUMNS
+    rows = conn.execute(f"""
+        SELECT {cols} FROM entries
         WHERE published_date >= date('now', ?)
         ORDER BY published_date DESC
     """, (f"-{days} days",)).fetchall()

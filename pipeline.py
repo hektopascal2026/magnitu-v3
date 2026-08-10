@@ -30,7 +30,7 @@ from sklearn.metrics import (
     classification_report, roc_auc_score,
 )
 
-from typing import Optional, List, Tuple, Dict, Callable
+from typing import Any, Optional, List, Tuple, Dict, Callable
 
 import db
 from config import (
@@ -1588,6 +1588,41 @@ def _train_transformer(profile_id: int = 1,
 
 
 MAX_ONTHEFLY_EMBEDDINGS = 10
+_EMBEDDING_FETCH_CHUNK = 400
+
+
+def _embedding_blobs_for_entries(entries: List[dict]) -> dict:
+    """Load embedding BLOBs only for the given entry keys (chunked IN queries)."""
+    if not entries:
+        return {}
+    keys = []
+    seen = set()
+    for entry in entries:
+        key = db.entry_key_from_mapping(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+
+    emb_map = {}
+    conn = db.get_db()
+    try:
+        for i in range(0, len(keys), _EMBEDDING_FETCH_CHUNK):
+            chunk = keys[i:i + _EMBEDDING_FETCH_CHUNK]
+            placeholders = ",".join(["(?,?)"] * len(chunk))
+            params: List[Any] = []
+            for entry_type, entry_id in chunk:
+                params.extend([entry_type, entry_id])
+            rows = conn.execute(
+                "SELECT entry_type, entry_id, embedding FROM entries "
+                f"WHERE embedding IS NOT NULL AND (entry_type, entry_id) IN ({placeholders})",
+                params,
+            ).fetchall()
+            for row in rows:
+                emb_map[db.entry_key_from_mapping(row)] = row["embedding"]
+    finally:
+        conn.close()
+    return emb_map
 
 
 def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
@@ -1607,15 +1642,8 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
     config = db.get_effective_config(pid)
     embedding_dim = config.get("embedding_dim", 768)
 
-    # Batch-fetch all embeddings in one query
-    conn = db.get_db()
-    emb_map = {}
-    rows = conn.execute(
-        "SELECT entry_type, entry_id, embedding FROM entries WHERE embedding IS NOT NULL"
-    ).fetchall()
-    for row in rows:
-        emb_map[db.entry_key_from_mapping(row)] = row["embedding"]
-    conn.close()
+    # Fetch embeddings only for the entries being scored (not the whole store).
+    emb_map = _embedding_blobs_for_entries(entries)
 
     embeddings = []
     to_compute = []
@@ -1954,14 +1982,44 @@ def _get_tfidf_feature_importance(profile_id: int = 1) -> dict:
 #  (used by the recipe distiller to produce keyword-weight recipes)
 # ═══════════════════════════════════════════════════════════════════
 
+def _sample_entries_for_distillation(
+    entries: List[dict],
+    labeled_keys: set,
+    max_entries: int,
+    rng: np.random.RandomState,
+) -> List[dict]:
+    """Keep all human-labeled rows; fill remaining budget with unlabeled sample."""
+    if max_entries <= 0 or len(entries) <= max_entries:
+        return list(entries)
+
+    labeled: List[dict] = []
+    unlabeled: List[dict] = []
+    for entry in entries:
+        key = db.entry_key_from_mapping(entry)
+        if key in labeled_keys:
+            labeled.append(entry)
+        else:
+            unlabeled.append(entry)
+
+    if len(labeled) >= max_entries:
+        pick = rng.choice(len(labeled), size=max_entries, replace=False)
+        return [labeled[int(i)] for i in sorted(pick.tolist())]
+
+    remain = max_entries - len(labeled)
+    if remain >= len(unlabeled):
+        return labeled + unlabeled
+    pick = rng.choice(len(unlabeled), size=remain, replace=False)
+    return labeled + [unlabeled[int(i)] for i in pick.tolist()]
+
+
 def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
     """
     Train a TF-IDF + LogReg 'student' model that learns from the transformer
-    model's predictions on ALL entries (not just labeled ones).
+    model's predictions on a memory-bounded entry sample.
 
     Uses soft teacher probabilities by default so borderline entries teach
     mixed class weights to the keyword recipe.  Human labels override with
-    a higher sample weight.
+    a higher sample weight and are always retained when under the cap.
 
     Returns the trained student pipeline, or None if not possible.
     """
@@ -1971,12 +2029,37 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
 
     config = db.get_effective_config(profile_id)
     use_soft = bool(config.get("distillation_soft_labels", True))
+    try:
+        max_entries = int(config.get("distillation_max_entries", 8000) or 0)
+    except (TypeError, ValueError):
+        max_entries = 8000
 
-    all_entries = db.get_all_entries()
-    if len(all_entries) < 20:
+    human_label_rows = {
+        db.entry_key_from_mapping(lbl): lbl
+        for lbl in db.get_all_labels(profile_id)
+    }
+
+    # Sample keys first so we never materialize 40k+ full text bodies in RAM.
+    all_keys = db.get_all_entry_keys()
+    if len(all_keys) < 20:
         return None
 
-    scores = score_entries(all_entries, profile_id=profile_id)
+    key_rows = [{"entry_type": et, "entry_id": eid} for et, eid in all_keys]
+    rng = np.random.RandomState(42 + int(profile_id))
+    sampled_key_rows = _sample_entries_for_distillation(
+        key_rows, set(human_label_rows), max_entries, rng,
+    )
+    sampled_keys = [
+        db.entry_key_from_mapping(row) for row in sampled_key_rows
+    ]
+    distill_entries = db.get_entries_text_by_keys(sampled_keys)
+    if len(sampled_keys) < len(all_keys):
+        logger.info(
+            "Distillation corpus sampled %d / %d entries (cap=%d, labels=%d)",
+            len(distill_entries), len(all_keys), max_entries, len(human_label_rows),
+        )
+
+    scores = score_entries(distill_entries, profile_id=profile_id)
     if not scores:
         return None
 
@@ -1988,18 +2071,13 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
         db.entry_key_from_mapping(s): s["predicted_label"]
         for s in scores
     }
-
-    human_label_rows = {
-        db.entry_key_from_mapping(lbl): lbl
-        for lbl in db.get_all_labels(profile_id)
-    }
     syn_w = _synthetic_label_weight(config)
 
     scored_entries = []
     targets = []
     class_names = list(CLASSES)
 
-    for entry in all_entries:
+    for entry in distill_entries:
         key = db.entry_key_from_mapping(entry)
         if key in human_label_rows:
             lbl_row = human_label_rows[key]

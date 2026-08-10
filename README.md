@@ -45,6 +45,9 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - Unigrams, bigrams, trigrams; both positive and negative signals per class
   - Legal-template priors and reasoning-phrase boosts (1.5×, deduped per phrase)
   - Knowledge distillation for transformer models (TF-IDF student learns from transformer soft labels; human labels weighted 3×)
+  - Corpus capped by `distillation_max_entries` (default `8000`): keep all human labels, sample unlabeled rows — avoids OOM on large stores under a 4G cgroup
+  - VPS ML window: promote → score/`model_meta` push → distill in a subprocess after releasing the embedder (child OOM cannot strand desk model metadata)
+  - VPS ML window trains desks with the most labels since last model first (after a shared label-pull pass)
   - Recipe export tuned against a **PHP-parity scorer** (once-per-keyword hit, synopsis-only lex/Leg text, accent-preserving tokens) so normalization and cap optimization match what Seismo actually runs
   - Per-profile model/recipe files (`model_p{id}_v{n}.joblib`, `recipe_p{id}_v{n}.json`) — multi-profile desks cannot overwrite each other's classifiers
 - **Explainability**
