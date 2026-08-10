@@ -306,15 +306,70 @@ def pull_all_entry_types(
     return total
 
 
+def heal_future_published_dates(now: Optional[str] = None) -> int:
+    """Refresh local rows with ``published_date`` > now from mothership ``ids=``.
+
+    Bad RSS years (or titles containing a future year) can land once, then get
+    corrected on Seismo while Magnitu keeps the stale future date. That freezes
+    ``MAX(published_date)`` above ``now`` and only ever shows up as a watermark
+    cap warning — incremental ``since`` never re-pulls those ids. Leg
+    (``calendar_event``) is skipped: its cursor is not ``published_date``.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn = db.get_db()
+    rows = conn.execute(
+        """
+        SELECT entry_type, entry_id FROM entries
+         WHERE published_date IS NOT NULL
+           AND TRIM(published_date) != ''
+           AND published_date > ?
+           AND entry_type != 'calendar_event'
+        """,
+        (now,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return 0
+
+    by_type: Dict[str, List[int]] = {}
+    for r in rows:
+        by_type.setdefault(str(r["entry_type"]), []).append(int(r["entry_id"]))
+
+    fetched = 0
+    for entry_type, id_list in by_type.items():
+        try:
+            n = pull_entries_by_ids(entry_type, id_list)
+            fetched += n
+            logger.info(
+                "Healed %d/%d future-dated %s row(s) from mothership",
+                n,
+                len(id_list),
+                entry_type,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Future-date heal failed for %s (%d ids): %s",
+                entry_type,
+                len(id_list),
+                exc,
+            )
+    return fetched
+
+
 def entry_store_watermarks() -> Dict[str, Optional[str]]:
     """Incremental ``since`` per entry_type from the local SQLite cache.
 
-    Uses ``MAX(published_date)`` but **caps at UTC now** so future-dated rows
-    (bad feed timestamps) cannot freeze the drain. ``calendar_event`` is always
-    ``None`` (full family drain): Seismo pages Leg by ``fetched_at``, which the
-    local store overwrites on upsert, and ``event_date`` is the wrong cursor.
+    Uses ``MAX(published_date)`` among rows with ``published_date <= UTC now``
+    so future-dated rows (agenda/EP dates or bad feed timestamps) cannot freeze
+    the drain. Before computing, refreshes any local future-dated non-Leg rows
+    from mothership so corrected Seismo dates replace stale cache values.
+    ``calendar_event`` is always ``None`` (full family drain): Seismo pages Leg
+    by ``fetched_at``, which the local store overwrites on upsert, and
+    ``event_date`` is the wrong cursor.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    heal_future_published_dates(now)
     conn = db.get_db()
     out: Dict[str, Optional[str]] = {}
     for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
@@ -327,19 +382,11 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
              WHERE entry_type = ?
                AND published_date IS NOT NULL
                AND TRIM(published_date) != ''
+               AND published_date <= ?
             """,
-            (entry_type,),
+            (entry_type, now),
         ).fetchone()
-        m = row["m"] if row and row["m"] else None
-        if m and str(m) > now:
-            logger.warning(
-                "Watermark for %s capped from %s to now (%s)",
-                entry_type,
-                m,
-                now,
-            )
-            m = now
-        out[entry_type] = m
+        out[entry_type] = row["m"] if row and row["m"] else None
     conn.close()
     return out
 
