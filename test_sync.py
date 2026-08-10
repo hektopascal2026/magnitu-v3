@@ -826,6 +826,25 @@ except Exception as e:
     fail(str(e))
 
 
+t = test("normalize prefers export_since over shaped published_date")
+try:
+    rows = sync._normalize_entries_for_store([{
+        "entry_type": "feed_item",
+        "entry_id": 950588,
+        "title": "x",
+        "published_date": "2028-03-31 00:00:00",
+        "export_since": "2026-03-30 07:12:35",
+    }])
+    assert rows[0]["published_date"] == "2026-03-30 07:12:35", rows[0]
+    assert sync._max_published_date([{
+        "published_date": "2028-03-31 00:00:00",
+        "export_since": "2026-03-30 07:12:35",
+    }]) == "2026-03-30 07:12:35"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
 # ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════

@@ -100,11 +100,44 @@ def _profile_target(profile: Optional[Dict]) -> Optional[Dict]:
 
 # ─── Pull (always mothership — global config) ────────────────────────────────
 
+def _store_published_date(entry: Dict) -> str:
+    """Local cache / watermark key: prefer Seismo ``export_since`` (SQL column).
+
+    Shaped ``published_date`` may be ``event_meta.starts_at`` (or prose-parsed
+    dates inside article bodies) which must not drive incremental ``since``.
+    """
+    return (entry.get("export_since") or entry.get("published_date") or "").strip()
+
+
+def _normalize_entries_for_store(entries: List[Dict]) -> List[Dict]:
+    """Copy entries with ``published_date`` rewritten to the SQL since key."""
+    out: List[Dict] = []
+    for entry in entries:
+        row = dict(entry)
+        pub = _store_published_date(row)
+        if pub:
+            row["published_date"] = pub
+        for key in (
+            "title",
+            "description",
+            "content",
+            "link",
+            "author",
+            "source_name",
+            "source_category",
+        ):
+            row.setdefault(key, "")
+        row.setdefault("source_type", "rss")
+        row.setdefault("published_date", "")
+        out.append(row)
+    return out
+
+
 def _max_published_date(entries: List[Dict]) -> Optional[str]:
-    """Latest ``published_date`` in a shaped Seismo entry batch (UTC strings)."""
+    """Latest sync cursor key in a shaped Seismo entry batch (UTC strings)."""
     best = ""
     for entry in entries:
-        raw = (entry.get("published_date") or "").strip()
+        raw = _store_published_date(entry)
         if raw and raw > best:
             best = raw
     return best or None
@@ -168,7 +201,7 @@ def _pull_entry_type_drain(
         data = _request("GET", params).json()
         entries = data.get("entries", [])
         if entries:
-            db.upsert_entries(entries)
+            db.upsert_entries(_normalize_entries_for_store(entries))
             total += len(entries)
 
         hints = _entry_sync_hints(data, entry_type, page_size, entries)
@@ -250,7 +283,7 @@ def pull_entries(
         data = _request("GET", params).json()
         entries = data.get("entries", [])
         if entries:
-            db.upsert_entries(entries)
+            db.upsert_entries(_normalize_entries_for_store(entries))
             db.log_sync("pull", len(entries), "type={}, since=".format(entry_type))
         total = len(entries)
 
@@ -428,7 +461,7 @@ def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
                 len(chunk),
             )
         if entries:
-            db.upsert_entries(entries)
+            db.upsert_entries(_normalize_entries_for_store(entries))
             total += len(entries)
     if total or missing_total:
         db.log_sync(
