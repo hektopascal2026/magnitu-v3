@@ -352,6 +352,23 @@ def _sort_prepared_desks(prepared: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     )
 
 
+def _score_push_policy(cfg: Optional[dict] = None):
+    """(rank_normalize: bool, days: int) from config. Pipeline-agnostic push policy."""
+    if cfg is None:
+        cfg = get_config()
+    raw_flag = cfg.get("rank_normalize_scores", True)
+    if isinstance(raw_flag, str):
+        rank_norm = raw_flag.strip().lower() not in ("0", "false", "no", "off")
+    else:
+        rank_norm = bool(raw_flag)
+    try:
+        raw_days = cfg.get("score_push_days", 14)
+        days = 14 if raw_days is None else int(raw_days)
+    except (TypeError, ValueError):
+        days = 14
+    return rank_norm, max(1, days)
+
+
 def main():
     cfg = get_config()
     mothership_url = cfg.get("seismo_url")
@@ -621,11 +638,15 @@ def main():
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
-                recent_entries = db.get_recent_entries(days=14, include_embedding=False)
+                rank_norm, push_days = _score_push_policy()
+                recent_entries = db.get_recent_entries(
+                    days=push_days, include_embedding=False
+                )
                 if recent_entries:
                     scores = pipeline.score_entries(recent_entries, profile_id=profile_id)
                     if scores:
-                        scores = _rank_normalize_push_scores(scores)
+                        if rank_norm:
+                            scores = _rank_normalize_push_scores(scores)
                         model_meta = _model_meta_for_push(profile_id, current_model)
                         sync.push_scores(
                             scores,
@@ -633,7 +654,11 @@ def main():
                             model_meta=model_meta,
                             profile=prof,
                         )
-                        logger.info("Pushed %d rank-normalized scores.", len(scores))
+                        logger.info(
+                            "Pushed %d %s scores.",
+                            len(scores),
+                            "rank-normalized" if rank_norm else "absolute",
+                        )
             except Exception as e:
                 logger.error("Error during score push: %s", e)
                 has_errors = True

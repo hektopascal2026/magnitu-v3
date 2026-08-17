@@ -147,6 +147,9 @@ DEFAULTS = {
     # Shared Seismo database pruning policy: max days of data Seismo retains.
     # Dynamically fetched from Seismo. Scores/labels pushed are constrained to this.
     "seismo_pruning_days": 0,
+    # Push policy (ML window). Pipeline does not read these.
+    "rank_normalize_scores": True,
+    "score_push_days": 14,
 }
 
 # Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).

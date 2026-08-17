@@ -270,6 +270,123 @@ def _softmax_rows(logits: np.ndarray) -> np.ndarray:
     return exp / np.sum(exp, axis=1, keepdims=True)
 
 
+def _prior_floor(n: int) -> float:
+    return 0.5 / float(max(int(n), 1))
+
+
+def _renormalize_priors(raw: Dict[str, float], class_names: List[str], floor: float) -> Dict[str, float]:
+    out = {c: max(float(raw.get(c, 0.0)), floor) for c in class_names}
+    z = float(sum(out.values()))
+    if z <= 0.0:
+        u = 1.0 / float(max(len(class_names), 1))
+        return {c: u for c in class_names}
+    return {c: out[c] / z for c in class_names}
+
+
+def _fit_row_weights(y, sample_weight) -> np.ndarray:
+    """Per-row weights actually seen by balanced LogReg (class_weight × sample_weight)."""
+    from sklearn.utils.class_weight import compute_sample_weight
+
+    y_arr = np.asarray(y)
+    balanced = np.asarray(compute_sample_weight("balanced", y_arr), dtype=np.float64)
+    if sample_weight is None:
+        return balanced
+    sw = np.asarray(sample_weight, dtype=np.float64)
+    if sw.shape[0] != y_arr.shape[0]:
+        return balanced
+    return balanced * sw
+
+
+def build_prior_fit(
+    y,
+    sample_weight,
+    class_names: List[str],
+    config: Optional[dict] = None,
+) -> dict:
+    """Sidecar ``prior_fit`` block: effective vs target priors and log-offsets.
+
+    π̂ is the class share of the *actual* fit weights (balanced class_weight
+    times the sample_weight vector passed to ``fit``). π is the labeled
+    empirical distribution (unweighted counts), optionally replaced by
+    ``prior_target_override``. Absent classes are floored at ``0.5/N`` then
+    renormalized so logs stay finite.
+    """
+    y_arr = np.asarray(y)
+    n = int(y_arr.shape[0])
+    floor = _prior_floor(n)
+    names = list(class_names)
+    override = None
+    if config:
+        override = config.get("prior_target_override")
+        if override is not None and not isinstance(override, dict):
+            override = None
+
+    counts = {c: int(np.sum(y_arr == c)) for c in names}
+    if override:
+        target_raw = {c: float(override[c]) for c in names if c in override}
+        if len(target_raw) != len(names):
+            target_raw = {c: counts[c] / float(max(n, 1)) for c in names}
+    else:
+        target_raw = {c: counts[c] / float(max(n, 1)) for c in names}
+    target = _renormalize_priors(target_raw, names, floor)
+
+    weights = _fit_row_weights(y_arr, sample_weight)
+    w_c = {c: float(np.sum(weights[y_arr == c])) for c in names}
+    w_tot = float(sum(w_c.values()))
+    effective_raw = {
+        c: (w_c[c] / w_tot) if w_tot > 0.0 else (1.0 / float(max(len(names), 1)))
+        for c in names
+    }
+    effective = _renormalize_priors(effective_raw, names, floor)
+
+    offsets = {}
+    for c in names:
+        offsets[c] = float(np.log(target[c]) - np.log(effective[c]))
+
+    base_rate = float(
+        sum(target[c] * CLASS_WEIGHT_MAP.get(c, 0.0) for c in names)
+    )
+    return {
+        "effective_priors": {c: float(effective[c]) for c in names},
+        "target_priors": {c: float(target[c]) for c in names},
+        "prior_log_offsets": offsets,
+        "base_rate_composite": base_rate,
+        "notes": (
+            "offsets computed from fit-time sample weights incl. "
+            "class_weight=balanced"
+        ),
+    }
+
+
+def _prior_offset_vector(cal: Optional[dict], class_names: List[str]) -> Optional[np.ndarray]:
+    """Return aligned offset row, or None when sidecar is v1 / has no offsets."""
+    if not cal:
+        return None
+    pf = cal.get("prior_fit")
+    if not isinstance(pf, dict):
+        return None
+    raw = pf.get("prior_log_offsets")
+    if not isinstance(raw, dict) or not class_names:
+        return None
+    return np.array([float(raw.get(c, 0.0)) for c in class_names], dtype=np.float64)
+
+
+def _add_logit_offsets(logits: np.ndarray, offsets: np.ndarray) -> np.ndarray:
+    """Add per-class offsets; leave binary (n,) logits unchanged (can't align)."""
+    z = np.asarray(logits, dtype=np.float64)
+    off = np.asarray(offsets, dtype=np.float64)
+    if z.ndim == 1:
+        return z
+    if z.shape[1] != off.shape[0]:
+        logger.warning(
+            "Prior-offset width %s != logit width %s; skipping offsets.",
+            off.shape[0],
+            z.shape[1],
+        )
+        return z
+    return z + off.reshape(1, -1)
+
+
 def _fit_temperature_scalar(
     logits: np.ndarray,
     y_str: np.ndarray,
@@ -398,10 +515,12 @@ def classifier_probabilities(
     X: np.ndarray,
     model_path: str,
     cal: Optional[dict] = None,
+    apply_prior: bool = True,
 ) -> Tuple[np.ndarray, List[str]]:
     """
-    Return (probabilities, class_names) using temperature scaling when a
-    calibration sidecar exists (or when ``cal`` is passed during training).
+    Return (probabilities, class_names). Single scoring path: prior-correct
+    logits (sidecar v2), then temperature-scale. Sidecar v1 (no ``prior_fit``)
+    is temperature only — byte-identical to pre-v2 scoring.
     """
     class_names = clf.classes_.tolist()
     if cal is None and model_path:
@@ -417,6 +536,11 @@ def classifier_probabilities(
             logits = logits_for_classifier_head(clf, X)
         except AttributeError:
             return clf.predict_proba(X), class_names
+        logits = np.asarray(logits, dtype=np.float64)
+        if apply_prior:
+            offsets = _prior_offset_vector(cal, class_names)
+            if offsets is not None:
+                logits = _add_logit_offsets(logits, offsets)
         return _softmax_rows(logits / t_scale), class_names
     return clf.predict_proba(X), class_names
 
@@ -1313,7 +1437,11 @@ def load_active_model(profile_id: int = 1):
     return joblib.load(paths["model_path"])
 
 
-def score_entries(entries: List[dict], profile_id: int = 1) -> List[dict]:
+def score_entries(
+    entries: List[dict],
+    profile_id: int = 1,
+    apply_prior: bool = True,
+) -> List[dict]:
     """Score entries using the active model for the given profile."""
     model_info = db.get_active_model(profile_id=profile_id)
     if not model_info:
@@ -1321,8 +1449,8 @@ def score_entries(entries: List[dict], profile_id: int = 1) -> List[dict]:
 
     arch = model_info.get("architecture", "tfidf")
     if arch == "transformer":
-        return _score_transformer(entries, model_info)
-    return _score_tfidf(entries, model_info)
+        return _score_transformer(entries, model_info, apply_prior=apply_prior)
+    return _score_tfidf(entries, model_info, apply_prior=apply_prior)
 
 
 def get_feature_importance(profile_id: int = 1) -> dict:
@@ -1478,6 +1606,7 @@ def _train_transformer(profile_id: int = 1,
     train_min_class = _min_class_count_in_labels(y_train)
     n_folds = _oof_fold_count(len(y_train), train_min_class)
     class_names_fit = le.classes_.tolist()
+    prior_fit = build_prior_fit(y_train, sw_train, class_names_fit, config)
     oof_samples = 0
     if n_folds >= 2:
         _step(50, "Calibration: {}-fold cross-validation...".format(n_folds))
@@ -1492,6 +1621,9 @@ def _train_transformer(profile_id: int = 1,
         )
         oof_samples = len(oof_y)
         if oof_samples >= 3:
+            off = _prior_offset_vector({"prior_fit": prior_fit}, class_names_fit)
+            if off is not None:
+                oof_logits = _add_logit_offsets(oof_logits, off)
             temperature = _fit_temperature_scalar(
                 oof_logits, np.array(oof_y), class_names_fit
             )
@@ -1506,13 +1638,14 @@ def _train_transformer(profile_id: int = 1,
         cal_note = "temperature T=1.0 (too few samples for OOF; calibration inactive)"
 
     cal_dict = {
-        "version": 1,
+        "version": 2,
         "method": "temperature",
         "calibration_fit": "oof" if oof_samples >= 3 else "none",
         "oof_folds": n_folds if oof_samples >= 3 else 0,
         "oof_samples": oof_samples,
         "temperature": temperature,
         "class_names": class_names_fit,
+        "prior_fit": prior_fit,
     }
 
     _step(68, "Fitting classifier...")
@@ -1625,7 +1758,11 @@ def _embedding_blobs_for_entries(entries: List[dict]) -> dict:
     return emb_map
 
 
-def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
+def _score_transformer(
+    entries: List[dict],
+    model_info: dict,
+    apply_prior: bool = True,
+) -> List[dict]:
     """Score entries using cached embeddings + LogReg classifier.
 
     On-the-fly embedding computation is capped at MAX_ONTHEFLY_EMBEDDINGS so
@@ -1692,7 +1829,9 @@ def _score_transformer(entries: List[dict], model_info: dict) -> List[dict]:
     scored_indices = [idx for idx, _ in embeddings]
     X = np.array([emb for _, emb in embeddings])
 
-    probabilities, class_names = classifier_probabilities(clf, X, model_path)
+    probabilities, class_names = classifier_probabilities(
+        clf, X, model_path, apply_prior=apply_prior
+    )
 
     # Build results only for entries that had embeddings
     results = []
@@ -1817,9 +1956,13 @@ def _train_tfidf(profile_id: int = 1,
         pipeline.fit(X_tr, y_tr, **fit_kwargs)
 
     class_names_fit = pipeline.classes_.tolist()
+    prior_fit = build_prior_fit(y_tr, sw_tr, class_names_fit, config)
     if X_val is not None and len(X_val) >= 3:
         _step(65, "Calibrating probabilities...")
         logits_val = logits_for_classifier_head(pipeline, X_val)
+        off = _prior_offset_vector({"prior_fit": prior_fit}, class_names_fit)
+        if off is not None:
+            logits_val = _add_logit_offsets(logits_val, off)
         temperature = _fit_temperature_scalar(
             logits_val, np.array(y_val), class_names_fit
         )
@@ -1831,10 +1974,11 @@ def _train_tfidf(profile_id: int = 1,
         cal_note = "temperature T=1.0 (no validation slice; calibration inactive)"
 
     cal_dict = {
-        "version": 1,
+        "version": 2,
         "method": "temperature",
         "temperature": temperature,
         "class_names": class_names_fit,
+        "prior_fit": prior_fit,
     }
 
     _step(78, "Evaluating on holdout...")
@@ -1905,7 +2049,11 @@ def _train_tfidf(profile_id: int = 1,
     }
 
 
-def _score_tfidf(entries: List[dict], model_info: Optional[dict] = None) -> List[dict]:
+def _score_tfidf(
+    entries: List[dict],
+    model_info: Optional[dict] = None,
+    apply_prior: bool = True,
+) -> List[dict]:
     """Score entries using the TF-IDF + LogReg pipeline."""
     if model_info is None:
         model_info = db.get_active_model()
@@ -1918,7 +2066,9 @@ def _score_tfidf(entries: List[dict], model_info: Optional[dict] = None) -> List
     model_path = model_info.get("model_path") or ""
 
     df = _prepare_text(entries)
-    probabilities, class_names = classifier_probabilities(model, df, model_path)
+    probabilities, class_names = classifier_probabilities(
+        model, df, model_path, apply_prior=apply_prior
+    )
 
     results = []
     for i, entry in enumerate(entries):
