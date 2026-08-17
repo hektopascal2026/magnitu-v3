@@ -152,6 +152,18 @@ def test_evaluate_model_update_lead_recall_veto_legacy_f1_path():
     )
 
 
+def test_train_reject_log_names_lead_recall_crater():
+    old = {"precision_at_30": 0.20, "f1_score": 0.30, "lead_recall_at_30": 0.8}
+    new = {"precision_at_30": 0.20, "f1_score": 0.40, "lead_recall_at_30": 0.4}
+    msg = ml_window._train_reject_log(old, new)
+    assert "lead_recall_at_30 crater" in msg
+    assert "0.800" in msg and "0.400" in msg
+    assert ml_window._train_reject_log(
+        {"precision_at_30": 0.5, "f1_score": 0.5},
+        {"precision_at_30": 0.4, "f1_score": 0.4},
+    ) == "Model rejected. Keeping older model."
+
+
 def test_evaluate_model_update_lead_recall_guard_skipped_when_missing_or_zero():
     incident_old = {"precision_at_30": 0.167, "f1_score": 0.415}
     incident_new = {"precision_at_30": 0.300, "f1_score": 0.335}

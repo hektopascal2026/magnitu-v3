@@ -305,6 +305,19 @@ def _should_promote(current_model: Optional[dict], res: dict) -> bool:
     return evaluate_model_update(current_model, res)
 
 
+def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
+    """Human-readable reject reason for the window log / sync_log."""
+    if current_model and not _lead_recall_ok(current_model, res):
+        return (
+            "Promote gate rejected: lead_recall_at_30 crater "
+            "({:.3f}→{:.3f}). Keeping older model.".format(
+                float(current_model.get("lead_recall_at_30") or 0.0),
+                float(res.get("lead_recall_at_30") or 0.0),
+            )
+        )
+    return "Model rejected. Keeping older model."
+
+
 def _embed_pending_until_done() -> None:
     while True:
         processed = sync._compute_pending_embeddings()
@@ -587,11 +600,18 @@ def main():
 
                 else:
                     report["train_rejected"] = True
-                    logger.info("Model rejected. Keeping older model.")
+                    reject_msg = _train_reject_log(current_model, res)
+                    logger.info(reject_msg)
+                    lr_veto = current_model is not None and not _lead_recall_ok(
+                        current_model, res
+                    )
                     db.log_sync(
                         "train_rejected",
                         1,
-                        f"Kept older model, new version {res['version']} rejected.",
+                        "Kept older model, new version {} rejected.{}".format(
+                            res["version"],
+                            " lead_recall_at_30 crater." if lr_veto else "",
+                        ),
                         profile_id=profile_id,
                     )
 
