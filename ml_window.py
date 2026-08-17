@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import logging
+import math
 import subprocess
 import gc
 from datetime import datetime, timezone
@@ -45,6 +46,11 @@ F1_HARD_DROP_LIMIT = 0.10
 # so this functions as: no lead the old model caught may drop out of the
 # top-30. That is the doctrine for a threat-hunting system, not a tuning artifact.
 LEAD_RECALL_SLACK = 0.10
+
+# Pre-push score-drift tripwire (sync_log only; not in the window-report payload).
+SCORE_DRIFT_EWMA_SPAN = 14
+SCORE_DRIFT_EWMA_ALPHA = 2.0 / (SCORE_DRIFT_EWMA_SPAN + 1.0)
+SCORE_DRIFT_MEAN_ABS = 0.08
 
 
 def _distill_recipe_in_subprocess(profile_id: int) -> int:
@@ -263,6 +269,123 @@ def _rank_normalize_push_scores(scores: List[Dict]) -> List[Dict]:
     for idx, row in enumerate(scores):
         row["relevance_score"] = round(ranks[idx] / n, 4)
     return scores
+
+
+def _percentile(sorted_vals: List[float], p: float) -> float:
+    """Linear-interpolated percentile, p in 0–100."""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return float(sorted_vals[0])
+    k = (n - 1) * (p / 100.0)
+    lo = int(math.floor(k))
+    hi = int(math.ceil(k))
+    if lo == hi:
+        return float(sorted_vals[lo])
+    return float(sorted_vals[lo] * (hi - k) + sorted_vals[hi] * (k - lo))
+
+
+def _score_batch_stats(scores: List[Dict]) -> Optional[Dict[str, float]]:
+    vals = []  # type: List[float]
+    for row in scores:
+        try:
+            vals.append(float(row.get("relevance_score")))
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return None
+    ordered = sorted(vals)
+    mean = float(sum(vals)) / float(len(vals))
+    return {
+        "count": float(len(vals)),
+        "mean": mean,
+        "p10": _percentile(ordered, 10.0),
+        "p50": _percentile(ordered, 50.0),
+        "p90": _percentile(ordered, 90.0),
+    }
+
+
+def _record_push_score_drift(
+    profile_id: int,
+    scores: List[Dict],
+    rank_normalize: bool,
+) -> Optional[str]:
+    """EWMA tripwire on pushed means. Returns sync_log details if it fired.
+
+    Never writes window-report keys. First window and rank-normalize flips
+    re-initialize the baseline instead of alerting on the semantics jump.
+    """
+    stats = _score_batch_stats(scores)
+    if stats is None:
+        return None
+    flag = 1 if rank_normalize else 0
+    prev = db.get_score_drift_baseline(profile_id)
+    mean_now = float(stats["mean"])
+    fired = None  # type: Optional[str]
+
+    if prev is None:
+        ewma = mean_now
+        windows = 1
+    else:
+        last_flag = prev.get("last_rank_normalize")
+        if last_flag is not None and int(last_flag) != flag:
+            ewma = mean_now
+            windows = 1
+            fired = "drift baseline re-initialized (semantics change)"
+            db.log_sync(
+                "score_drift",
+                int(stats["count"]),
+                fired,
+                profile_id=profile_id,
+            )
+        else:
+            ewma_prev = float(prev.get("ewma_mean") or mean_now)
+            if abs(mean_now - ewma_prev) > SCORE_DRIFT_MEAN_ABS:
+                fired = (
+                    "score_drift |mean_now-mean_baseline|="
+                    "{:.4f} mean_now={:.4f} baseline={:.4f} n={}".format(
+                        abs(mean_now - ewma_prev),
+                        mean_now,
+                        ewma_prev,
+                        int(stats["count"]),
+                    )
+                )
+                db.log_sync(
+                    "score_drift",
+                    int(stats["count"]),
+                    fired,
+                    profile_id=profile_id,
+                )
+            ewma = (
+                SCORE_DRIFT_EWMA_ALPHA * mean_now
+                + (1.0 - SCORE_DRIFT_EWMA_ALPHA) * ewma_prev
+            )
+            windows = int(prev.get("window_count") or 0) + 1
+
+    db.upsert_score_drift_baseline(
+        profile_id,
+        ewma,
+        windows,
+        flag,
+        int(stats["count"]),
+        mean_now,
+        float(stats["p10"]),
+        float(stats["p50"]),
+        float(stats["p90"]),
+    )
+    logger.info(
+        "Score push stats profile=%s n=%d mean=%.4f p10=%.4f p50=%.4f p90=%.4f ewma=%.4f%s",
+        profile_id,
+        int(stats["count"]),
+        mean_now,
+        float(stats["p10"]),
+        float(stats["p50"]),
+        float(stats["p90"]),
+        ewma,
+        " [{}]".format(fired) if fired else "",
+    )
+    return fired
 
 
 def _label_counts(profile_id: int, trained_at: Optional[str] = None) -> Dict[str, int]:
@@ -719,6 +842,10 @@ def main():
                     if scores:
                         if rank_norm:
                             scores = _rank_normalize_push_scores(scores)
+                        try:
+                            _record_push_score_drift(profile_id, scores, rank_norm)
+                        except Exception as drift_err:
+                            logger.warning("Score-drift telemetry failed: %s", drift_err)
                         model_meta = _model_meta_for_push(profile_id, current_model)
                         sync.push_scores(
                             scores,
