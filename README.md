@@ -283,7 +283,7 @@ Design notes and implementation plans live in `docs/scoring-fix-plan.md` and `do
 |------|-----------|
 | **Class weights** | Single source in `pipeline.CLASS_WEIGHT_MAP` (1.0 / 0.80 / 0.20 / 0.0); exported in recipe JSON |
 | **Ranking metrics** | Every train records **AUC + precision@30 + `investigation_lead` recall@30** on the stable holdout (relevant = `investigation_lead` + `important`) in the `models` table and on the model page; `recipe_quality` is the **Spearman** rank correlation of recipe vs model composites (was Pearson). The recipe JSON `metrics` block also stores `recipe_pearson` and `recipe_top30_overlap`. Distill cap search maximises Spearman with top-30 overlap as tie-break. `recipe_quality_floor` (default 0.30, 0 disables) skips the Seismo recipe push on a below-floor distill — the promoted model still scores. |
-| **Score audit** | `python scripts/analyze_score_distributions.py` — raw vs push-rank vs recipe histograms |
+| **Score audit** | `python scripts/analyze_score_distributions.py` — raw vs push-rank vs recipe histograms. Feed priors: `python scripts/estimate_feed_priors.py` (Census `[census]` labels, Dirichlet α=20; optional `--write-config` for `prior_target_override`) |
 | **Push to Seismo** | Percentile rank within the pushed batch (monotone; safe for sorting/thresholds) |
 | **Recipe** | Distilled TF-IDF student → keyword JSON; PHP scorer parity for tuning; legal-template floors |
 | **Multi-profile** | Separate `model_p*_*` / `recipe_p*_*` files per profile |

@@ -31,4 +31,4 @@ jobs:
       - name: ML window, prior-correction, and common-eval tests
         run: |
           pip install pytest
-          python -m pytest test_ml_window.py test_prior_correction.py test_common_eval.py test_recipe_quality.py test_recipe_parity.py test_score_drift.py -q
+          python -m pytest test_ml_window.py test_prior_correction.py test_common_eval.py test_recipe_quality.py test_recipe_parity.py test_score_drift.py test_estimate_feed_priors.py -q
