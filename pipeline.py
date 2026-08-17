@@ -1406,6 +1406,148 @@ def train(profile_id: int = 1,
     return _train_tfidf(profile_id=profile_id, progress_cb=progress_cb, activate=activate)
 
 
+def _holdout_classification_metrics(probs, class_names, y_test) -> dict:
+    """Acc / macro-F1 / ranking metrics from holdout probabilities (same rounding as train())."""
+    y_pred_idx = np.argmax(probs, axis=1)
+    y_pred = np.array([class_names[i] for i in y_pred_idx])
+    acc = accuracy_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred, average="macro", zero_division=0)
+    prec = precision_score(y_test, y_pred, average="macro", zero_division=0)
+    rec = recall_score(y_test, y_pred, average="macro", zero_division=0)
+    rank = _ranking_metrics(probs, class_names, y_test)
+    return {
+        "success": True,
+        "accuracy": round(acc, 4),
+        "f1_score": round(f1, 4),
+        "precision": round(prec, 4),
+        "recall": round(rec, 4),
+        "ranking_auc": round(rank["ranking_auc"], 4),
+        "precision_at_30": round(rank["precision_at_30"], 4),
+        "lead_recall_at_30": round(rank["lead_recall_at_30"], 4),
+        "ranking_note": rank["ranking_note"],
+    }
+
+
+def evaluate_fitted_model(
+    clf,
+    X_test,
+    y_test,
+    model_path: str = "",
+    cal: Optional[dict] = None,
+    apply_prior: bool = True,
+) -> dict:
+    """Score a loaded classifier on a holdout via ``classifier_probabilities()``."""
+    try:
+        probs, cn = classifier_probabilities(
+            clf, X_test, model_path, cal=cal, apply_prior=apply_prior
+        )
+    except Exception as e:
+        logger.warning("evaluate_fitted_model failed: %s", e)
+        return {"success": False, "error": str(e)}
+    return _holdout_classification_metrics(probs, cn, y_test)
+
+
+def current_holdout_features(
+    profile_id: int,
+    architecture: str,
+) -> Tuple[Optional[Any], Optional[List[str]], str]:
+    """Rebuild the current labeled holdout the same way ``train()`` splits it.
+
+    Transformer: stacked cached embeddings (rows without embeddings are skipped,
+    not computed). TF-IDF: ``_prepare_text``. Same ``_stable_train_test_split`` /
+    ``_holdout_test_fraction`` as train. Does not download models.
+
+    Returns ``(X_test, y_test, error)``. ``error`` is empty on success.
+    """
+    labeled = db.get_all_labels(profile_id)
+    if len(labeled) < 2:
+        return None, None, "fewer than 2 labeled rows"
+    arch = (architecture or "transformer").strip().lower() or "transformer"
+    if arch == "transformer":
+        cfg = db.get_effective_config(profile_id)
+        embedding_dim = cfg.get("embedding_dim", 768)
+        emb_map = _embedding_blobs_for_entries(labeled)
+        X_list: List[np.ndarray] = []
+        y_list: List[str] = []
+        rows: List[dict] = []
+        skipped = 0
+        for lbl in labeled:
+            key = db.entry_key_from_mapping(lbl)
+            emb_bytes = emb_map.get(key)
+            if not emb_bytes:
+                skipped += 1
+                continue
+            X_list.append(bytes_to_embedding(emb_bytes, embedding_dim))
+            y_list.append(lbl["label"])
+            rows.append(lbl)
+        if skipped:
+            logger.info(
+                "Common-eval skipped %d labeled rows without embeddings (profile %s)",
+                skipped,
+                profile_id,
+            )
+        if len(X_list) < 2:
+            return None, None, "not enough labeled embeddings"
+        X: Any = np.array(X_list)
+    else:
+        X = _prepare_text(labeled)
+        y_list = [e["label"] for e in labeled]
+        rows = labeled
+
+    n = len(y_list)
+    min_class_count = int(pd.Series(y_list).value_counts().min())
+    sw = np.ones(n, dtype=np.float64)
+    if min_class_count < 2:
+        return X, y_list, ""
+    test_size = _holdout_test_fraction(min_class_count, n)
+    _xtr, X_test, _ytr, y_test, _swtr, _swte = _stable_train_test_split(
+        X, y_list, sw, rows, test_size=test_size
+    )
+    if len(y_test) == 0:
+        return None, None, "empty holdout after split"
+    return X_test, y_test, ""
+
+
+def evaluate_stored_model(
+    model_info: Optional[dict],
+    profile_id: int = 1,
+    apply_prior: bool = True,
+) -> dict:
+    """Load a stored ``.joblib`` + sidecar and score the current labeled holdout.
+
+    Used by the promote gate so old vs new comparison is on a common eval set.
+    Failures return ``success`` is not True (callers fall back to table metrics).
+    """
+    if not model_info:
+        return {"success": False, "error": "no model_info"}
+    model_path = model_info.get("model_path") or ""
+    if not model_path:
+        return {"success": False, "error": "no model_path"}
+    path = Path(model_path)
+    if not path.exists():
+        return {"success": False, "error": "artifact missing: {}".format(model_path)}
+    try:
+        clf = joblib.load(str(path))
+    except Exception as e:
+        logger.warning("Common-eval failed to load %s: %s", model_path, e)
+        return {"success": False, "error": "load failed: {}".format(e)}
+
+    arch = model_info.get("architecture") or "transformer"
+    X_test, y_test, err = current_holdout_features(profile_id, str(arch))
+    if err:
+        return {"success": False, "error": err}
+
+    out = evaluate_fitted_model(
+        clf, X_test, y_test, model_path=str(path), apply_prior=apply_prior
+    )
+    if out.get("success") is True:
+        out["version"] = model_info.get("version")
+        out["architecture"] = arch
+        out["model_path"] = str(path)
+        out["eval_set"] = "current_holdout"
+    return out
+
+
 def get_active_model_paths(profile_id: int = 1) -> Optional[dict]:
     """Resolved paths for the active model row (model, optional recipe, optional calibration)."""
     model_info = db.get_active_model(profile_id=profile_id)

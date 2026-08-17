@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Replay promote-gate v1 vs v2 over stored model history.
+Replay promote-gate v1 vs v2 over stored model history, then (optionally)
+common-eval rematch.
 
 Reads the magnitu ``models`` table per desk, ordered by version, and for every
 consecutive (current → candidate) pair prints verdict flips between the
 pre-v2 two-path gate and ``evaluate_model_update``. See
 ``docs/model-v2-engineering-notes.md`` §6.
 
-Success criteria (printed at the end):
-  every flip is explainable (big p@30 win within the F1 cap, or a lead-recall
-  veto), and no flip shows p@30 *worse* under the new gate.
+A second pass re-scores **both** consecutive ``.joblib`` files on the
+*current* labeled holdout (``pipeline.evaluate_stored_model``) and compares
+that gate verdict to the stored-metrics verdict. Skip the pair if either
+artifact is missing. Success criteria still apply to the stored-metrics
+v1/v2 comparison only.
 
 Run from the repo root (uses MAGNITU_DATA_DIR / default Application Support DB):
 
     python scripts/replay_promote_gate.py
     python scripts/replay_promote_gate.py --db /path/to/magnitu.db
+    python scripts/replay_promote_gate.py --no-common-eval
 """
 from __future__ import annotations
 
@@ -101,11 +105,16 @@ def _load_desks(db_path: Path) -> List[Tuple[str, List[dict]]]:
     desks = []
     for prof in profiles:
         rows = conn.execute(
-            "SELECT version, precision_at_30, f1_score, lead_recall_at_30 "
+            "SELECT version, precision_at_30, f1_score, lead_recall_at_30, "
+            "model_path, architecture, profile_id "
             "FROM models WHERE profile_id = ? ORDER BY version ASC",
             (prof["id"],),
         ).fetchall()
         models = [_metrics(r) for r in rows]
+        for m, r in zip(models, rows):
+            m["model_path"] = r["model_path"]
+            m["architecture"] = r["architecture"]
+            m["profile_id"] = r["profile_id"]
         label = prof["slug"] or prof["display_name"] or "profile-{}".format(prof["id"])
         desks.append((label, models))
     conn.close()
@@ -171,6 +180,95 @@ def replay(db_path: Path) -> int:
     return 0 if ok else 1
 
 
+def replay_common_eval(db_path: Path) -> None:
+    """Stored-metrics gate v2 vs both models rematched on the current holdout."""
+    import config as magnitu_config
+    import db as magnitu_db
+    import pipeline
+
+    magnitu_config.DB_PATH = db_path
+    magnitu_db.DB_PATH = db_path
+
+    desks = _load_desks(db_path)
+    n_pairs = 0
+    n_skipped = 0
+    n_differ = 0
+
+    print()
+    print(
+        "common-eval (gate v2 stored-metrics vs both rematched on current holdout)"
+    )
+    print("desk\tvOld→vNew\tstored\trematch\tdiffer\tnote")
+
+    def _rematch(row):
+        joblib_path = row.get("model_path") or ""
+        if not joblib_path or not Path(joblib_path).exists():
+            return None, "artifact missing"
+        out = pipeline.evaluate_stored_model(
+            row, profile_id=int(row.get("profile_id") or 1)
+        )
+        if out.get("success") is not True:
+            return None, out.get("error", "rematch failed")
+        return out, ""
+
+    for desk, models in desks:
+        for old_m, new_m in zip(models, models[1:]):
+            n_pairs += 1
+            stored_v = evaluate_model_update(old_m, new_m)
+            old_r, old_err = _rematch(old_m)
+            if old_err:
+                n_skipped += 1
+                print(
+                    "{}\tv{}→v{}\t{}\t—\tskip\told {}".format(
+                        desk,
+                        old_m["version"],
+                        new_m["version"],
+                        "promote" if stored_v else "reject",
+                        old_err,
+                    )
+                )
+                continue
+            new_r, new_err = _rematch(new_m)
+            if new_err:
+                n_skipped += 1
+                print(
+                    "{}\tv{}→v{}\t{}\t—\tskip\tnew {}".format(
+                        desk,
+                        old_m["version"],
+                        new_m["version"],
+                        "promote" if stored_v else "reject",
+                        new_err,
+                    )
+                )
+                continue
+            rematch_v = evaluate_model_update(old_r, new_r)
+            differ = stored_v != rematch_v
+            if differ:
+                n_differ += 1
+            print(
+                "{}\tv{}→v{}\t{}\t{}\t{}\t"
+                "stored p@30 {:.3f}→{:.3f} / rematch {:.3f}→{:.3f}".format(
+                    desk,
+                    old_m["version"],
+                    new_m["version"],
+                    "promote" if stored_v else "reject",
+                    "promote" if rematch_v else "reject",
+                    "DIFF" if differ else "same",
+                    float(old_m.get("precision_at_30") or 0.0),
+                    float(new_m.get("precision_at_30") or 0.0),
+                    float(old_r.get("precision_at_30") or 0.0),
+                    float(new_r.get("precision_at_30") or 0.0),
+                )
+            )
+
+    print()
+    print(
+        "common-eval pairs={} skipped={} stored_vs_rematch_diff={}".format(
+            n_pairs, n_skipped, n_differ
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -178,6 +276,11 @@ def main() -> int:
         type=Path,
         default=None,
         help="Path to magnitu.db (default: config.DB_PATH)",
+    )
+    parser.add_argument(
+        "--no-common-eval",
+        action="store_true",
+        help="Skip re-scoring stored .joblib files on the current holdout",
     )
     args = parser.parse_args()
     if args.db is not None:
@@ -189,7 +292,10 @@ def main() -> int:
     if not db_path.exists():
         print("error: database not found: {}".format(db_path), file=sys.stderr)
         return 2
-    return replay(db_path)
+    status = replay(db_path)
+    if not args.no_common_eval:
+        replay_common_eval(db_path)
+    return status
 
 
 if __name__ == "__main__":
