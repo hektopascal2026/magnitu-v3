@@ -150,6 +150,8 @@ DEFAULTS = {
     # Push policy (ML window). Pipeline does not read these.
     "rank_normalize_scores": True,
     "score_push_days": 14,
+    # Distill: Spearman quality floor. 0 disables. Below floor: no recipe push.
+    "recipe_quality_floor": 0.30,
 }
 
 # Heuristic for Settings UI: suggested recipe_top_keywords by label count (linear 200→400).
