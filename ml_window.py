@@ -77,6 +77,47 @@ def _is_oom_kill_returncode(rc: int) -> bool:
     return rc in (137, -9)
 
 
+def _recipe_quality_value(recipe: Optional[dict]) -> float:
+    if not isinstance(recipe, dict):
+        return 0.0
+    metrics = recipe.get("metrics") if isinstance(recipe.get("metrics"), dict) else {}
+    raw = metrics.get("recipe_quality", recipe.get("recipe_quality", 0.0))
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _recipe_quality_floor(cfg: Optional[dict] = None) -> float:
+    """0 disables the holdback. Default 0.30 (provisional)."""
+    settings = cfg if isinstance(cfg, dict) else get_config()
+    raw = settings.get("recipe_quality_floor", 0.30)
+    try:
+        floor = float(raw)
+    except (TypeError, ValueError):
+        floor = 0.30
+    if floor < 0.0:
+        return 0.0
+    return floor
+
+
+def _hold_recipe_below_floor(recipe: dict, profile_id: int, cfg: Optional[dict] = None) -> bool:
+    """True when the new recipe must not be pushed (desk keeps previous)."""
+    floor = _recipe_quality_floor(cfg)
+    if floor <= 0.0:
+        return False
+    quality = _recipe_quality_value(recipe)
+    if quality >= floor:
+        return False
+    db.log_sync(
+        "recipe_quality_below_floor",
+        1,
+        "quality={:.4f} floor={:.4f}; previous recipe kept".format(quality, floor),
+        profile_id=profile_id,
+    )
+    return True
+
+
 def _post_promote_recipe_and_vault(
     profile_id: int,
     url: str,
@@ -106,6 +147,12 @@ def _post_promote_recipe_and_vault(
         try:
             with open(current_model["recipe_path"], "r") as rf:
                 recipe = json.load(rf)
+            if _hold_recipe_below_floor(recipe, profile_id):
+                logger.warning(
+                    "Recipe quality below floor for %s — previous Seismo recipe kept.",
+                    url,
+                )
+            else:
                 sync.push_recipe(recipe, profile=prof)
                 logger.info("Recipe pushed for %s.", url)
         except Exception as e:
