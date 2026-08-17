@@ -33,6 +33,18 @@ PROMOTE_MARGIN = 0.01
 # ±0.01 bar on p@30 alone rejects models that clearly improve macro-F1 after
 # smart-queue labeling. Allow this much ranking noise when F1 clearly wins.
 PROMOTE_RANKING_SLACK = 0.05
+# One relevant item at the top of a ~20-row holdout (the metric's own
+# quantization step) — the evidence bar for "big win" sits on metric
+# granularity, not on a fitted number.
+PROMOTE_BIG_P30_WIN = 0.05
+# ≈ 2–3 flipped tail rows; the catastrophe line beyond which the recipe's
+# global quality is no longer credible. Below it, a dip is noise plus a
+# mission-acceptable trade.
+F1_HARD_DROP_LIMIT = 0.10
+# With 1–3 holdout leads, lead_recall_at_30 moves in steps of 0.33–1.0,
+# so this functions as: no lead the old model caught may drop out of the
+# top-30. That is the doctrine for a threat-hunting system, not a tuning artifact.
+LEAD_RECALL_SLACK = 0.10
 
 
 def _distill_recipe_in_subprocess(profile_id: int) -> int:
@@ -237,30 +249,73 @@ def _label_counts(profile_id: int, trained_at: Optional[str] = None) -> Dict[str
     }
 
 
-def _should_promote(current_model: Optional[dict], res: dict) -> bool:
-    """Promote gate: p@30 win with strict F1 guard, or F1 win with ranking slack.
+def _lead_recall_ok(old: Optional[dict], new: dict) -> bool:
+    """No caught lead may drop out of the operator-visible top-30.
 
-    Smart-queue labeling and ~20-row holdouts make ranking noisy. Allow promote
-    when:
-      (1) p@30 improves by ≥ PROMOTE_MARGIN and F1 does not drop by
-          ≥ PROMOTE_MARGIN (strict secondary — stops “rank up / class down”
-          digital-style bad promotes), or
-      (2) F1 improves by ≥ PROMOTE_MARGIN and p@30 does not drop by
-          ≥ PROMOTE_RANKING_SLACK (wider ranking noise tolerance when
-          classification clearly improves).
-    Ties / within-margin keep the old model.
+    Skipped when either side lacks lead_recall_at_30 or the old value is 0.0
+    (legacy default / no leads in that holdout) -- a missing metric must not
+    veto, and an old holdout without leads says nothing about recall.
     """
-    if not current_model:
+    old_lr = old.get("lead_recall_at_30") if old else None
+    new_lr = new.get("lead_recall_at_30")
+    if not old_lr or new_lr is None:
         return True
-    new_p30 = float(res.get("precision_at_30") or 0.0)
-    old_p30 = float(current_model.get("precision_at_30") or 0.0)
-    new_f1 = float(res.get("f1_score") or 0.0)
-    old_f1 = float(current_model.get("f1_score") or 0.0)
-    p30_up = new_p30 >= old_p30 + PROMOTE_MARGIN
-    f1_up = new_f1 >= old_f1 + PROMOTE_MARGIN
-    f1_ok = new_f1 >= old_f1 - PROMOTE_MARGIN
-    p30_not_collapsed = new_p30 >= old_p30 - PROMOTE_RANKING_SLACK
+    return float(new_lr) >= float(old_lr) - LEAD_RECALL_SLACK
+
+
+def evaluate_model_update(old_metrics: Optional[dict], new_metrics: dict) -> bool:
+    """Promote gate v2: mission first, macro-F1 as a catastrophe breaker.
+
+    (1) Cold start promotes.
+    (2) Lead-recall guard applies to every promote path: a promotion that
+        craters lead_recall_at_30 is vetoed even if metrics improved.
+    (3) Big top-of-feed win: p@30 up >= PROMOTE_BIG_P30_WIN (~one relevant
+        item on a ~20-row holdout) tolerates an F1 dip up to
+        F1_HARD_DROP_LIMIT (~2-3 tail rows; beyond that we don't trust the
+        distilled recipe).
+    (4) Legacy two-path gate unchanged (small ranking win with strict F1
+        guard, or F1 win with ranking slack).
+    """
+    if not old_metrics:
+        return True
+    old_p30 = float(old_metrics.get("precision_at_30") or 0.0)
+    new_p30 = float(new_metrics.get("precision_at_30") or 0.0)
+    old_f1 = float(old_metrics.get("f1_score") or 0.0)
+    new_f1 = float(new_metrics.get("f1_score") or 0.0)
+    p30_gain = new_p30 - old_p30
+    f1_gain = new_f1 - old_f1
+
+    if not _lead_recall_ok(old_metrics, new_metrics):
+        return False
+
+    # NEW: big top-of-feed win buys bounded F1 tolerance.
+    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain >= -F1_HARD_DROP_LIMIT:
+        return True
+
+    # Legacy gate, byte-identical to today.
+    p30_up = p30_gain >= PROMOTE_MARGIN
+    f1_up = f1_gain >= PROMOTE_MARGIN
+    f1_ok = f1_gain >= -PROMOTE_MARGIN
+    p30_not_collapsed = p30_gain >= -PROMOTE_RANKING_SLACK
     return (p30_up and f1_ok) or (f1_up and p30_not_collapsed)
+
+
+def _should_promote(current_model: Optional[dict], res: dict) -> bool:
+    """Delegate to evaluate_model_update (promote gate v2)."""
+    return evaluate_model_update(current_model, res)
+
+
+def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
+    """Human-readable reject reason for the window log / sync_log."""
+    if current_model and not _lead_recall_ok(current_model, res):
+        return (
+            "Promote gate rejected: lead_recall_at_30 crater "
+            "({:.3f}→{:.3f}). Keeping older model.".format(
+                float(current_model.get("lead_recall_at_30") or 0.0),
+                float(res.get("lead_recall_at_30") or 0.0),
+            )
+        )
+    return "Model rejected. Keeping older model."
 
 
 def _embed_pending_until_done() -> None:
@@ -502,13 +557,30 @@ def main():
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:
-                    logger.info(
-                        "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f).",
-                        float(report["p30_old"] or 0.0),
-                        float(report["p30_new"] or 0.0),
-                        float(report["f1_old"] or 0.0),
-                        float(report["f1_new"] or 0.0),
-                    )
+                    old_p30 = float(report["p30_old"] or 0.0)
+                    new_p30 = float(report["p30_new"] or 0.0)
+                    old_f1 = float(report["f1_old"] or 0.0)
+                    new_f1 = float(report["f1_new"] or 0.0)
+                    p30_gain = new_p30 - old_p30
+                    f1_gain = new_f1 - old_f1
+                    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain < 0:
+                        logger.info(
+                            "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f, "
+                            "accepted f1 dip %.3f).",
+                            old_p30,
+                            new_p30,
+                            old_f1,
+                            new_f1,
+                            f1_gain,
+                        )
+                    else:
+                        logger.info(
+                            "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f).",
+                            old_p30,
+                            new_p30,
+                            old_f1,
+                            new_f1,
+                        )
 
                 if promoted:
                     report["promoted"] = True
@@ -528,11 +600,18 @@ def main():
 
                 else:
                     report["train_rejected"] = True
-                    logger.info("Model rejected. Keeping older model.")
+                    reject_msg = _train_reject_log(current_model, res)
+                    logger.info(reject_msg)
+                    lr_veto = current_model is not None and not _lead_recall_ok(
+                        current_model, res
+                    )
                     db.log_sync(
                         "train_rejected",
                         1,
-                        f"Kept older model, new version {res['version']} rejected.",
+                        "Kept older model, new version {} rejected.{}".format(
+                            res["version"],
+                            " lead_recall_at_30 crater." if lr_veto else "",
+                        ),
                         profile_id=profile_id,
                     )
 

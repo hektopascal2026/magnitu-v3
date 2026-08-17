@@ -1,3 +1,4 @@
+import math
 import pytest
 from unittest.mock import patch, MagicMock
 import ml_window
@@ -80,6 +81,102 @@ def test_should_promote_f1_path_with_ranking_slack():
         {"precision_at_30": 0.5, "f1_score": 0.4},
         {"precision_at_30": 0.4, "f1_score": 0.42},
     )
+
+
+def test_evaluate_model_update_cold_start():
+    assert ml_window.evaluate_model_update(None, {"precision_at_30": 0.1, "f1_score": 0.2})
+
+
+def test_evaluate_model_update_incident_promotes():
+    assert ml_window.evaluate_model_update(
+        {"precision_at_30": 0.167, "f1_score": 0.415},
+        {"precision_at_30": 0.300, "f1_score": 0.335},
+    )
+
+
+def test_evaluate_model_update_catastrophe_cap_rejects():
+    old = {"precision_at_30": 0.167, "f1_score": 0.415}
+    assert not ml_window.evaluate_model_update(
+        old, {"precision_at_30": 0.300, "f1_score": 0.295}
+    )
+
+
+def test_evaluate_model_update_big_win_boundaries():
+    old = {
+        "precision_at_30": 0.0,
+        "f1_score": ml_window.F1_HARD_DROP_LIMIT,
+    }
+    # Gain exactly 0.05 and dip exactly -0.10 both promote.
+    assert ml_window.evaluate_model_update(
+        old,
+        {
+            "precision_at_30": ml_window.PROMOTE_BIG_P30_WIN,
+            "f1_score": 0.0,
+        },
+    )
+    assert not ml_window.evaluate_model_update(
+        old,
+        {
+            "precision_at_30": math.nextafter(ml_window.PROMOTE_BIG_P30_WIN, 0.0),
+            "f1_score": 0.0,
+        },
+    )
+    assert not ml_window.evaluate_model_update(
+        old,
+        {
+            "precision_at_30": ml_window.PROMOTE_BIG_P30_WIN,
+            "f1_score": -1e-6,
+        },
+    )
+
+
+def test_evaluate_model_update_lead_recall_veto_big_win():
+    assert not ml_window.evaluate_model_update(
+        {
+            "precision_at_30": 0.167,
+            "f1_score": 0.415,
+            "lead_recall_at_30": 0.8,
+        },
+        {
+            "precision_at_30": 0.300,
+            "f1_score": 0.335,
+            "lead_recall_at_30": 0.4,
+        },
+    )
+
+
+def test_evaluate_model_update_lead_recall_veto_legacy_f1_path():
+    assert not ml_window.evaluate_model_update(
+        {"precision_at_30": 0.20, "f1_score": 0.30, "lead_recall_at_30": 0.8},
+        {"precision_at_30": 0.20, "f1_score": 0.40, "lead_recall_at_30": 0.4},
+    )
+
+
+def test_train_reject_log_names_lead_recall_crater():
+    old = {"precision_at_30": 0.20, "f1_score": 0.30, "lead_recall_at_30": 0.8}
+    new = {"precision_at_30": 0.20, "f1_score": 0.40, "lead_recall_at_30": 0.4}
+    msg = ml_window._train_reject_log(old, new)
+    assert "lead_recall_at_30 crater" in msg
+    assert "0.800" in msg and "0.400" in msg
+    assert ml_window._train_reject_log(
+        {"precision_at_30": 0.5, "f1_score": 0.5},
+        {"precision_at_30": 0.4, "f1_score": 0.4},
+    ) == "Model rejected. Keeping older model."
+
+
+def test_evaluate_model_update_lead_recall_guard_skipped_when_missing_or_zero():
+    incident_old = {"precision_at_30": 0.167, "f1_score": 0.415}
+    incident_new = {"precision_at_30": 0.300, "f1_score": 0.335}
+    assert ml_window.evaluate_model_update(incident_old, incident_new)
+    assert ml_window.evaluate_model_update(
+        dict(incident_old, lead_recall_at_30=0.0),
+        dict(incident_new, lead_recall_at_30=0.4),
+    )
+    assert ml_window.evaluate_model_update(
+        incident_old,
+        dict(incident_new, lead_recall_at_30=0.4),
+    )
+
 
 @patch("ml_window.os.path.exists")
 @patch("ml_window.open")
