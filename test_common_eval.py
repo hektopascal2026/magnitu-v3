@@ -221,7 +221,7 @@ def test_evaluate_stored_model_matches_transformer_train_holdout(tmp_path, monke
         assert rematch[key] == pytest.approx(res[key], abs=1e-4)
 
 
-def test_replay_skips_missing_joblib(tmp_path, capsys):
+def _load_replay_module():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -230,7 +230,17 @@ def test_replay_skips_missing_joblib(tmp_path, capsys):
     )
     replay = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(replay)
+    return replay
 
+
+def _restore_db_paths(prev_db, prev_cfg):
+    db.DB_PATH = prev_db
+    config.DB_PATH = prev_cfg
+
+
+def test_replay_skips_missing_joblib(tmp_path, capsys):
+    replay = _load_replay_module()
+    prev_db, prev_cfg = db.DB_PATH, config.DB_PATH
     db_path = tmp_path / "hist.db"
     conn = __import__("sqlite3").connect(str(db_path))
     conn.execute(
@@ -251,7 +261,69 @@ def test_replay_skips_missing_joblib(tmp_path, capsys):
     conn.commit()
     conn.close()
 
-    replay.replay_common_eval(db_path)
+    try:
+        replay.replay_common_eval(db_path)
+    finally:
+        _restore_db_paths(prev_db, prev_cfg)
     out = capsys.readouterr().out
-    assert "artifact missing" in out
+    assert "old artifact missing" in out
     assert "stored_vs_rematch_diff=0" in out
+
+
+def test_replay_common_eval_rematches_both_artifacts(tmp_path, capsys, monkeypatch):
+    replay = _load_replay_module()
+    prev_db, prev_cfg = db.DB_PATH, config.DB_PATH
+    old_p = tmp_path / "old.joblib"
+    new_p = tmp_path / "new.joblib"
+    old_p.write_bytes(b"stub")
+    new_p.write_bytes(b"stub")
+    db_path = tmp_path / "hist.db"
+    conn = __import__("sqlite3").connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE profiles (id INTEGER PRIMARY KEY, slug TEXT, display_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE models ("
+        "profile_id INTEGER, version INTEGER, precision_at_30 REAL, "
+        "f1_score REAL, lead_recall_at_30 REAL, model_path TEXT, architecture TEXT)"
+    )
+    conn.execute("INSERT INTO profiles VALUES (1, 'eu', 'EU')")
+    conn.execute(
+        "INSERT INTO models VALUES (1, 1, 0.167, 0.415, 0.8, ?, 'tfidf')",
+        (str(old_p),),
+    )
+    conn.execute(
+        "INSERT INTO models VALUES (1, 2, 0.200, 0.382, 0.8, ?, 'tfidf')",
+        (str(new_p),),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+
+    def _fake_eval(info, profile_id=1, apply_prior=True):
+        ver = int(info["version"])
+        calls.append(ver)
+        if ver == 1:
+            return {
+                "success": True,
+                "precision_at_30": 0.167,
+                "f1_score": 0.415,
+                "lead_recall_at_30": 0.8,
+            }
+        return {
+            "success": True,
+            "precision_at_30": 0.300,
+            "f1_score": 0.335,
+            "lead_recall_at_30": 0.8,
+        }
+
+    monkeypatch.setattr(pipeline, "evaluate_stored_model", _fake_eval)
+    try:
+        replay.replay_common_eval(db_path)
+    finally:
+        _restore_db_paths(prev_db, prev_cfg)
+    out = capsys.readouterr().out
+    assert calls == [1, 2]
+    assert "DIFF" in out
+    assert "stored_vs_rematch_diff=1" in out

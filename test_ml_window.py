@@ -239,6 +239,11 @@ def test_ml_window_main_promotes(
     ]
     
     # Mock train returns success + better metrics
+    # Rematch falls back to stored table metrics unless success is True.
+    mock_pipeline.evaluate_stored_model.return_value = {
+        "success": False,
+        "error": "test fallback",
+    }
     mock_pipeline.train.return_value = {
         "success": True,
         "precision_at_30": 0.6,
@@ -265,6 +270,10 @@ def test_ml_window_main_promotes(
     
     assert res == 0
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
+    mock_pipeline.evaluate_stored_model.assert_called_once()
+    rematch_model = mock_pipeline.evaluate_stored_model.call_args[0][0]
+    assert rematch_model.get("version") == 1
+    assert mock_pipeline.evaluate_stored_model.call_args.kwargs.get("profile_id") == 1
     mock_distill_sub.assert_called_once_with(1)
     mock_pipeline.release_embedder.assert_called()
     mock_export.assert_called_once_with(profile_id=1)
@@ -310,6 +319,10 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     mock_db.get_active_model.return_value = {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 1}
     
     # Mock train returns success but worse metrics -> REJECT
+    mock_pipeline.evaluate_stored_model.return_value = {
+        "success": False,
+        "error": "test fallback",
+    }
     mock_pipeline.train.return_value = {
         "success": True,
         "precision_at_30": 0.4, # worse
@@ -330,6 +343,9 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     
     assert res == 0
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
+    mock_pipeline.evaluate_stored_model.assert_called_once()
+    rematch_model = mock_pipeline.evaluate_stored_model.call_args[0][0]
+    assert rematch_model.get("version") == 1
     mock_db.log_sync.assert_called_once_with("train_rejected", 1, "Kept older model, new version 2 rejected.", profile_id=1)
     mock_sync.vault_upload.assert_not_called()
 

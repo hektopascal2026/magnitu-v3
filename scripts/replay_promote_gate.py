@@ -8,10 +8,11 @@ consecutive (current → candidate) pair prints verdict flips between the
 pre-v2 two-path gate and ``evaluate_model_update``. See
 ``docs/model-v2-engineering-notes.md`` §6.
 
-A second pass re-scores each *old* ``.joblib`` on the *current* labeled holdout
-(``pipeline.evaluate_stored_model``) and compares that gate verdict to the
-stored-metrics verdict. Pairs whose ``.joblib`` is missing are skipped.
-Success criteria apply to the stored-metrics v1/v2 comparison only.
+A second pass re-scores **both** consecutive ``.joblib`` files on the
+*current* labeled holdout (``pipeline.evaluate_stored_model``) and compares
+that gate verdict to the stored-metrics verdict. Skip the pair if either
+artifact is missing. Success criteria still apply to the stored-metrics
+v1/v2 comparison only.
 
 Run from the repo root (uses MAGNITU_DATA_DIR / default Application Support DB):
 
@@ -180,7 +181,7 @@ def replay(db_path: Path) -> int:
 
 
 def replay_common_eval(db_path: Path) -> None:
-    """Compare stored-metrics gate v2 vs rematch-old on the current holdout."""
+    """Stored-metrics gate v2 vs both models rematched on the current holdout."""
     import config as magnitu_config
     import db as magnitu_db
     import pipeline
@@ -195,48 +196,58 @@ def replay_common_eval(db_path: Path) -> None:
 
     print()
     print(
-        "common-eval (gate v2 stored-metrics vs rematch-old on current holdout)"
+        "common-eval (gate v2 stored-metrics vs both rematched on current holdout)"
     )
     print("desk\tvOld→vNew\tstored\trematch\tdiffer\tnote")
+
+    def _rematch(row):
+        joblib_path = row.get("model_path") or ""
+        if not joblib_path or not Path(joblib_path).exists():
+            return None, "artifact missing"
+        out = pipeline.evaluate_stored_model(
+            row, profile_id=int(row.get("profile_id") or 1)
+        )
+        if out.get("success") is not True:
+            return None, out.get("error", "rematch failed")
+        return out, ""
 
     for desk, models in desks:
         for old_m, new_m in zip(models, models[1:]):
             n_pairs += 1
             stored_v = evaluate_model_update(old_m, new_m)
-            joblib_path = old_m.get("model_path") or ""
-            if not joblib_path or not Path(joblib_path).exists():
+            old_r, old_err = _rematch(old_m)
+            if old_err:
                 n_skipped += 1
                 print(
-                    "{}\tv{}→v{}\t{}\t—\tskip\tartifact missing".format(
+                    "{}\tv{}→v{}\t{}\t—\tskip\told {}".format(
                         desk,
                         old_m["version"],
                         new_m["version"],
                         "promote" if stored_v else "reject",
+                        old_err,
                     )
                 )
                 continue
-            rematch = pipeline.evaluate_stored_model(
-                old_m, profile_id=int(old_m.get("profile_id") or 1)
-            )
-            if rematch.get("success") is not True:
+            new_r, new_err = _rematch(new_m)
+            if new_err:
                 n_skipped += 1
                 print(
-                    "{}\tv{}→v{}\t{}\t—\tskip\t{}".format(
+                    "{}\tv{}→v{}\t{}\t—\tskip\tnew {}".format(
                         desk,
                         old_m["version"],
                         new_m["version"],
                         "promote" if stored_v else "reject",
-                        rematch.get("error", "rematch failed"),
+                        new_err,
                     )
                 )
                 continue
-            rematch_v = evaluate_model_update(rematch, new_m)
+            rematch_v = evaluate_model_update(old_r, new_r)
             differ = stored_v != rematch_v
             if differ:
                 n_differ += 1
             print(
-                "{}\tv{}→v{}\t{}\t{}\t{}\tp@30 {:.3f}→{:.3f} stored / "
-                "rematch old {:.3f}".format(
+                "{}\tv{}→v{}\t{}\t{}\t{}\t"
+                "stored p@30 {:.3f}→{:.3f} / rematch {:.3f}→{:.3f}".format(
                     desk,
                     old_m["version"],
                     new_m["version"],
@@ -245,7 +256,8 @@ def replay_common_eval(db_path: Path) -> None:
                     "DIFF" if differ else "same",
                     float(old_m.get("precision_at_30") or 0.0),
                     float(new_m.get("precision_at_30") or 0.0),
-                    float(rematch.get("precision_at_30") or 0.0),
+                    float(old_r.get("precision_at_30") or 0.0),
+                    float(new_r.get("precision_at_30") or 0.0),
                 )
             )
 
