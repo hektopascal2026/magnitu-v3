@@ -570,7 +570,32 @@ def main():
                 report["candidate_version"] = res.get("version")
                 report["p30_new"] = res.get("precision_at_30")
                 report["f1_new"] = res.get("f1_score")
-                promoted = _should_promote(current_model, res)
+                old_for_gate = current_model
+                if current_model:
+                    rematch = pipeline.evaluate_stored_model(
+                        current_model, profile_id=profile_id
+                    )
+                    if rematch.get("success") is True:
+                        old_for_gate = rematch
+                        report["p30_old"] = rematch.get("precision_at_30")
+                        report["f1_old"] = rematch.get("f1_score")
+                        logger.info(
+                            "Common-eval rematch v%s on current holdout: "
+                            "p@30 stored=%.3f rematch=%.3f; "
+                            "f1 stored=%.3f rematch=%.3f.",
+                            current_model.get("version"),
+                            float(current_model.get("precision_at_30") or 0.0),
+                            float(rematch.get("precision_at_30") or 0.0),
+                            float(current_model.get("f1_score") or 0.0),
+                            float(rematch.get("f1_score") or 0.0),
+                        )
+                    else:
+                        logger.warning(
+                            "Common-eval rematch failed (%s); "
+                            "falling back to stored table metrics.",
+                            rematch.get("error", "unknown"),
+                        )
+                promoted = _should_promote(old_for_gate, res)
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:
@@ -617,10 +642,10 @@ def main():
 
                 else:
                     report["train_rejected"] = True
-                    reject_msg = _train_reject_log(current_model, res)
+                    reject_msg = _train_reject_log(old_for_gate, res)
                     logger.info(reject_msg)
-                    lr_veto = current_model is not None and not _lead_recall_ok(
-                        current_model, res
+                    lr_veto = old_for_gate is not None and not _lead_recall_ok(
+                        old_for_gate, res
                     )
                     db.log_sync(
                         "train_rejected",
