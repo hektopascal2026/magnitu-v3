@@ -278,6 +278,7 @@ def test_ml_window_main_promotes(
     # Ensure compute embeddings looped twice
     assert mock_sync._compute_pending_embeddings.call_count == 2
     mock_sync.vault_upload.assert_called_once_with(vault_password="vault-secret", package_path=mock_export.return_value, overwrite=True)
+    mock_db.get_recent_entries.assert_called_with(days=14, include_embedding=False)
 
 @patch("ml_window.db")
 @patch("ml_window.sync")
@@ -331,3 +332,18 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
     mock_db.log_sync.assert_called_once_with("train_rejected", 1, "Kept older model, new version 2 rejected.", profile_id=1)
     mock_sync.vault_upload.assert_not_called()
+
+
+def test_score_push_policy_defaults_and_config():
+    assert ml_window._score_push_policy({}) == (True, 14)
+    assert ml_window._score_push_policy(
+        {"rank_normalize_scores": False, "score_push_days": 7}
+    ) == (False, 7)
+    assert ml_window._score_push_policy({"rank_normalize_scores": "false"})[0] is False
+    assert ml_window._score_push_policy({"score_push_days": 0})[1] == 1
+
+
+def test_rank_normalize_early_return_identical_both_flag_values():
+    row = [{"id": 1, "relevance_score": 0.42}]
+    assert ml_window._rank_normalize_push_scores(row) == row
+    assert ml_window._rank_normalize_push_scores([]) == []
