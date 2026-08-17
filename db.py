@@ -249,6 +249,21 @@ def _migrate_db(conn: sqlite3.Connection):
     # Ensure correct capitalization for existing EU profiles
     conn.execute("UPDATE profiles SET display_name = 'EU' WHERE display_name = 'Eu' AND slug = 'eu'")
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS score_drift_baseline (
+            profile_id INTEGER PRIMARY KEY,
+            ewma_mean REAL NOT NULL DEFAULT 0.0,
+            window_count INTEGER NOT NULL DEFAULT 0,
+            last_rank_normalize INTEGER,
+            last_count INTEGER,
+            last_mean REAL,
+            last_p10 REAL,
+            last_p50 REAL,
+            last_p90 REAL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
 
 
@@ -1213,6 +1228,61 @@ def log_sync(direction: str, items_count: int, details: str = "",
     conn.execute(
         "INSERT INTO sync_log (profile_id, direction, items_count, details) VALUES (?, ?, ?, ?)",
         (profile_id, direction, items_count, details)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_score_drift_baseline(profile_id: int) -> Optional[dict]:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM score_drift_baseline WHERE profile_id = ?",
+        (profile_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row is not None else None
+
+
+def upsert_score_drift_baseline(
+    profile_id: int,
+    ewma_mean: float,
+    window_count: int,
+    last_rank_normalize: Optional[int],
+    last_count: int,
+    last_mean: float,
+    last_p10: float,
+    last_p50: float,
+    last_p90: float,
+) -> None:
+    conn = get_db()
+    conn.execute(
+        """
+        INSERT INTO score_drift_baseline (
+            profile_id, ewma_mean, window_count, last_rank_normalize,
+            last_count, last_mean, last_p10, last_p50, last_p90, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(profile_id) DO UPDATE SET
+            ewma_mean = excluded.ewma_mean,
+            window_count = excluded.window_count,
+            last_rank_normalize = excluded.last_rank_normalize,
+            last_count = excluded.last_count,
+            last_mean = excluded.last_mean,
+            last_p10 = excluded.last_p10,
+            last_p50 = excluded.last_p50,
+            last_p90 = excluded.last_p90,
+            updated_at = datetime('now')
+        """,
+        (
+            profile_id,
+            float(ewma_mean),
+            int(window_count),
+            last_rank_normalize,
+            int(last_count),
+            float(last_mean),
+            float(last_p10),
+            float(last_p50),
+            float(last_p90),
+        ),
     )
     conn.commit()
     conn.close()

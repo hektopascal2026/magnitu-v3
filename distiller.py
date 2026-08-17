@@ -366,17 +366,18 @@ def distill_recipe(top_n: Optional[int] = None, profile_id: int = 1):
     if cap_params:
         recipe["export_caps"] = cap_params
 
-    # Recipe quality (model↔recipe correlation on real entries) — single source
-    # of truth: computed once here, written into the recipe file and the models
-    # row. Previously this was recomputed by the caller and never persisted, so
-    # the models.recipe_quality column stayed 0.0.
+    # Recipe quality: Spearman is models.recipe_quality (was Pearson). Metrics
+    # also carry Pearson and top-30 overlap for the recipe JSON.
     try:
-        quality = float(
-            evaluate_recipe_quality(recipe, profile_id=profile_id) or 0.0
-        )
+        rank = evaluate_recipe_rank_metrics(recipe, profile_id=profile_id)
+        quality = float(rank.get("spearman") or 0.0)
     except Exception:
+        rank = {"spearman": 0.0, "pearson": 0.0, "top30_overlap": 0.0}
         quality = 0.0
-    recipe.setdefault("metrics", {})["recipe_quality"] = round(quality, 4)
+    metrics_out = recipe.setdefault("metrics", {})
+    metrics_out["recipe_quality"] = round(quality, 4)
+    metrics_out["recipe_pearson"] = round(float(rank["pearson"]), 4)
+    metrics_out["recipe_top30_overlap"] = round(float(rank["top30_overlap"]), 4)
 
     # Save recipe to disk
     recipe_filename = "recipe_p{}_v{}.json".format(profile_id, model_info["version"])
@@ -668,6 +669,64 @@ def _recipe_composite(entry: dict, keywords: dict, source_weights: dict,
     return float(sum(probs.get(c, 0) * class_wts[idx] for idx, c in enumerate(classes)))
 
 
+def _average_ranks(values) -> np.ndarray:
+    """Average ranks (1-based) so ties do not inflate Spearman."""
+    arr = np.asarray(values, dtype=np.float64)
+    n = int(arr.size)
+    if n == 0:
+        return arr
+    order = np.argsort(arr, kind="mergesort")
+    sorted_vals = arr[order]
+    ranks_sorted = np.empty(n, dtype=np.float64)
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and sorted_vals[j] == sorted_vals[i]:
+            j += 1
+        # 1-based average of i+1 .. j
+        ranks_sorted[i:j] = 0.5 * (float(i + 1) + float(j))
+        i = j
+    ranks = np.empty(n, dtype=np.float64)
+    ranks[order] = ranks_sorted
+    return ranks
+
+
+def _pearson(a, b) -> float:
+    if len(a) < 2:
+        return 0.0
+    corr = float(np.corrcoef(a, b)[0, 1])
+    if corr != corr:
+        return 0.0
+    return corr
+
+
+def _spearman(a, b) -> float:
+    return _pearson(_average_ranks(a), _average_ranks(b))
+
+
+def _top30_overlap(model_scores, recipe_scores) -> float:
+    n = len(model_scores)
+    k = min(30, n)
+    if k <= 0:
+        return 0.0
+    m = np.asarray(model_scores, dtype=np.float64)
+    r = np.asarray(recipe_scores, dtype=np.float64)
+    m_idx = set(np.argsort(m, kind="mergesort")[::-1][:k].tolist())
+    r_idx = set(np.argsort(r, kind="mergesort")[::-1][:k].tolist())
+    return float(len(m_idx & r_idx)) / float(k)
+
+
+def paired_rank_metrics(paired_model, paired_recipe) -> dict:
+    """Spearman (primary), Pearson, top-30 index overlap on aligned score lists."""
+    if len(paired_model) < 2:
+        return {"spearman": 0.0, "pearson": 0.0, "top30_overlap": 0.0}
+    return {
+        "spearman": _spearman(paired_model, paired_recipe),
+        "pearson": _pearson(paired_model, paired_recipe),
+        "top30_overlap": _top30_overlap(paired_model, paired_recipe),
+    }
+
+
 def _optimize_recipe_caps(keywords: dict, source_weights: dict,
                           profile_id: int = 1) -> tuple:
     """
@@ -710,7 +769,9 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
     phrase_grid = [0.18, 0.22, 0.26, 0.30, 0.34]
     source_grid = [0.06, 0.08, 0.10, 0.12]
 
-    best_quality = -1.0
+    best_spearman = -2.0
+    best_overlap = -1.0
+    best_pearson = 0.0
     best_caps = dict(default_caps)
     best_kw = keywords
     best_sw = source_weights
@@ -738,20 +799,34 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
                     paired_recipe.append(composite)
                 if len(paired_model) < 5:
                     continue
-                corr = float(np.corrcoef(paired_model, paired_recipe)[0, 1])
-                quality = max(0.0, corr) if corr == corr else 0.0
-                if quality > best_quality:
-                    best_quality = quality
+                metrics = paired_rank_metrics(paired_model, paired_recipe)
+                spearman = metrics["spearman"]
+                overlap = metrics["top30_overlap"]
+                pearson = metrics["pearson"]
+                better = (
+                    spearman > best_spearman + 1e-12
+                    or (
+                        abs(spearman - best_spearman) <= 1e-12
+                        and overlap > best_overlap
+                    )
+                )
+                if better:
+                    best_spearman = spearman
+                    best_overlap = overlap
+                    best_pearson = pearson
                     best_caps = trial_caps
                     best_kw = t_kw
                     best_sw = t_sw
 
     logger.info(
-        "Recipe cap optimization: quality=%.4f caps=%s",
-        best_quality, best_caps,
+        "Recipe cap optimization: spearman=%.4f pearson=%.4f top30=%.4f caps=%s",
+        best_spearman, best_pearson, best_overlap, best_caps,
     )
     cap_meta = {
-        "quality": round(best_quality, 4),
+        "quality": round(max(best_spearman, 0.0) if best_spearman == best_spearman else 0.0, 4),
+        "spearman": round(best_spearman, 4),
+        "pearson": round(best_pearson, 4),
+        "top30_overlap": round(best_overlap, 4),
         "max_unigram_abs": best_caps["max_unigram_abs"],
         "max_phrase_abs": best_caps["max_phrase_abs"],
         "max_source_abs": best_caps["max_source_abs"],
@@ -761,32 +836,38 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
 
 def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
                             profile_id: int = 1) -> float:
-    """
-    Compare recipe-based scoring against full model scoring on a sample.
-    Returns correlation score (0-1) indicating how well recipe approximates the model.
-    """
+    """Spearman correlation of recipe vs model composites (stored as recipe_quality)."""
+    return float(
+        evaluate_recipe_rank_metrics(
+            recipe, sample_size=sample_size, profile_id=profile_id
+        )["spearman"]
+    )
+
+
+def evaluate_recipe_rank_metrics(recipe: dict, sample_size: int = 100,
+                                 profile_id: int = 1) -> dict:
+    """Spearman (stored as recipe_quality), Pearson, and top-30 overlap."""
+    empty = {"spearman": 0.0, "pearson": 0.0, "top30_overlap": 0.0}
     entries = db.get_all_entries()[:sample_size]
     if not entries:
-        return 0.0
+        return dict(empty)
 
     full_scores = score_entries(entries, profile_id=profile_id)
     if not full_scores:
-        return 0.0
+        return dict(empty)
 
-    # Build lookup of model scores keyed by (entry_type, entry_id)
     model_score_map = {
         db.entry_key_from_mapping(s): s["relevance_score"]
         for s in full_scores
     }
 
-    # Compute recipe-based scores (matching Seismo's PHP logic)
     kw = recipe.get("keywords", {})
     source_weights_map = recipe.get("source_weights", {})
     classes = recipe.get("classes", ["investigation_lead", "important", "background", "noise"])
     class_wts = recipe.get("class_weights", class_weight_list())
 
     paired_model = []
-    paired_recipe = []
+    paired_recipe_scores = []
 
     for entry in entries:
         key = db.entry_key_from_mapping(entry)
@@ -794,12 +875,11 @@ def evaluate_recipe_quality(recipe: dict, sample_size: int = 100,
             continue
         composite = _recipe_composite(entry, kw, source_weights_map, classes, class_wts)
         paired_model.append(model_score_map[key])
-        paired_recipe.append(composite)
+        paired_recipe_scores.append(composite)
 
-    if len(paired_model) < 2:
-        return 0.0
-
-    correlation = float(np.corrcoef(paired_model, paired_recipe)[0, 1])
-    quality = max(0.0, correlation) if not (correlation != correlation) else 0.0
-
-    return round(quality, 4)
+    raw = paired_rank_metrics(paired_model, paired_recipe_scores)
+    return {
+        "spearman": round(float(raw["spearman"]), 4),
+        "pearson": round(float(raw["pearson"]), 4),
+        "top30_overlap": round(float(raw["top30_overlap"]), 4),
+    }
