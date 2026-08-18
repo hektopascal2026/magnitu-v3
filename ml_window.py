@@ -46,6 +46,9 @@ F1_HARD_DROP_LIMIT = 0.10
 # so this functions as: no lead the old model caught may drop out of the
 # top-30. That is the doctrine for a threat-hunting system, not a tuning artifact.
 LEAD_RECALL_SLACK = 0.10
+# When live prior offsets cost at least this much macro-F1 on the holdout,
+# compare promote F1 without priors while keeping ranking metrics live.
+PRIOR_HURT_F1_GAP = 0.03
 
 # Pre-push score-drift tripwire (sync_log only; not in the window-report payload).
 SCORE_DRIFT_EWMA_SPAN = 14
@@ -504,40 +507,55 @@ def _model_uses_prior_offsets(model_info: Optional[dict]) -> bool:
     return isinstance(prior_fit.get("prior_log_offsets"), dict)
 
 
-def _prior_transition_gate_metrics(
+def _prior_rollout_gate_metrics(
     current_model: Optional[dict],
     candidate_model: dict,
     profile_id: int,
     old_live_metrics: Optional[dict],
     new_live_metrics: dict,
 ) -> tuple[Optional[dict], dict]:
-    """Use no-prior F1 only for first transition into prior-fit artifacts.
+    """Use no-prior F1 during census-prior rollout without changing ranking gates.
 
-    Keep ranking / lead-recall on the live prior-adjusted outputs, but compare
-    macro-F1 on a no-prior rematch when the incumbent predates prior sidecars
-    and the candidate is the first prior-enabled artifact. This avoids a one-off
-    rollout penalty without changing steady-state behavior once both sides carry
-    prior-fit metadata.
+    Keep p@30 and lead_recall on live prior-adjusted scores, but compare macro-F1
+    without prior offsets when either:
+    (1) the incumbent predates prior sidecars and the candidate is the first
+        prior-enabled artifact; or
+    (2) the candidate's live prior offsets cost >= PRIOR_HURT_F1_GAP macro-F1 on
+        the current holdout (census priors too harsh for this train pass).
+
+    Steady-state behavior is unchanged when priors are neutral or already rolled out.
     """
     if not current_model:
         return old_live_metrics, new_live_metrics
-    if _model_uses_prior_offsets(current_model):
-        return old_live_metrics, new_live_metrics
     if not _model_uses_prior_offsets(candidate_model):
+        return old_live_metrics, new_live_metrics
+
+    new_np = pipeline.evaluate_stored_model(
+        candidate_model, profile_id=profile_id, apply_prior=False
+    )
+    if new_np.get("success") is not True:
+        logger.warning(
+            "Prior-rollout no-prior rematch failed for candidate (%s); "
+            "using live prior-adjusted metrics.",
+            new_np.get("error", "unknown"),
+        )
+        return old_live_metrics, new_live_metrics
+
+    new_live_f1 = float(new_live_metrics.get("f1_score") or 0.0)
+    new_np_f1 = float(new_np.get("f1_score") or 0.0)
+    first_transition = not _model_uses_prior_offsets(current_model)
+    prior_hurt = new_live_f1 + PRIOR_HURT_F1_GAP < new_np_f1
+    if not first_transition and not prior_hurt:
         return old_live_metrics, new_live_metrics
 
     old_np = pipeline.evaluate_stored_model(
         current_model, profile_id=profile_id, apply_prior=False
     )
-    new_np = pipeline.evaluate_stored_model(
-        candidate_model, profile_id=profile_id, apply_prior=False
-    )
-    if old_np.get("success") is not True or new_np.get("success") is not True:
+    if old_np.get("success") is not True:
         logger.warning(
-            "Prior-transition no-prior rematch failed (old=%s new=%s); "
+            "Prior-rollout no-prior rematch failed for incumbent (%s); "
             "using live prior-adjusted metrics.",
-            old_np.get("error", "ok"),
-            new_np.get("error", "ok"),
+            old_np.get("error", "unknown"),
         )
         return old_live_metrics, new_live_metrics
 
@@ -545,13 +563,19 @@ def _prior_transition_gate_metrics(
     new_gate = dict(new_live_metrics)
     old_gate["f1_score"] = old_np.get("f1_score")
     new_gate["f1_score"] = new_np.get("f1_score")
+    reason = "first prior-fit transition" if first_transition else "prior hurt holdout F1"
     logger.info(
-        "Prior-transition gate: kept live p@30 / lead-recall, "
+        "Prior-rollout gate (%s): kept live p@30 / lead-recall, "
         "but used no-prior F1 %.3f→%.3f for compare.",
+        reason,
         float(old_np.get("f1_score") or 0.0),
         float(new_np.get("f1_score") or 0.0),
     )
     return old_gate, new_gate
+
+
+# Back-compat alias for tests / scripts.
+_prior_transition_gate_metrics = _prior_rollout_gate_metrics
 
 
 def _embed_pending_until_done() -> None:
@@ -831,7 +855,7 @@ def main():
                             "falling back to stored table metrics.",
                             rematch.get("error", "unknown"),
                         )
-                old_for_gate, new_for_gate = _prior_transition_gate_metrics(
+                old_for_gate, new_for_gate = _prior_rollout_gate_metrics(
                     current_model,
                     res,
                     profile_id,

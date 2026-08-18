@@ -211,7 +211,7 @@ def test_prior_transition_gate_uses_no_prior_f1_for_first_rollout(
         {"success": True, "f1_score": 0.4630},
     ]
 
-    old_gate, new_gate = ml_window._prior_transition_gate_metrics(
+    old_gate, new_gate = ml_window._prior_rollout_gate_metrics(
         current_model,
         new_live,
         4,
@@ -239,13 +239,21 @@ def test_prior_transition_gate_skips_when_incumbent_already_has_prior(
     mock_uses_prior,
     mock_pipeline,
 ):
-    mock_uses_prior.side_effect = [True]
+    mock_uses_prior.side_effect = lambda m: True
     old_live = {"precision_at_30": 0.5, "f1_score": 0.4}
-    new_live = {"precision_at_30": 0.5, "f1_score": 0.41}
+    new_live = {
+        "precision_at_30": 0.5,
+        "f1_score": 0.41,
+        "model_path": "new.joblib",
+    }
+    mock_pipeline.evaluate_stored_model.return_value = {
+        "success": True,
+        "f1_score": 0.405,
+    }
 
-    old_gate, new_gate = ml_window._prior_transition_gate_metrics(
+    old_gate, new_gate = ml_window._prior_rollout_gate_metrics(
         {"model_path": "old.joblib"},
-        {"model_path": "new.joblib"},
+        new_live,
         1,
         old_live,
         new_live,
@@ -253,7 +261,46 @@ def test_prior_transition_gate_skips_when_incumbent_already_has_prior(
 
     assert old_gate is old_live
     assert new_gate is new_live
-    mock_pipeline.evaluate_stored_model.assert_not_called()
+    mock_pipeline.evaluate_stored_model.assert_called_once()
+
+
+@patch("ml_window.pipeline")
+@patch("ml_window._model_uses_prior_offsets")
+def test_prior_rollout_gate_uses_no_prior_f1_when_offsets_hurt_candidate(
+    mock_uses_prior,
+    mock_pipeline,
+):
+    mock_uses_prior.return_value = True
+    old_live = {
+        "precision_at_30": 0.5333,
+        "f1_score": 0.4484,
+        "lead_recall_at_30": 1.0,
+    }
+    new_live = {
+        "precision_at_30": 0.5333,
+        "f1_score": 0.4331,
+        "lead_recall_at_30": 1.0,
+        "model_path": "new.joblib",
+    }
+    current_model = {"model_path": "old.joblib"}
+    mock_pipeline.evaluate_stored_model.side_effect = [
+        {"success": True, "f1_score": 0.4835},
+        {"success": True, "f1_score": 0.4118},
+    ]
+
+    old_gate, new_gate = ml_window._prior_rollout_gate_metrics(
+        current_model,
+        new_live,
+        2,
+        old_live,
+        new_live,
+    )
+
+    assert old_gate["precision_at_30"] == old_live["precision_at_30"]
+    assert new_gate["precision_at_30"] == new_live["precision_at_30"]
+    assert old_gate["f1_score"] == 0.4118
+    assert new_gate["f1_score"] == 0.4835
+    assert ml_window.evaluate_model_update(old_gate, new_gate)
 
 
 @patch("ml_window.os.path.exists")
