@@ -176,6 +176,7 @@ PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
     "reasoning_weight_boost",
     "synthetic_label_weight",
     "gemini_mode",
+    "prior_target_override",
 })
 
 

@@ -29,8 +29,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from config import CONFIG_PATH, save_config  # noqa: E402
-
 CLASSES = ["investigation_lead", "important", "background", "noise"]
 CENSUS_TAG = "[census]"
 DEFAULT_ALPHA = 20.0
@@ -71,18 +69,13 @@ def blend_feed_priors(
     return pi, n_census, pi_hat
 
 
-def _write_override(pi: Dict[str, float]) -> None:
-    raw = {}  # type: dict
-    if CONFIG_PATH.exists():
-        try:
-            with open(CONFIG_PATH) as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                raw = loaded
-        except (json.JSONDecodeError, OSError):
-            raw = {}
-    raw["prior_target_override"] = {c: round(float(pi[c]), 6) for c in CLASSES}
-    save_config(raw)
+def _write_override(profile_id: int, pi: Dict[str, float]) -> None:
+    import db
+
+    db.merge_profile_training_settings(
+        profile_id,
+        {"prior_target_override": {c: round(float(pi[c]), 6) for c in CLASSES}},
+    )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -92,7 +85,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--write-config",
         action="store_true",
-        help="Write prior_target_override into magnitu_config.json",
+        help="Write prior_target_override into this profile's training_settings",
     )
     args = parser.parse_args(argv)
 
@@ -121,8 +114,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("no [census] labels; not writing prior_target_override")
         return 1
     if args.write_config:
-        _write_override(pi)
-        print("wrote prior_target_override to {}".format(CONFIG_PATH))
+        _write_override(args.profile_id, pi)
+        print("wrote prior_target_override into profile {} training_settings".format(args.profile_id))
     return 0
 
 
