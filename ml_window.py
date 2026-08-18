@@ -488,6 +488,72 @@ def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
     return "Model rejected. Keeping older model."
 
 
+def _model_uses_prior_offsets(model_info: Optional[dict]) -> bool:
+    """True when the stored artifact has a prior-fit sidecar with offsets."""
+    if not model_info:
+        return False
+    model_path = model_info.get("model_path") or ""
+    if not model_path:
+        return False
+    cal = pipeline.load_calibration(model_path)
+    if not isinstance(cal, dict):
+        return False
+    prior_fit = cal.get("prior_fit")
+    if not isinstance(prior_fit, dict):
+        return False
+    return isinstance(prior_fit.get("prior_log_offsets"), dict)
+
+
+def _prior_transition_gate_metrics(
+    current_model: Optional[dict],
+    candidate_model: dict,
+    profile_id: int,
+    old_live_metrics: Optional[dict],
+    new_live_metrics: dict,
+) -> tuple[Optional[dict], dict]:
+    """Use no-prior F1 only for first transition into prior-fit artifacts.
+
+    Keep ranking / lead-recall on the live prior-adjusted outputs, but compare
+    macro-F1 on a no-prior rematch when the incumbent predates prior sidecars
+    and the candidate is the first prior-enabled artifact. This avoids a one-off
+    rollout penalty without changing steady-state behavior once both sides carry
+    prior-fit metadata.
+    """
+    if not current_model:
+        return old_live_metrics, new_live_metrics
+    if _model_uses_prior_offsets(current_model):
+        return old_live_metrics, new_live_metrics
+    if not _model_uses_prior_offsets(candidate_model):
+        return old_live_metrics, new_live_metrics
+
+    old_np = pipeline.evaluate_stored_model(
+        current_model, profile_id=profile_id, apply_prior=False
+    )
+    new_np = pipeline.evaluate_stored_model(
+        candidate_model, profile_id=profile_id, apply_prior=False
+    )
+    if old_np.get("success") is not True or new_np.get("success") is not True:
+        logger.warning(
+            "Prior-transition no-prior rematch failed (old=%s new=%s); "
+            "using live prior-adjusted metrics.",
+            old_np.get("error", "ok"),
+            new_np.get("error", "ok"),
+        )
+        return old_live_metrics, new_live_metrics
+
+    old_gate = dict(old_live_metrics or {})
+    new_gate = dict(new_live_metrics)
+    old_gate["f1_score"] = old_np.get("f1_score")
+    new_gate["f1_score"] = new_np.get("f1_score")
+    logger.info(
+        "Prior-transition gate: kept live p@30 / lead-recall, "
+        "but used no-prior F1 %.3f→%.3f for compare.",
+        float(old_np.get("f1_score") or 0.0),
+        float(new_np.get("f1_score") or 0.0),
+    )
+    return old_gate, new_gate
+
+
 def _embed_pending_until_done() -> None:
     while True:
         processed = sync._compute_pending_embeddings()
@@ -765,7 +831,14 @@ def main():
                             "falling back to stored table metrics.",
                             rematch.get("error", "unknown"),
                         )
-                promoted = _should_promote(old_for_gate, res)
+                old_for_gate, new_for_gate = _prior_transition_gate_metrics(
+                    current_model,
+                    res,
+                    profile_id,
+                    old_for_gate,
+                    res,
+                )
+                promoted = _should_promote(old_for_gate, new_for_gate)
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:

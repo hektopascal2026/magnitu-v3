@@ -178,6 +178,84 @@ def test_evaluate_model_update_lead_recall_guard_skipped_when_missing_or_zero():
     )
 
 
+@patch("ml_window.pipeline.load_calibration")
+def test_model_uses_prior_offsets_reads_sidecar(mock_load_calibration):
+    mock_load_calibration.return_value = {
+        "prior_fit": {"prior_log_offsets": {"noise": 0.1}}
+    }
+    assert ml_window._model_uses_prior_offsets({"model_path": "x.joblib"})
+    mock_load_calibration.assert_called_once_with("x.joblib")
+
+
+@patch("ml_window.pipeline")
+@patch("ml_window._model_uses_prior_offsets")
+def test_prior_transition_gate_uses_no_prior_f1_for_first_rollout(
+    mock_uses_prior,
+    mock_pipeline,
+):
+    old_live = {
+        "precision_at_30": 0.4667,
+        "f1_score": 0.4849,
+        "lead_recall_at_30": 0.9,
+    }
+    new_live = {
+        "precision_at_30": 0.4667,
+        "f1_score": 0.3219,
+        "lead_recall_at_30": 0.9,
+        "model_path": "new.joblib",
+    }
+    current_model = {"model_path": "old.joblib"}
+    mock_uses_prior.side_effect = [False, True]
+    mock_pipeline.evaluate_stored_model.side_effect = [
+        {"success": True, "f1_score": 0.4849},
+        {"success": True, "f1_score": 0.4630},
+    ]
+
+    old_gate, new_gate = ml_window._prior_transition_gate_metrics(
+        current_model,
+        new_live,
+        4,
+        old_live,
+        new_live,
+    )
+
+    assert old_gate["precision_at_30"] == old_live["precision_at_30"]
+    assert new_gate["precision_at_30"] == new_live["precision_at_30"]
+    assert old_gate["f1_score"] == 0.4849
+    assert new_gate["f1_score"] == 0.4630
+    assert mock_pipeline.evaluate_stored_model.call_args_list[0].kwargs == {
+        "profile_id": 4,
+        "apply_prior": False,
+    }
+    assert mock_pipeline.evaluate_stored_model.call_args_list[1].kwargs == {
+        "profile_id": 4,
+        "apply_prior": False,
+    }
+
+
+@patch("ml_window.pipeline")
+@patch("ml_window._model_uses_prior_offsets")
+def test_prior_transition_gate_skips_when_incumbent_already_has_prior(
+    mock_uses_prior,
+    mock_pipeline,
+):
+    mock_uses_prior.side_effect = [True]
+    old_live = {"precision_at_30": 0.5, "f1_score": 0.4}
+    new_live = {"precision_at_30": 0.5, "f1_score": 0.41}
+
+    old_gate, new_gate = ml_window._prior_transition_gate_metrics(
+        {"model_path": "old.joblib"},
+        {"model_path": "new.joblib"},
+        1,
+        old_live,
+        new_live,
+    )
+
+    assert old_gate is old_live
+    assert new_gate is new_live
+    mock_pipeline.evaluate_stored_model.assert_not_called()
+
+
 @patch("ml_window.os.path.exists")
 @patch("ml_window.open")
 @patch("ml_window.json.load")
