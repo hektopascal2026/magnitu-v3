@@ -436,7 +436,12 @@ def _lead_recall_ok(old: Optional[dict], new: dict) -> bool:
     return float(new_lr) >= float(old_lr) - LEAD_RECALL_SLACK
 
 
-def evaluate_model_update(old_metrics: Optional[dict], new_metrics: dict) -> bool:
+def evaluate_model_update(
+    old_metrics: Optional[dict],
+    new_metrics: dict,
+    *,
+    first_prior_transition: bool = False,
+) -> bool:
     """Promote gate v2: mission first, macro-F1 as a catastrophe breaker.
 
     (1) Cold start promotes.
@@ -445,7 +450,10 @@ def evaluate_model_update(old_metrics: Optional[dict], new_metrics: dict) -> boo
     (3) Big top-of-feed win: p@30 up >= PROMOTE_BIG_P30_WIN (~one relevant
         item on a ~20-row holdout) tolerates an F1 dip up to
         F1_HARD_DROP_LIMIT (~2-3 tail rows; beyond that we don't trust the
-        distilled recipe).
+        distilled recipe). On the one-time first prior-fit transition
+        (incumbent has no prior sidecar), any p@30 gain of PROMOTE_MARGIN
+        buys the same F1 catastrophe tolerance — otherwise a pre-prior
+        live model can never promote and the transition path never retires.
     (4) Legacy two-path gate unchanged (small ranking win with strict F1
         guard, or F1 win with ranking slack).
     """
@@ -461,8 +469,11 @@ def evaluate_model_update(old_metrics: Optional[dict], new_metrics: dict) -> boo
     if not _lead_recall_ok(old_metrics, new_metrics):
         return False
 
-    # NEW: big top-of-feed win buys bounded F1 tolerance.
-    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain >= -F1_HARD_DROP_LIMIT:
+    # Big top-of-feed win buys bounded F1 tolerance. First prior-fit
+    # transition uses the same F1 floor with a lower ranking bar so a
+    # pre-prior incumbent can exit the rollout special-case.
+    big_win_bar = PROMOTE_MARGIN if first_prior_transition else PROMOTE_BIG_P30_WIN
+    if p30_gain >= big_win_bar and f1_gain >= -F1_HARD_DROP_LIMIT:
         return True
 
     # Legacy gate, byte-identical to today.
@@ -473,9 +484,18 @@ def evaluate_model_update(old_metrics: Optional[dict], new_metrics: dict) -> boo
     return (p30_up and f1_ok) or (f1_up and p30_not_collapsed)
 
 
-def _should_promote(current_model: Optional[dict], res: dict) -> bool:
+def _should_promote(
+    current_model: Optional[dict],
+    res: dict,
+    *,
+    first_prior_transition: bool = False,
+) -> bool:
     """Delegate to evaluate_model_update (promote gate v2)."""
-    return evaluate_model_update(current_model, res)
+    return evaluate_model_update(
+        current_model,
+        res,
+        first_prior_transition=first_prior_transition,
+    )
 
 
 def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
@@ -513,7 +533,7 @@ def _prior_rollout_gate_metrics(
     profile_id: int,
     old_live_metrics: Optional[dict],
     new_live_metrics: dict,
-) -> tuple[Optional[dict], dict]:
+) -> tuple[Optional[dict], dict, str]:
     """Use no-prior F1 during census-prior rollout without changing ranking gates.
 
     Keep p@30 and lead_recall on live prior-adjusted scores, but compare macro-F1
@@ -524,11 +544,14 @@ def _prior_rollout_gate_metrics(
         the current holdout (census priors too harsh for this train pass).
 
     Steady-state behavior is unchanged when priors are neutral or already rolled out.
+
+    Returns (old_metrics, new_metrics, rollout_mode) where rollout_mode is
+    ``\"\"``, ``\"first_transition\"``, or ``\"prior_hurt\"``.
     """
     if not current_model:
-        return old_live_metrics, new_live_metrics
+        return old_live_metrics, new_live_metrics, ""
     if not _model_uses_prior_offsets(candidate_model):
-        return old_live_metrics, new_live_metrics
+        return old_live_metrics, new_live_metrics, ""
 
     new_np = pipeline.evaluate_stored_model(
         candidate_model, profile_id=profile_id, apply_prior=False
@@ -539,14 +562,14 @@ def _prior_rollout_gate_metrics(
             "using live prior-adjusted metrics.",
             new_np.get("error", "unknown"),
         )
-        return old_live_metrics, new_live_metrics
+        return old_live_metrics, new_live_metrics, ""
 
     new_live_f1 = float(new_live_metrics.get("f1_score") or 0.0)
     new_np_f1 = float(new_np.get("f1_score") or 0.0)
     first_transition = not _model_uses_prior_offsets(current_model)
     prior_hurt = new_live_f1 + PRIOR_HURT_F1_GAP < new_np_f1
     if not first_transition and not prior_hurt:
-        return old_live_metrics, new_live_metrics
+        return old_live_metrics, new_live_metrics, ""
 
     old_np = pipeline.evaluate_stored_model(
         current_model, profile_id=profile_id, apply_prior=False
@@ -557,12 +580,13 @@ def _prior_rollout_gate_metrics(
             "using live prior-adjusted metrics.",
             old_np.get("error", "unknown"),
         )
-        return old_live_metrics, new_live_metrics
+        return old_live_metrics, new_live_metrics, ""
 
     old_gate = dict(old_live_metrics or {})
     new_gate = dict(new_live_metrics)
     old_gate["f1_score"] = old_np.get("f1_score")
     new_gate["f1_score"] = new_np.get("f1_score")
+    mode = "first_transition" if first_transition else "prior_hurt"
     reason = "first prior-fit transition" if first_transition else "prior hurt holdout F1"
     logger.info(
         "Prior-rollout gate (%s): kept live p@30 / lead-recall, "
@@ -571,7 +595,7 @@ def _prior_rollout_gate_metrics(
         float(old_np.get("f1_score") or 0.0),
         float(new_np.get("f1_score") or 0.0),
     )
-    return old_gate, new_gate
+    return old_gate, new_gate, mode
 
 
 # Back-compat alias for tests / scripts.
@@ -855,14 +879,18 @@ def main():
                             "falling back to stored table metrics.",
                             rematch.get("error", "unknown"),
                         )
-                old_for_gate, new_for_gate = _prior_rollout_gate_metrics(
+                old_for_gate, new_for_gate, rollout_mode = _prior_rollout_gate_metrics(
                     current_model,
                     res,
                     profile_id,
                     old_for_gate,
                     res,
                 )
-                promoted = _should_promote(old_for_gate, new_for_gate)
+                promoted = _should_promote(
+                    old_for_gate,
+                    new_for_gate,
+                    first_prior_transition=(rollout_mode == "first_transition"),
+                )
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:
@@ -872,7 +900,19 @@ def main():
                     new_f1 = float(report["f1_new"] or 0.0)
                     p30_gain = new_p30 - old_p30
                     f1_gain = new_f1 - old_f1
-                    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain < 0:
+                    if rollout_mode == "first_transition" and f1_gain < 0:
+                        logger.info(
+                            "Promote gate passed (first prior-fit transition; "
+                            "p@30 %.3f→%.3f, no-prior f1 %.3f→%.3f, "
+                            "accepted f1 dip %.3f).",
+                            float(old_for_gate.get("precision_at_30") or 0.0),
+                            float(new_for_gate.get("precision_at_30") or 0.0),
+                            float(old_for_gate.get("f1_score") or 0.0),
+                            float(new_for_gate.get("f1_score") or 0.0),
+                            float(new_for_gate.get("f1_score") or 0.0)
+                            - float(old_for_gate.get("f1_score") or 0.0),
+                        )
+                    elif p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain < 0:
                         logger.info(
                             "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f, "
                             "accepted f1 dip %.3f).",
