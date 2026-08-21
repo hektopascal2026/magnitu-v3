@@ -211,7 +211,7 @@ def test_prior_transition_gate_uses_no_prior_f1_for_first_rollout(
         {"success": True, "f1_score": 0.4630},
     ]
 
-    old_gate, new_gate = ml_window._prior_rollout_gate_metrics(
+    old_gate, new_gate, mode = ml_window._prior_rollout_gate_metrics(
         current_model,
         new_live,
         4,
@@ -219,6 +219,7 @@ def test_prior_transition_gate_uses_no_prior_f1_for_first_rollout(
         new_live,
     )
 
+    assert mode == "first_transition"
     assert old_gate["precision_at_30"] == old_live["precision_at_30"]
     assert new_gate["precision_at_30"] == new_live["precision_at_30"]
     assert old_gate["f1_score"] == 0.4849
@@ -251,7 +252,7 @@ def test_prior_transition_gate_skips_when_incumbent_already_has_prior(
         "f1_score": 0.405,
     }
 
-    old_gate, new_gate = ml_window._prior_rollout_gate_metrics(
+    old_gate, new_gate, mode = ml_window._prior_rollout_gate_metrics(
         {"model_path": "old.joblib"},
         new_live,
         1,
@@ -259,6 +260,7 @@ def test_prior_transition_gate_skips_when_incumbent_already_has_prior(
         new_live,
     )
 
+    assert mode == ""
     assert old_gate is old_live
     assert new_gate is new_live
     mock_pipeline.evaluate_stored_model.assert_called_once()
@@ -288,7 +290,7 @@ def test_prior_rollout_gate_uses_no_prior_f1_when_offsets_hurt_candidate(
         {"success": True, "f1_score": 0.4118},
     ]
 
-    old_gate, new_gate = ml_window._prior_rollout_gate_metrics(
+    old_gate, new_gate, mode = ml_window._prior_rollout_gate_metrics(
         current_model,
         new_live,
         2,
@@ -296,11 +298,34 @@ def test_prior_rollout_gate_uses_no_prior_f1_when_offsets_hurt_candidate(
         new_live,
     )
 
+    assert mode == "prior_hurt"
     assert old_gate["precision_at_30"] == old_live["precision_at_30"]
     assert new_gate["precision_at_30"] == new_live["precision_at_30"]
     assert old_gate["f1_score"] == 0.4118
     assert new_gate["f1_score"] == 0.4835
     assert ml_window.evaluate_model_update(old_gate, new_gate)
+
+
+def test_first_prior_transition_eases_big_win_bar():
+    """EU-like: modest p@30 gain + no-prior F1 dip within catastrophe cap."""
+    old = {
+        "precision_at_30": 0.5333,
+        "f1_score": 0.475,
+        "lead_recall_at_30": 0.8462,
+    }
+    new = {
+        "precision_at_30": 0.5667,
+        "f1_score": 0.4234,
+        "lead_recall_at_30": 0.9231,
+    }
+    assert not ml_window.evaluate_model_update(old, new)
+    assert ml_window.evaluate_model_update(old, new, first_prior_transition=True)
+    # Still reject when F1 crater exceeds hard drop even on transition.
+    assert not ml_window.evaluate_model_update(
+        old,
+        {**new, "f1_score": 0.350},
+        first_prior_transition=True,
+    )
 
 
 @patch("ml_window.os.path.exists")
