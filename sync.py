@@ -47,8 +47,18 @@ def profile_satellite_incomplete(profile: Optional[Dict]) -> bool:
     return bool(url) != bool(key)
 
 
+# Default for pull/status/score-batch chatter. Recipe push can rescore a desk
+# and routinely exceeds this under an ML window (NMT stopped, busy PHP-FPM).
+REQUEST_TIMEOUT_SEC = 30.0
+# Match nginx fastcgi_read_timeout on seismo.live (300s). Shorter values
+# marked successful promotes as worker_error after distill (EU/seismo 2026-08).
+RECIPE_PUSH_TIMEOUT_SEC = 300.0
+
+
 def _request(method: str, params: dict,
-             seismo_target: Optional[Dict] = None, **kwargs) -> httpx.Response:
+             seismo_target: Optional[Dict] = None,
+             timeout: float = REQUEST_TIMEOUT_SEC,
+             **kwargs) -> httpx.Response:
     """Make a request to Seismo with auth.
 
     seismo_target: optional dict with keys 'seismo_url' and 'api_key'.
@@ -57,6 +67,9 @@ def _request(method: str, params: dict,
 
     When ``MAGNITU_ML_WORKER_TOKEN`` is set, sends ``X-Magnitu-Ml-Worker`` so
     Seismo's Magnitu ML writer lock accepts VPS worker Push (laptop fails closed).
+
+    timeout: httpx client timeout in seconds (recipe push uses
+    :data:`RECIPE_PUSH_TIMEOUT_SEC`).
     """
     cfg = get_config()
     if seismo_target:
@@ -69,7 +82,7 @@ def _request(method: str, params: dict,
     worker_token = (os.environ.get("MAGNITU_ML_WORKER_TOKEN") or "").strip()
     if worker_token:
         headers["X-Magnitu-Ml-Worker"] = worker_token
-    with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(timeout=float(timeout)) as client:
         resp = client.request(method, url, params=params, headers=headers or None, **kwargs)
         resp.raise_for_status()
         return resp
@@ -791,8 +804,13 @@ def push_scores(scores: List[Dict], model_version: int,
 def push_recipe(recipe: dict, profile: Optional[Dict] = None) -> dict:
     """Push a scoring recipe to the profile's Seismo target."""
     target = _profile_target(profile)
-    result = _request("POST", {"action": "magnitu_recipe"}, json=recipe,
-                      seismo_target=target).json()
+    result = _request(
+        "POST",
+        {"action": "magnitu_recipe"},
+        json=recipe,
+        seismo_target=target,
+        timeout=RECIPE_PUSH_TIMEOUT_SEC,
+    ).json()
     profile_id = profile["id"] if profile else None
     db.log_sync("push", 1, "recipe v{} pushed".format(recipe.get("version", "?")),
                 profile_id=profile_id)
