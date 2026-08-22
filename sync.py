@@ -16,6 +16,7 @@ import json
 import logging
 import hashlib
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Callable, Tuple
@@ -52,7 +53,11 @@ def profile_satellite_incomplete(profile: Optional[Dict]) -> bool:
 REQUEST_TIMEOUT_SEC = 30.0
 # Match nginx fastcgi_read_timeout on seismo.live (300s). Shorter values
 # marked successful promotes as worker_error after distill (EU/seismo 2026-08).
+# Seismo now acks POST magnitu_recipe before the first rescore batch
+# (rescored_deferred); keep 300s as a backstop for slow desks / old deploys.
 RECIPE_PUSH_TIMEOUT_SEC = 300.0
+RECIPE_PUSH_MAX_ATTEMPTS = 3
+RECIPE_PUSH_RETRY_SLEEP_SEC = 5.0
 
 
 def _request(method: str, params: dict,
@@ -802,15 +807,42 @@ def push_scores(scores: List[Dict], model_version: int,
 
 
 def push_recipe(recipe: dict, profile: Optional[Dict] = None) -> dict:
-    """Push a scoring recipe to the profile's Seismo target."""
+    """Push a scoring recipe to the profile's Seismo target.
+
+    Retries on httpx read/connect timeouts — mothership rescore used to hold
+    the HTTP response until the first BATCH_LIMIT pass finished and could
+    exceed RECIPE_PUSH_TIMEOUT_SEC (seen 2026-08 on seismo.live).
+    """
     target = _profile_target(profile)
-    result = _request(
-        "POST",
-        {"action": "magnitu_recipe"},
-        json=recipe,
-        seismo_target=target,
-        timeout=RECIPE_PUSH_TIMEOUT_SEC,
-    ).json()
+    last_exc: Optional[BaseException] = None
+    result = None
+    for attempt in range(1, RECIPE_PUSH_MAX_ATTEMPTS + 1):
+        try:
+            result = _request(
+                "POST",
+                {"action": "magnitu_recipe"},
+                json=recipe,
+                seismo_target=target,
+                timeout=RECIPE_PUSH_TIMEOUT_SEC,
+            ).json()
+            last_exc = None
+            break
+        except (httpx.TimeoutException, httpx.NetworkError) as e:
+            last_exc = e
+            if attempt >= RECIPE_PUSH_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "Recipe push attempt %s/%s timed out (%s); retrying in %ss",
+                attempt,
+                RECIPE_PUSH_MAX_ATTEMPTS,
+                e,
+                RECIPE_PUSH_RETRY_SLEEP_SEC,
+            )
+            time.sleep(RECIPE_PUSH_RETRY_SLEEP_SEC)
+    if last_exc is not None:
+        raise last_exc
+    if not isinstance(result, dict):
+        raise RuntimeError("magnitu_recipe push returned non-object JSON")
     profile_id = profile["id"] if profile else None
     db.log_sync("push", 1, "recipe v{} pushed".format(recipe.get("version", "?")),
                 profile_id=profile_id)
