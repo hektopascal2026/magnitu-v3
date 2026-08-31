@@ -59,6 +59,11 @@ RECIPE_PUSH_TIMEOUT_SEC = 300.0
 RECIPE_PUSH_MAX_ATTEMPTS = 3
 RECIPE_PUSH_RETRY_SLEEP_SEC = 5.0
 
+# Embed and store in sub-batches so partial progress survives a worker
+# timeout. Previously the whole batch was embedded then stored at the end —
+# a timeout during encoding lost all work and the backlog never drained.
+EMBED_SUB_BATCH_SIZE = 50
+
 
 def _request(method: str, params: dict,
              seismo_target: Optional[Dict] = None,
@@ -556,18 +561,24 @@ def post_ml_window_report(report: Dict) -> None:
         resp.raise_for_status()
 
 
-def _compute_pending_embeddings(progress_cb=None) -> int:
+def _compute_pending_embeddings(progress_cb=None, limit=1000) -> int:
     """
-    Compute and store embeddings for entries that lack them (up to 1000 per call).
+    Compute and store embeddings for entries that lack them (up to ``limit`` per call).
+
+    Embeddings are stored in sub-batches of ``EMBED_SUB_BATCH_SIZE`` so partial
+    progress survives a worker timeout. Previously the entire batch was embedded
+    in one shot and stored only at the end — a timeout during encoding lost all
+    work, leaving the backlog unchanged and re-embedded every run.
 
     Optional ``progress_cb(done, total, message)`` for UI updates during long runs.
     Returns the number of entries embedded (0 on failure or none pending).
     """
-    unembedded = db.get_entries_without_embeddings(limit=1000)
+    unembedded = db.get_entries_without_embeddings(limit=limit)
     total = len(unembedded)
     if not total:
         return 0
-    logger.info("Computing embeddings for %d entries...", total)
+    logger.info("Computing embeddings for %d entries (sub-batches of %d)...", total, EMBED_SUB_BATCH_SIZE)
+    stored = 0
     try:
         from pipeline import embed_entries, release_embedder
 
@@ -577,21 +588,27 @@ def _compute_pending_embeddings(progress_cb=None) -> int:
                 "Loading E5 model (first run may download ~1 GB; can take several minutes)",
             )
 
-        def on_batch(done, batch_total):
-            if progress_cb:
-                progress_cb(done, batch_total, "Encoding entries")
+        for start in range(0, total, EMBED_SUB_BATCH_SIZE):
+            sub = unembedded[start:start + EMBED_SUB_BATCH_SIZE]
+            try:
+                def on_batch(done, batch_total):
+                    if progress_cb:
+                        progress_cb(stored + done, total, "Encoding entries")
 
-        emb_bytes_list = embed_entries(unembedded, progress_cb=on_batch)
-        updates = []
-        for entry, emb_bytes in zip(unembedded, emb_bytes_list):
-            updates.append((emb_bytes, entry["entry_type"], entry["entry_id"]))
-        db.store_embeddings_batch(updates)
-        logger.info("Stored %d embeddings.", len(updates))
+                emb_bytes_list = embed_entries(sub, progress_cb=on_batch)
+                updates = []
+                for entry, emb_bytes in zip(sub, emb_bytes_list):
+                    updates.append((emb_bytes, entry["entry_type"], entry["entry_id"]))
+                db.store_embeddings_batch(updates)
+                stored += len(updates)
+                logger.info("Stored %d / %d embeddings.", stored, total)
+            except Exception as e:
+                logger.exception("Sub-batch embed failed at offset %d: %s", start, e)
+                break
         release_embedder()
-        return len(updates)
     except Exception as e:
         logger.exception("Failed to compute embeddings: %s", e)
-        return 0
+    return stored
 
 
 def profile_satellite_blank(profile: Optional[Dict]) -> bool:
