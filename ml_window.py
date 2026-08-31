@@ -604,11 +604,28 @@ def _prior_rollout_gate_metrics(
 _prior_transition_gate_metrics = _prior_rollout_gate_metrics
 
 
-def _embed_pending_until_done() -> None:
+def _embed_pending_until_done(max_entries: int = 0) -> None:
+    """Embed pending entries in batches until done or ``max_entries`` reached.
+
+    ``max_entries=0`` means no cap (full window behaviour). Score-only windows
+    pass a cap so a large backlog cannot eat the entire 300s budget before
+    scoring + pushing. Remaining entries are picked up by the next tick.
+    """
+    embedded = 0
     while True:
-        processed = sync._compute_pending_embeddings()
+        if max_entries > 0 and embedded >= max_entries:
+            logger.info(
+                "Embedding cap reached (%d entries); remaining deferred to next tick.",
+                embedded,
+            )
+            break
+        batch_limit = 1000
+        if max_entries > 0:
+            batch_limit = min(1000, max_entries - embedded)
+        processed = sync._compute_pending_embeddings(limit=batch_limit)
         if not processed:
             break
+        embedded += processed
 
 
 def _should_train_desk(
@@ -688,8 +705,19 @@ def main():
 
     force_retrain = os.environ.get("MAGNITU_ML_FORCE_RETRAIN") == "1"
     full_entry_drain = os.environ.get("MAGNITU_ML_FULL_ENTRY_DRAIN") == "1"
+    score_only = os.environ.get("MAGNITU_ML_SCORE_ONLY") == "1"
     has_errors = False
     desk_reports: List[Dict[str, Any]] = []
+
+    if score_only:
+        logger.info("Score-only mode (MAGNITU_ML_SCORE_ONLY=1): skip labels/train/distill")
+
+    # Score-only windows have a 300s budget. E5 on CPU does ~2.5 chunks/s,
+    # so 400 entries (≈723 chunks) still eats ~290s — the entire budget.
+    # Cap to 200 entries per score-only tick so embedding takes ~145s,
+    # leaving ~155s for scoring + pushing. The backlog drains across
+    # multiple 15-min cycles. Full windows pass max_entries=0 (no cap).
+    embed_cap = 200 if score_only else 0
 
     # 0) Entry sync once per window (mothership), then embed.
     try:
@@ -704,7 +732,7 @@ def main():
                 compute_embeddings=False,
                 per_type_since=watermarks,
             )
-        _embed_pending_until_done()
+        _embed_pending_until_done(max_entries=embed_cap)
     except Exception as e:
         logger.error("Failed shared entry pull/embed: %s", e)
         has_errors = True
@@ -767,6 +795,25 @@ def main():
             "active_version": None,
             "candidate_version": None,
         }
+
+        if score_only:
+            # Score-only mode: skip label pull / orphan backfill / training.
+            # Just score and push with the existing active model.
+            # Do NOT append to desk_reports here — the processing loop
+            # below appends the report after scoring.
+            current_model = db.get_active_model(profile_id)
+            if current_model:
+                report["active_version"] = current_model.get("version")
+            prepared.append({
+                "url": url,
+                "slug": slug,
+                "prof": prof,
+                "profile_id": profile_id,
+                "report": report,
+                "current_model": current_model,
+                "do_train": False,
+            })
+            continue
 
         try:
             pulled = sync.pull_labels(profile_id=profile_id, profile=prof)
@@ -1020,6 +1067,7 @@ def main():
     try:
         payload = {
             "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "window_status": "ok",
             "desks": desk_reports,
         }
         sync.post_ml_window_report(payload)
