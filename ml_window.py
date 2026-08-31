@@ -5,6 +5,8 @@ Executes sync -> embed -> train (gated) -> promote (strict) -> score/push
 -> distill/recipe/vault (post-promote, memory-isolated).
 Expects SEISMO_DESKS_JSON environment variable with a JSON list of desks.
 """
+from __future__ import annotations
+
 import os
 import sys
 import json

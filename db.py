@@ -900,7 +900,16 @@ def set_label(entry_type: str, entry_id: int, label: str,
 
     label_source: empty for manual labels; \"Gemini\" for synthetic (kept local; not sent to Seismo).
     pending_gemini_job_id: when set, label awaits Accept on the Gemini page before counting as confirmed.
+
+    Raises ValueError if a synthetic (label_source set) investigation_lead has empty/whitespace
+    reasoning — workspace rule: never persist that combination.
     """
+    if label == "investigation_lead" and not (reasoning or "").strip() and (label_source or "").strip():
+        raise ValueError(
+            "Refusing to persist synthetic investigation_lead with empty reasoning "
+            "(label_source=%r). Retry with stricter prompt or reject — do not silently store."
+            % label_source
+        )
     pend = pending_gemini_job_id if (pending_gemini_job_id or "").strip() else None
     conn = get_db()
     conn.execute("""
@@ -1360,6 +1369,10 @@ def import_labels(labels_list: List[dict], profile_id: int = 1) -> dict:
                 continue
             reasoning = lbl.get("reasoning", "")
             label_src = (lbl.get("source") or lbl.get("label_source") or "").strip()
+            # Workspace rule: never persist a synthetic investigation_lead with empty reasoning.
+            if label == "investigation_lead" and not (reasoning or "").strip() and label_src:
+                skipped += 1
+                continue
             key = entry_key(entry_type, entry_id)
             existing = existing_map.get(key)
             if existing:

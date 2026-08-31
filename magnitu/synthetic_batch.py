@@ -10,7 +10,7 @@ import db
 import sampler
 from magnitu.gemini import GeminiClient
 from magnitu.gemini_config import GeminiConfig
-from magnitu.prompts import MAGNITU_LABELS
+from magnitu.prompts import LABEL_INVESTIGATION_LEAD, MAGNITU_LABELS
 from magnitu.entry_preview import training_corpus_text
 from magnitu.synthetic_scorer import (
     call_gemini_for_synthetic_label,
@@ -240,7 +240,20 @@ def run_gemini_synthetic_batch_job(
                             res = results_by_key.get((et_s, eid))
                             if res:
                                 label = res.get("label")
-                                reasoning = res.get("reasoning", "")
+                                reasoning = (res.get("reasoning") or "").strip()
+                                # investigation_lead with empty/whitespace reasoning:
+                                # retry once via single-entry path (stricter prompt), then reject.
+                                if label == LABEL_INVESTIGATION_LEAD and not reasoning:
+                                    try:
+                                        label, reasoning = call_gemini_for_synthetic_label(
+                                            client,
+                                            system_instruction=system_instruction,
+                                            **_entry_fields_for_prompt(entry)
+                                        )
+                                    except Exception as retry_ex:
+                                        failed.append({"entry_type": et, "entry_id": eid,
+                                                        "error": "investigation_lead empty reasoning after retry: %s" % str(retry_ex)[:300]})
+                                        continue
                                 if label in MAGNITU_LABELS and reasoning:
                                     db.set_label(
                                         et,
