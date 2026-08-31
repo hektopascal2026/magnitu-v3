@@ -72,14 +72,21 @@ def call_gemini_for_synthetic_label_batch(
     entries: List[Dict[str, Any]],
     *,
     system_instruction: Optional[str] = None,
+    few_shot_examples: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Call Gemini for a batch of entries. Returns list of {entry_type, entry_id, label, reasoning}."""
+    """Call Gemini for a batch of entries. Returns list of {entry_type, entry_id, label, reasoning}.
+
+    If ``few_shot_examples`` is provided, they are included in the prompt as
+    calibration (existing desk labels + Gold-needle matches).
+    """
     if not entries:
         return []
     if system_instruction is None:
         system_instruction = SYSTEM_SWISS_TRADE_ANALYST
-    
-    user = build_synthetic_label_batch_prompt(entries)
+
+    user = build_synthetic_label_batch_prompt(
+        entries, few_shot_examples=few_shot_examples
+    )
     n = len(entries)
     raw = client.request_json(
         user,

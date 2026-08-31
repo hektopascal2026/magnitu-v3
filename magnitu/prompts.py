@@ -87,11 +87,116 @@ INVESTIGATION_LEAD_REASONING_RETRY_SUFFIX = (
 
 GEMINI_SYNTHETIC_CONTENT_CAP = 8000
 
+# Few-shot content cap for examples (shorter — these are calibration, not the
+# subject of classification; long examples bloat every batch call).
+GEMINI_FEWSHOT_CONTENT_CAP = 1500
+
+# Static Gold-bite few-shot examples for EU lex entries. These are the
+# territorial-exclusion pattern (Lane 3 EU-only gate) that is underrepresented
+# in the existing human labels. The needle_context field gives Gemini the
+# exact exclusion language to reason about. Calibrated from the Seismo Gold
+# needle system (LexScopeBannerGate::EU_ONLY_BITE_NEEDLES).
+GOLD_BITE_FEW_SHOT_EXAMPLES: List[Dict[str, Any]] = [
+    {
+        "entry_id": 288,
+        "entry_type": "lex_item",
+        "title": "Regulation (EU) 2026/1030 of the European Parliament and of the Council",
+        "content": (
+            "Verification bodies shall be accredited by a national accreditation "
+            "body pursuant to Regulation (EC) No 765/2008. The accreditation "
+            "shall be limited to the territory of the Union."
+        ),
+        "source_type": "lex_eu",
+        "needle_context": (
+            "Gold needle: 'shall be accredited by a national accreditation body' "
+            "— EU-only accreditation gate with no EEA bridge."
+        ),
+        "label": "investigation_lead",
+        "reasoning": (
+            "EU-only accreditation requirement under Regulation (EC) No 765/2008 "
+            "excludes Swiss conformity assessment bodies from verifying compliance. "
+            "No EEA bridge — Switzerland is excluded by omission."
+        ),
+    },
+    {
+        "entry_id": 166737,
+        "entry_type": "lex_item",
+        "title": "Commission Implementing Regulation (EU) 2026/1778",
+        "content": (
+            "The digital product passport registry shall be established in the "
+            "Union and operated by a body designated by the Commission. Access "
+            "to the registry shall be limited to economic operators established "
+            "in the Union."
+        ),
+        "source_type": "lex_eu",
+        "needle_context": (
+            "Gold needle: 'shall be established in the union' + "
+            "'established in the Union' — EU-only establishment gate."
+        ),
+        "label": "investigation_lead",
+        "reasoning": (
+            "Digital product passport registry restricted to EU-established "
+            "operators. Swiss firms placing products on the EU market cannot "
+            "access the registry directly — excluded by omission, no EEA bridge."
+        ),
+    },
+]
+
+
+def _format_few_shot_example(ex: Dict[str, Any]) -> List[str]:
+    """Format a single few-shot example as prompt lines."""
+    lines = [
+        "entry_id: %s" % ex.get("entry_id", ""),
+        "entry_type: %s" % ex.get("entry_type", ""),
+        "title: %s" % str(ex.get("title") or "").strip(),
+    ]
+    content = str(ex.get("content") or "").strip()
+    if content:
+        if len(content) > GEMINI_FEWSHOT_CONTENT_CAP:
+            content = content[:GEMINI_FEWSHOT_CONTENT_CAP].rstrip() + "…"
+        lines.append("content: %s" % content)
+    st = str(ex.get("source_type") or "").strip()
+    if st:
+        lines.append("source_type: %s" % st)
+    needle = str(ex.get("needle_context") or "").strip()
+    if needle:
+        lines.append("analyst_note: %s" % needle)
+    lines.append("CORRECT LABEL: %s" % ex.get("label", ""))
+    lines.append("REASONING: %s" % str(ex.get("reasoning") or "").strip())
+    return lines
+
+
+def build_few_shot_block(examples: List[Dict[str, Any]]) -> str:
+    """Build the few-shot examples section for the batch prompt.
+
+    Each example is a dict with entry_id, entry_type, title, content,
+    source_type, label, reasoning, and optional needle_context.
+    """
+    if not examples:
+        return ""
+    parts = [
+        "EXAMPLES (already labeled by the desk analyst — use as calibration)",
+        "-" * 60,
+    ]
+    for idx, ex in enumerate(examples):
+        parts.append("EXAMPLE #%d" % (idx + 1))
+        parts.extend(_format_few_shot_example(ex))
+        parts.append("---")
+    parts.append("")
+    return "\n".join(parts)
+
 
 def build_synthetic_label_batch_prompt(
     entries: List[Dict[str, Any]],
+    *,
+    few_shot_examples: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """Build the user message for multiple entries (JSON response: list of objects)."""
+    """Build the user message for multiple entries (JSON response: list of objects).
+
+    If ``few_shot_examples`` is provided, they are inserted before the entries
+    to classify, giving Gemini calibration from existing desk labels and
+    Gold-needle matches.
+    """
     label_line = ", ".join(
         "%s (%s)" % (LABEL_DISPLAY[k], k) for k in MAGNITU_LABELS
     )
@@ -101,10 +206,13 @@ def build_synthetic_label_batch_prompt(
         'Return ONLY valid JSON: {"labels": [{"entry_id": <int>, "entry_type": "<string>", "label": "<enum>", "reasoning": "<string>"}, ...]}',
         "Use the enum strings exactly: investigation_lead, important, background, noise.",
         "reasoning must be concise (1-3 sentences).",
-        "",
-        "ENTRIES TO CLASSIFY",
-        "-------------------",
     ]
+    if few_shot_examples:
+        parts.append("")
+        parts.append(build_few_shot_block(few_shot_examples))
+    parts.append("")
+    parts.append("ENTRIES TO CLASSIFY")
+    parts.append("-------------------")
     from magnitu.entry_preview import training_corpus_text
 
     for idx, e in enumerate(entries):
@@ -127,7 +235,7 @@ def build_synthetic_label_batch_prompt(
         if st:
             parts.append("source_type: %s" % st)
         parts.append("---")
-    
+
     parts.append("")
     parts.append("No markdown fences. No trailing commas.")
     return "\n".join(parts)

@@ -10,7 +10,14 @@ import db
 import sampler
 from magnitu.gemini import GeminiClient
 from magnitu.gemini_config import GeminiConfig
-from magnitu.prompts import LABEL_INVESTIGATION_LEAD, MAGNITU_LABELS
+from magnitu.prompts import (
+    GOLD_BITE_FEW_SHOT_EXAMPLES,
+    LABEL_BACKGROUND,
+    LABEL_IMPORTANT,
+    LABEL_INVESTIGATION_LEAD,
+    LABEL_NOISE,
+    MAGNITU_LABELS,
+)
 from magnitu.entry_preview import training_corpus_text
 from magnitu.synthetic_scorer import (
     call_gemini_for_synthetic_label,
@@ -18,6 +25,64 @@ from magnitu.synthetic_scorer import (
 )
 
 SOURCE_GEMINI = "Gemini"
+
+# How many human-labeled examples per class to pull as few-shot calibration.
+# Leads get more (rare class, highest value). The 2 static Gold-bite examples
+# are always included on top of these.
+FEWSHOT_PER_CLASS = {
+    LABEL_INVESTIGATION_LEAD: 5,
+    LABEL_IMPORTANT: 2,
+    LABEL_BACKGROUND: 2,
+    LABEL_NOISE: 2,
+}
+
+
+def _build_few_shot_examples(
+    profile_id: int,
+    *,
+    include_gold_bite: bool = True,
+) -> List[Dict[str, Any]]:
+    """Pull human-labeled examples from the DB + optional Gold-bite examples.
+
+    Only labels with a non-Gemini source (human) are used as calibration,
+    so we don't teach Gemini its own past mistakes.
+
+    The static Gold-bite examples (EU territorial-exclusion pattern) are
+    included by default but should be skipped for non-EU desks where they
+    are irrelevant and could confuse the model.
+    """
+    examples: List[Dict[str, Any]] = []
+    conn = db.get_db()
+    try:
+        for label, limit in FEWSHOT_PER_CLASS.items():
+            rows = conn.execute(
+                """SELECT l.entry_type, l.entry_id, l.reasoning, e.title,
+                          e.content, e.description, e.source_type
+                   FROM labels l
+                   JOIN entries e ON e.entry_type = l.entry_type
+                                  AND e.entry_id = l.entry_id
+                   WHERE l.profile_id = ? AND l.label = ?
+                     AND COALESCE(l.label_source, '') != ?
+                   ORDER BY l.updated_at DESC
+                   LIMIT ?""",
+                (profile_id, label, SOURCE_GEMINI, limit),
+            ).fetchall()
+            for r in rows:
+                corpus = training_corpus_text(dict(r))
+                examples.append({
+                    "entry_id": r["entry_id"],
+                    "entry_type": r["entry_type"],
+                    "title": r["title"] or "",
+                    "content": corpus or r["description"] or "",
+                    "source_type": r["source_type"] or "",
+                    "label": label,
+                    "reasoning": r["reasoning"] or "",
+                })
+    finally:
+        conn.close()
+    if include_gold_bite:
+        examples.extend(GOLD_BITE_FEW_SHOT_EXAMPLES)
+    return examples
 
 
 def _entry_fields_for_prompt(entry: Dict[str, Any]) -> Dict[str, str]:
@@ -199,6 +264,7 @@ def run_gemini_synthetic_batch_job(
         )
 
     with GeminiClient(cfg) as client:
+        few_shot = _build_few_shot_examples(profile_id)
         if mode == "batch":
             # Process in chunks of 10
             chunk_size = 10
@@ -220,7 +286,8 @@ def run_gemini_synthetic_batch_job(
                         results = call_gemini_for_synthetic_label_batch(
                             client,
                             chunk,
-                            system_instruction=system_instruction
+                            system_instruction=system_instruction,
+                            few_shot_examples=few_shot,
                         )
                         # Match by (entry_type, entry_id) — IDs can repeat across types.
                         results_by_key = {}
