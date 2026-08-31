@@ -38,7 +38,11 @@ from config import (
     MODELS_DIR,
     get_config,
 )
-from magnitu.entry_preview import is_legal_training_entry, training_corpus_text
+from magnitu.entry_preview import (
+    is_analytical_training_entry,
+    is_legal_training_entry,
+    training_corpus_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -895,9 +899,11 @@ def invalidate_embedder_cache():
 
 CONTENT_CAP = 3000
 LEGAL_CONTENT_CAP = 12000  # lex / Leg statutory body text from Seismo
+ANALYTICAL_CONTENT_CAP = 7000  # substack / SRF / scraper long-form analysis
 EMBED_CHUNK_CHARS = 1800   # ~512 E5 tokens per chunk
 MAX_EMBED_CHUNKS = 4
 MAX_EMBED_CHUNKS_LEGAL = 6
+MAX_EMBED_CHUNKS_ANALYTICAL = 6  # 6 × 1800 = 10.8K chars max embeddable
 EMBEDDING_MAX_LENGTH = 512
 SOURCE_NAME_CAP = 120
 SOURCE_CATEGORY_CAP = 80
@@ -1004,13 +1010,18 @@ def _extractive_snippets(full_content: str, patterns: Optional[List[str]] = None
 
 
 def _content_cap_for_entry(entry: dict) -> int:
-    """Character cap for corpus text; higher for lex / Leg entries."""
+    """Character cap for corpus text; higher for lex/Leg and analytical sources."""
     cfg = get_config()
     if is_legal_training_entry(entry):
         try:
             cap = int(cfg.get("embedding_legal_content_cap", LEGAL_CONTENT_CAP) or LEGAL_CONTENT_CAP)
         except (TypeError, ValueError):
             cap = LEGAL_CONTENT_CAP
+    elif is_analytical_training_entry(entry):
+        try:
+            cap = int(cfg.get("embedding_analytical_content_cap", ANALYTICAL_CONTENT_CAP) or ANALYTICAL_CONTENT_CAP)
+        except (TypeError, ValueError):
+            cap = ANALYTICAL_CONTENT_CAP
     else:
         try:
             cap = int(cfg.get("embedding_content_cap", CONTENT_CAP) or CONTENT_CAP)
@@ -1043,7 +1054,8 @@ def _build_entry_text(entry: dict, legal_patterns: Optional[List[str]] = None) -
     Title is repeated so it dominates the embedding even for entries with long
     content.  Corpus text uses ``training_corpus_text`` (HTML stripped; lex/Leg
     boilerplate skipped) and is capped per entry type — higher for statutory
-    sources so Seismo's full body text informs training.
+    sources (lex/Leg) and analytical long-form sources (Substack, SRF, scraper)
+    so Seismo's full body text informs training.
 
     A natural-language context prefix (source type, publisher, legal signals)
     helps E5 interpret institutional gravity.  Legal-signal patterns are scanned
@@ -1127,6 +1139,8 @@ def embed_entries(
         max_c = (
             MAX_EMBED_CHUNKS_LEGAL
             if is_legal_training_entry(entry)
+            else MAX_EMBED_CHUNKS_ANALYTICAL
+            if is_analytical_training_entry(entry)
             else MAX_EMBED_CHUNKS
         )
         for ch in _split_text_chunks(text, max_chunks=max_c):

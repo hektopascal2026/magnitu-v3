@@ -321,6 +321,15 @@ def _default_lex_preview(description: str, excerpt: str) -> str:
 
 LEGAL_SOURCE_TYPES = frozenset({"lex_eu", "lex_ch", "leg_eu", "leg_ch"})
 
+# Analytical long-form sources: Substack newsletters and scraper-extracted
+# articles. These routinely carry 7K-47K chars of substantive analysis. The
+# default 3K cap feeds E5 only the intro/chitchat; the analytical tier gives
+# them the same corpus budget as legal entries.
+# SRF is excluded: its content is full broadcast subtitle transcripts (20K
+# chars of "Mit Live-Untertiteln..."), not analysis. The sendungsbeschrieb
+# (description, ~150 chars) is the actual signal — the 3K default cap is fine.
+ANALYTICAL_SOURCE_TYPES = frozenset({"substack", "scraper"})
+
 
 def is_legal_training_entry(entry: Dict[str, Any]) -> bool:
     """True for lex / Leg rows that carry long statutory body text from Seismo."""
@@ -331,6 +340,18 @@ def is_legal_training_entry(entry: Dict[str, Any]) -> bool:
     if source_type in LEGAL_SOURCE_TYPES:
         return True
     return source_type.startswith("lex_") or source_type.startswith("leg_")
+
+
+def is_analytical_training_entry(entry: Dict[str, Any]) -> bool:
+    """True for long-form analytical sources (Substack, SRF, scraper).
+
+    These sources routinely publish 7K-47K char articles where the
+    substantive analysis starts well past the 3K default cap. The
+    analytical tier gives them a higher content cap and more embed
+    chunks so E5 sees the analysis, not just the intro.
+    """
+    source_type = (entry.get("source_type") or "").strip().lower()
+    return source_type in ANALYTICAL_SOURCE_TYPES
 
 
 def training_corpus_text(entry: Dict[str, Any]) -> str:
