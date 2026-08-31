@@ -56,13 +56,13 @@ REQUEST_TIMEOUT_SEC = 30.0
 # Seismo now acks POST magnitu_recipe before the first rescore batch
 # (rescored_deferred); keep 300s as a backstop for slow desks / old deploys.
 RECIPE_PUSH_TIMEOUT_SEC = 300.0
-RECIPE_PUSH_MAX_ATTEMPTS = 3
-RECIPE_PUSH_RETRY_SLEEP_SEC = 5.0
 
 # Embed and store in sub-batches so partial progress survives a worker
 # timeout. Previously the whole batch was embedded then stored at the end —
 # a timeout during encoding lost all work and the backlog never drained.
 EMBED_SUB_BATCH_SIZE = 50
+RECIPE_PUSH_MAX_ATTEMPTS = 3
+RECIPE_PUSH_RETRY_SLEEP_SEC = 5.0
 
 
 def _request(method: str, params: dict,
@@ -195,6 +195,7 @@ def _pull_entry_type_drain(
     entry_type: str,
     since: Optional[str] = None,
     page_size: int = SEISMO_ENTRIES_PAGE_SIZE,
+    since_column: Optional[str] = None,
 ) -> int:
     """Drain one family with ``order=asc`` until Seismo reports ``drain_complete``.
 
@@ -218,6 +219,8 @@ def _pull_entry_type_drain(
         }
         if cursor:
             params["since"] = cursor
+        if since_column:
+            params["since_column"] = since_column
         if after_id:
             params["after_id"] = str(after_id)
 
@@ -278,6 +281,7 @@ def pull_entries(
     limit: int = 500,
     compute_embeddings: bool = True,
     drain: bool = False,
+    since_column: Optional[str] = None,
 ) -> int:
     """Fetch entries from mothership Seismo and store locally.
 
@@ -296,7 +300,7 @@ def pull_entries(
     page_size = max(1, min(int(limit), SEISMO_ENTRIES_PAGE_SIZE))
 
     if drain or since:
-        total = _pull_entry_type_drain(entry_type, since=since, page_size=page_size)
+        total = _pull_entry_type_drain(entry_type, since=since, page_size=page_size, since_column=since_column)
     else:
         params = {
             "action": "magnitu_entries",
@@ -348,12 +352,17 @@ def pull_all_entry_types(
         type_since = since
         if per_type_since is not None:
             type_since = per_type_since.get(entry_type)
+        # feed_item: use cached_at as the sync cursor to catch late-ingested
+        # items whose published_date is backdated by the source (RSS feeds that
+        # deliver items days after their stated publication date).
+        type_since_column = "cached_at" if entry_type == "feed_item" else None
         total += pull_entries(
             since=type_since,
             entry_type=entry_type,
             limit=SEISMO_ENTRIES_PAGE_SIZE,
             compute_embeddings=False,
             drain=drain,
+            since_column=type_since_column,
         )
 
     cfg = get_config()
