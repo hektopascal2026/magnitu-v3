@@ -99,8 +99,6 @@ DEFAULTS = {
     # Higher cap for lex_item / calendar_event (Leg) and lex_* / leg_* source types.
     "embedding_legal_content_cap": 12000,
     "use_gpu": False,  # Use CUDA/MPS when available for embeddings
-    # Blend toward investigation_lead in pushed relevance_score (0 = off, max 0.25).
-    "discovery_lead_blend": 0.0,
     # Training knobs (all default to no-op):
     # Half-life in days for a time-decay on label age. 0 disables decay.
     "label_time_decay_days": 0,
@@ -147,8 +145,7 @@ DEFAULTS = {
     # Shared Seismo database pruning policy: max days of data Seismo retains.
     # Dynamically fetched from Seismo. Scores/labels pushed are constrained to this.
     "seismo_pruning_days": 0,
-    # Push policy (ML window). Pipeline does not read these.
-    "rank_normalize_scores": True,
+    # Push policy (ML window). Pipeline does not read this.
     "score_push_days": 14,
     # Distill: Spearman quality floor. 0 disables. Below floor: no recipe push.
     "recipe_quality_floor": 0.30,
@@ -168,7 +165,6 @@ PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
     "recipe_top_keywords",
     "auto_train_after_n_labels",
     "alert_threshold",
-    "discovery_lead_blend",
     "label_time_decay_days",
     "label_time_decay_floor",
     "label_time_decay_priority_exempt",
@@ -176,7 +172,6 @@ PROFILE_TRAINING_SETTINGS_KEYS = frozenset({
     "reasoning_weight_boost",
     "synthetic_label_weight",
     "gemini_mode",
-    "prior_target_override",
 })
 
 

@@ -48,14 +48,6 @@ F1_HARD_DROP_LIMIT = 0.10
 # so this functions as: no lead the old model caught may drop out of the
 # top-30. That is the doctrine for a threat-hunting system, not a tuning artifact.
 LEAD_RECALL_SLACK = 0.10
-# When live prior offsets cost at least this much macro-F1 on the holdout,
-# compare promote F1 without priors while keeping ranking metrics live.
-PRIOR_HURT_F1_GAP = 0.03
-
-# Pre-push score-drift tripwire (sync_log only; not in the window-report payload).
-SCORE_DRIFT_EWMA_SPAN = 14
-SCORE_DRIFT_EWMA_ALPHA = 2.0 / (SCORE_DRIFT_EWMA_SPAN + 1.0)
-SCORE_DRIFT_MEAN_ABS = 0.08
 
 
 def _distill_recipe_in_subprocess(profile_id: int) -> int:
@@ -248,151 +240,6 @@ def _model_meta_for_push(profile_id: int, model_row: Dict) -> Optional[Dict]:
     }
 
 
-def _rank_normalize_push_scores(scores: List[Dict]) -> List[Dict]:
-    """Replace relevance_score with percentile rank (ties share mean rank).
-    Monotone transform: Seismo only sorts/thresholds, so ordering is preserved
-    while spreading scores over (0, 1] and removing the ~0.5 composite attractor.
-    """
-    n = len(scores)
-    if n < 2:
-        return scores
-    order = sorted(range(n), key=lambda i: scores[i]["relevance_score"])
-    ranks = [0.0] * n
-    i = 0
-    while i < n:
-        j = i
-        while (
-            j + 1 < n
-            and scores[order[j + 1]]["relevance_score"]
-            == scores[order[i]]["relevance_score"]
-        ):
-            j += 1
-        mean_rank = (i + j + 2) / 2.0
-        for k in range(i, j + 1):
-            ranks[order[k]] = mean_rank
-        i = j + 1
-    for idx, row in enumerate(scores):
-        row["relevance_score"] = round(ranks[idx] / n, 4)
-    return scores
-
-
-def _percentile(sorted_vals: List[float], p: float) -> float:
-    """Linear-interpolated percentile, p in 0–100."""
-    n = len(sorted_vals)
-    if n == 0:
-        return 0.0
-    if n == 1:
-        return float(sorted_vals[0])
-    k = (n - 1) * (p / 100.0)
-    lo = int(math.floor(k))
-    hi = int(math.ceil(k))
-    if lo == hi:
-        return float(sorted_vals[lo])
-    return float(sorted_vals[lo] * (hi - k) + sorted_vals[hi] * (k - lo))
-
-
-def _score_batch_stats(scores: List[Dict]) -> Optional[Dict[str, float]]:
-    vals = []  # type: List[float]
-    for row in scores:
-        try:
-            vals.append(float(row.get("relevance_score")))
-        except (TypeError, ValueError):
-            continue
-    if not vals:
-        return None
-    ordered = sorted(vals)
-    mean = float(sum(vals)) / float(len(vals))
-    return {
-        "count": float(len(vals)),
-        "mean": mean,
-        "p10": _percentile(ordered, 10.0),
-        "p50": _percentile(ordered, 50.0),
-        "p90": _percentile(ordered, 90.0),
-    }
-
-
-def _record_push_score_drift(
-    profile_id: int,
-    scores: List[Dict],
-    rank_normalize: bool,
-) -> Optional[str]:
-    """EWMA tripwire on pushed means. Returns sync_log details if it fired.
-
-    Never writes window-report keys. First window and rank-normalize flips
-    re-initialize the baseline instead of alerting on the semantics jump.
-    """
-    stats = _score_batch_stats(scores)
-    if stats is None:
-        return None
-    flag = 1 if rank_normalize else 0
-    prev = db.get_score_drift_baseline(profile_id)
-    mean_now = float(stats["mean"])
-    fired = None  # type: Optional[str]
-
-    if prev is None:
-        ewma = mean_now
-        windows = 1
-    else:
-        last_flag = prev.get("last_rank_normalize")
-        if last_flag is not None and int(last_flag) != flag:
-            ewma = mean_now
-            windows = 1
-            fired = "drift baseline re-initialized (semantics change)"
-            db.log_sync(
-                "score_drift",
-                int(stats["count"]),
-                fired,
-                profile_id=profile_id,
-            )
-        else:
-            ewma_prev = float(prev.get("ewma_mean") or mean_now)
-            if abs(mean_now - ewma_prev) > SCORE_DRIFT_MEAN_ABS:
-                fired = (
-                    "score_drift |mean_now-mean_baseline|="
-                    "{:.4f} mean_now={:.4f} baseline={:.4f} n={}".format(
-                        abs(mean_now - ewma_prev),
-                        mean_now,
-                        ewma_prev,
-                        int(stats["count"]),
-                    )
-                )
-                db.log_sync(
-                    "score_drift",
-                    int(stats["count"]),
-                    fired,
-                    profile_id=profile_id,
-                )
-            ewma = (
-                SCORE_DRIFT_EWMA_ALPHA * mean_now
-                + (1.0 - SCORE_DRIFT_EWMA_ALPHA) * ewma_prev
-            )
-            windows = int(prev.get("window_count") or 0) + 1
-
-    db.upsert_score_drift_baseline(
-        profile_id,
-        ewma,
-        windows,
-        flag,
-        int(stats["count"]),
-        mean_now,
-        float(stats["p10"]),
-        float(stats["p50"]),
-        float(stats["p90"]),
-    )
-    logger.info(
-        "Score push stats profile=%s n=%d mean=%.4f p10=%.4f p50=%.4f p90=%.4f ewma=%.4f%s",
-        profile_id,
-        int(stats["count"]),
-        mean_now,
-        float(stats["p10"]),
-        float(stats["p50"]),
-        float(stats["p90"]),
-        ewma,
-        " [{}]".format(fired) if fired else "",
-    )
-    return fired
-
-
 def _label_counts(profile_id: int, trained_at: Optional[str] = None) -> Dict[str, int]:
     """Total / trainable (joined) / orphan / since-last-train counts for a profile."""
     conn = db.get_db()
@@ -441,10 +288,8 @@ def _lead_recall_ok(old: Optional[dict], new: dict) -> bool:
 def evaluate_model_update(
     old_metrics: Optional[dict],
     new_metrics: dict,
-    *,
-    first_prior_transition: bool = False,
 ) -> bool:
-    """Promote gate v2: mission first, macro-F1 as a catastrophe breaker.
+    """Promote gate: mission first, macro-F1 as a catastrophe breaker.
 
     (1) Cold start promotes.
     (2) Lead-recall guard applies to every promote path: a promotion that
@@ -452,10 +297,7 @@ def evaluate_model_update(
     (3) Big top-of-feed win: p@30 up >= PROMOTE_BIG_P30_WIN (~one relevant
         item on a ~20-row holdout) tolerates an F1 dip up to
         F1_HARD_DROP_LIMIT (~2-3 tail rows; beyond that we don't trust the
-        distilled recipe). On the one-time first prior-fit transition
-        (incumbent has no prior sidecar), any p@30 gain of PROMOTE_MARGIN
-        buys the same F1 catastrophe tolerance — otherwise a pre-prior
-        live model can never promote and the transition path never retires.
+        distilled recipe).
     (4) Legacy two-path gate unchanged (small ranking win with strict F1
         guard, or F1 win with ranking slack).
     """
@@ -471,11 +313,8 @@ def evaluate_model_update(
     if not _lead_recall_ok(old_metrics, new_metrics):
         return False
 
-    # Big top-of-feed win buys bounded F1 tolerance. First prior-fit
-    # transition uses the same F1 floor with a lower ranking bar so a
-    # pre-prior incumbent can exit the rollout special-case.
-    big_win_bar = PROMOTE_MARGIN if first_prior_transition else PROMOTE_BIG_P30_WIN
-    if p30_gain >= big_win_bar and f1_gain >= -F1_HARD_DROP_LIMIT:
+    # Big top-of-feed win buys bounded F1 tolerance.
+    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain >= -F1_HARD_DROP_LIMIT:
         return True
 
     # Legacy gate, byte-identical to today.
@@ -489,15 +328,9 @@ def evaluate_model_update(
 def _should_promote(
     current_model: Optional[dict],
     res: dict,
-    *,
-    first_prior_transition: bool = False,
 ) -> bool:
-    """Delegate to evaluate_model_update (promote gate v2)."""
-    return evaluate_model_update(
-        current_model,
-        res,
-        first_prior_transition=first_prior_transition,
-    )
+    """Delegate to evaluate_model_update (promote gate)."""
+    return evaluate_model_update(current_model, res)
 
 
 def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
@@ -511,97 +344,6 @@ def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
             )
         )
     return "Model rejected. Keeping older model."
-
-
-def _model_uses_prior_offsets(model_info: Optional[dict]) -> bool:
-    """True when the stored artifact has a prior-fit sidecar with offsets."""
-    if not model_info:
-        return False
-    model_path = model_info.get("model_path") or ""
-    if not model_path:
-        return False
-    cal = pipeline.load_calibration(model_path)
-    if not isinstance(cal, dict):
-        return False
-    prior_fit = cal.get("prior_fit")
-    if not isinstance(prior_fit, dict):
-        return False
-    return isinstance(prior_fit.get("prior_log_offsets"), dict)
-
-
-def _prior_rollout_gate_metrics(
-    current_model: Optional[dict],
-    candidate_model: dict,
-    profile_id: int,
-    old_live_metrics: Optional[dict],
-    new_live_metrics: dict,
-) -> tuple[Optional[dict], dict, str]:
-    """Use no-prior F1 during census-prior rollout without changing ranking gates.
-
-    Keep p@30 and lead_recall on live prior-adjusted scores, but compare macro-F1
-    without prior offsets when either:
-    (1) the incumbent predates prior sidecars and the candidate is the first
-        prior-enabled artifact; or
-    (2) the candidate's live prior offsets cost >= PRIOR_HURT_F1_GAP macro-F1 on
-        the current holdout (census priors too harsh for this train pass).
-
-    Steady-state behavior is unchanged when priors are neutral or already rolled out.
-
-    Returns (old_metrics, new_metrics, rollout_mode) where rollout_mode is
-    ``\"\"``, ``\"first_transition\"``, or ``\"prior_hurt\"``.
-    """
-    if not current_model:
-        return old_live_metrics, new_live_metrics, ""
-    if not _model_uses_prior_offsets(candidate_model):
-        return old_live_metrics, new_live_metrics, ""
-
-    new_np = pipeline.evaluate_stored_model(
-        candidate_model, profile_id=profile_id, apply_prior=False
-    )
-    if new_np.get("success") is not True:
-        logger.warning(
-            "Prior-rollout no-prior rematch failed for candidate (%s); "
-            "using live prior-adjusted metrics.",
-            new_np.get("error", "unknown"),
-        )
-        return old_live_metrics, new_live_metrics, ""
-
-    new_live_f1 = float(new_live_metrics.get("f1_score") or 0.0)
-    new_np_f1 = float(new_np.get("f1_score") or 0.0)
-    first_transition = not _model_uses_prior_offsets(current_model)
-    prior_hurt = new_live_f1 + PRIOR_HURT_F1_GAP < new_np_f1
-    if not first_transition and not prior_hurt:
-        return old_live_metrics, new_live_metrics, ""
-
-    old_np = pipeline.evaluate_stored_model(
-        current_model, profile_id=profile_id, apply_prior=False
-    )
-    if old_np.get("success") is not True:
-        logger.warning(
-            "Prior-rollout no-prior rematch failed for incumbent (%s); "
-            "using live prior-adjusted metrics.",
-            old_np.get("error", "unknown"),
-        )
-        return old_live_metrics, new_live_metrics, ""
-
-    old_gate = dict(old_live_metrics or {})
-    new_gate = dict(new_live_metrics)
-    old_gate["f1_score"] = old_np.get("f1_score")
-    new_gate["f1_score"] = new_np.get("f1_score")
-    mode = "first_transition" if first_transition else "prior_hurt"
-    reason = "first prior-fit transition" if first_transition else "prior hurt holdout F1"
-    logger.info(
-        "Prior-rollout gate (%s): kept live p@30 / lead-recall, "
-        "but used no-prior F1 %.3f→%.3f for compare.",
-        reason,
-        float(old_np.get("f1_score") or 0.0),
-        float(new_np.get("f1_score") or 0.0),
-    )
-    return old_gate, new_gate, mode
-
-
-# Back-compat alias for tests / scripts.
-_prior_transition_gate_metrics = _prior_rollout_gate_metrics
 
 
 def _embed_pending_until_done(max_entries: int = 0) -> None:
@@ -655,21 +397,16 @@ def _sort_prepared_desks(prepared: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     )
 
 
-def _score_push_policy(cfg: Optional[dict] = None):
-    """(rank_normalize: bool, days: int) from config. Pipeline-agnostic push policy."""
+def _score_push_days(cfg: Optional[dict] = None) -> int:
+    """Score push lookback days from config."""
     if cfg is None:
         cfg = get_config()
-    raw_flag = cfg.get("rank_normalize_scores", True)
-    if isinstance(raw_flag, str):
-        rank_norm = raw_flag.strip().lower() not in ("0", "false", "no", "off")
-    else:
-        rank_norm = bool(raw_flag)
     try:
         raw_days = cfg.get("score_push_days", 14)
         days = 14 if raw_days is None else int(raw_days)
     except (TypeError, ValueError):
         days = 14
-    return rank_norm, max(1, days)
+    return max(1, days)
 
 
 def main():
@@ -928,18 +665,7 @@ def main():
                             "falling back to stored table metrics.",
                             rematch.get("error", "unknown"),
                         )
-                old_for_gate, new_for_gate, rollout_mode = _prior_rollout_gate_metrics(
-                    current_model,
-                    res,
-                    profile_id,
-                    old_for_gate,
-                    res,
-                )
-                promoted = _should_promote(
-                    old_for_gate,
-                    new_for_gate,
-                    first_prior_transition=(rollout_mode == "first_transition"),
-                )
+                promoted = _should_promote(old_for_gate, res)
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:
@@ -949,19 +675,7 @@ def main():
                     new_f1 = float(report["f1_new"] or 0.0)
                     p30_gain = new_p30 - old_p30
                     f1_gain = new_f1 - old_f1
-                    if rollout_mode == "first_transition" and f1_gain < 0:
-                        logger.info(
-                            "Promote gate passed (first prior-fit transition; "
-                            "p@30 %.3f→%.3f, no-prior f1 %.3f→%.3f, "
-                            "accepted f1 dip %.3f).",
-                            float(old_for_gate.get("precision_at_30") or 0.0),
-                            float(new_for_gate.get("precision_at_30") or 0.0),
-                            float(old_for_gate.get("f1_score") or 0.0),
-                            float(new_for_gate.get("f1_score") or 0.0),
-                            float(new_for_gate.get("f1_score") or 0.0)
-                            - float(old_for_gate.get("f1_score") or 0.0),
-                        )
-                    elif p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain < 0:
+                    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain < 0:
                         logger.info(
                             "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f, "
                             "accepted f1 dip %.3f).",
@@ -1019,19 +733,13 @@ def main():
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
-                rank_norm, push_days = _score_push_policy()
+                push_days = _score_push_days()
                 recent_entries = db.get_recent_entries(
                     days=push_days, include_embedding=False
                 )
                 if recent_entries:
                     scores = pipeline.score_entries(recent_entries, profile_id=profile_id)
                     if scores:
-                        if rank_norm:
-                            scores = _rank_normalize_push_scores(scores)
-                        try:
-                            _record_push_score_drift(profile_id, scores, rank_norm)
-                        except Exception as drift_err:
-                            logger.warning("Score-drift telemetry failed: %s", drift_err)
                         model_meta = _model_meta_for_push(profile_id, current_model)
                         sync.push_scores(
                             scores,
@@ -1039,11 +747,7 @@ def main():
                             model_meta=model_meta,
                             profile=prof,
                         )
-                        logger.info(
-                            "Pushed %d %s scores.",
-                            len(scores),
-                            "rank-normalized" if rank_norm else "absolute",
-                        )
+                        logger.info("Pushed %d absolute scores.", len(scores))
             except Exception as e:
                 logger.error("Error during score push: %s", e)
                 has_errors = True

@@ -85,8 +85,6 @@ try:
     assert cfg["model_architecture"] == "transformer"
     assert cfg["embedding_dim"] == 768
     assert "embedding_stack_generation" in cfg
-    assert "discovery_lead_blend" in cfg
-    assert cfg.get("discovery_lead_blend", 0) == 0.0
     ok()
 except Exception as e:
     fail(str(e))

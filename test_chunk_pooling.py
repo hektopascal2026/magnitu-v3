@@ -1,10 +1,9 @@
-"""Tests for chunk pooling, rank-normalized push scores, and synthetic weights."""
+"""Tests for chunk pooling and synthetic weights."""
 import unittest
 from unittest import mock
 
 import numpy as np
 
-import main
 import pipeline
 
 
@@ -41,24 +40,6 @@ class TestChunkPooling(unittest.TestCase):
         )
         self.assertAlmostEqual(pooled[0], 0.25)
         self.assertAlmostEqual(pooled[1], 0.75)
-
-
-class TestRankNormalizePushScores(unittest.TestCase):
-    def test_spreads_clustered_scores(self):
-        scores = [
-            {"relevance_score": 0.49},
-            {"relevance_score": 0.51},
-            {"relevance_score": 0.49},
-        ]
-        out = main._rank_normalize_push_scores(scores)
-        self.assertAlmostEqual(out[1]["relevance_score"], 1.0)
-        self.assertAlmostEqual(out[0]["relevance_score"], 0.5)
-        self.assertAlmostEqual(out[2]["relevance_score"], 0.5)
-
-    def test_single_entry_unchanged(self):
-        scores = [{"relevance_score": 0.42}]
-        out = main._rank_normalize_push_scores(scores)
-        self.assertAlmostEqual(out[0]["relevance_score"], 0.42)
 
 
 class TestSyntheticLabelWeight(unittest.TestCase):

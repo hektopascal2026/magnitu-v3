@@ -3,29 +3,6 @@ import pytest
 from unittest.mock import patch, MagicMock
 import ml_window
 
-def test_rank_normalize_push_scores():
-    scores = [
-        {"id": 1, "relevance_score": 0.1},
-        {"id": 2, "relevance_score": 0.9},
-        {"id": 3, "relevance_score": 0.1},
-        {"id": 4, "relevance_score": 0.5},
-    ]
-    # Ranks will be:
-    # 0.1 and 0.1 (ties at rank 1 and 2, mean rank = 1.5) -> 1.5 / 4 = 0.375
-    # 0.5 (rank 3) -> 3 / 4 = 0.75
-    # 0.9 (rank 4) -> 4 / 4 = 1.0
-    normalized = ml_window._rank_normalize_push_scores(scores)
-    
-    id_to_score = {s["id"]: s["relevance_score"] for s in normalized}
-    assert id_to_score[1] == 0.375
-    assert id_to_score[3] == 0.375
-    assert id_to_score[4] == 0.75
-    assert id_to_score[2] == 1.0
-
-def test_empty_or_single_score():
-    assert ml_window._rank_normalize_push_scores([]) == []
-    assert ml_window._rank_normalize_push_scores([{"id": 1, "relevance_score": 0.5}]) == [{"id": 1, "relevance_score": 0.5}]
-
 
 def test_is_oom_kill_returncode():
     assert ml_window._is_oom_kill_returncode(137)
@@ -175,156 +152,6 @@ def test_evaluate_model_update_lead_recall_guard_skipped_when_missing_or_zero():
     assert ml_window.evaluate_model_update(
         incident_old,
         dict(incident_new, lead_recall_at_30=0.4),
-    )
-
-
-@patch("ml_window.pipeline.load_calibration")
-def test_model_uses_prior_offsets_reads_sidecar(mock_load_calibration):
-    mock_load_calibration.return_value = {
-        "prior_fit": {"prior_log_offsets": {"noise": 0.1}}
-    }
-    assert ml_window._model_uses_prior_offsets({"model_path": "x.joblib"})
-    mock_load_calibration.assert_called_once_with("x.joblib")
-
-
-@patch("ml_window.pipeline")
-@patch("ml_window._model_uses_prior_offsets")
-def test_prior_transition_gate_uses_no_prior_f1_for_first_rollout(
-    mock_uses_prior,
-    mock_pipeline,
-):
-    old_live = {
-        "precision_at_30": 0.4667,
-        "f1_score": 0.4849,
-        "lead_recall_at_30": 0.9,
-    }
-    new_live = {
-        "precision_at_30": 0.4667,
-        "f1_score": 0.3219,
-        "lead_recall_at_30": 0.9,
-        "model_path": "new.joblib",
-    }
-    current_model = {"model_path": "old.joblib"}
-    mock_uses_prior.side_effect = [False, True]
-    mock_pipeline.evaluate_stored_model.side_effect = [
-        {"success": True, "f1_score": 0.4849},
-        {"success": True, "f1_score": 0.4630},
-    ]
-
-    old_gate, new_gate, mode = ml_window._prior_rollout_gate_metrics(
-        current_model,
-        new_live,
-        4,
-        old_live,
-        new_live,
-    )
-
-    assert mode == "first_transition"
-    assert old_gate["precision_at_30"] == old_live["precision_at_30"]
-    assert new_gate["precision_at_30"] == new_live["precision_at_30"]
-    assert old_gate["f1_score"] == 0.4849
-    assert new_gate["f1_score"] == 0.4630
-    assert mock_pipeline.evaluate_stored_model.call_args_list[0].kwargs == {
-        "profile_id": 4,
-        "apply_prior": False,
-    }
-    assert mock_pipeline.evaluate_stored_model.call_args_list[1].kwargs == {
-        "profile_id": 4,
-        "apply_prior": False,
-    }
-
-
-@patch("ml_window.pipeline")
-@patch("ml_window._model_uses_prior_offsets")
-def test_prior_transition_gate_skips_when_incumbent_already_has_prior(
-    mock_uses_prior,
-    mock_pipeline,
-):
-    mock_uses_prior.side_effect = lambda m: True
-    old_live = {"precision_at_30": 0.5, "f1_score": 0.4}
-    new_live = {
-        "precision_at_30": 0.5,
-        "f1_score": 0.41,
-        "model_path": "new.joblib",
-    }
-    mock_pipeline.evaluate_stored_model.return_value = {
-        "success": True,
-        "f1_score": 0.405,
-    }
-
-    old_gate, new_gate, mode = ml_window._prior_rollout_gate_metrics(
-        {"model_path": "old.joblib"},
-        new_live,
-        1,
-        old_live,
-        new_live,
-    )
-
-    assert mode == ""
-    assert old_gate is old_live
-    assert new_gate is new_live
-    mock_pipeline.evaluate_stored_model.assert_called_once()
-
-
-@patch("ml_window.pipeline")
-@patch("ml_window._model_uses_prior_offsets")
-def test_prior_rollout_gate_uses_no_prior_f1_when_offsets_hurt_candidate(
-    mock_uses_prior,
-    mock_pipeline,
-):
-    mock_uses_prior.return_value = True
-    old_live = {
-        "precision_at_30": 0.5333,
-        "f1_score": 0.4484,
-        "lead_recall_at_30": 1.0,
-    }
-    new_live = {
-        "precision_at_30": 0.5333,
-        "f1_score": 0.4331,
-        "lead_recall_at_30": 1.0,
-        "model_path": "new.joblib",
-    }
-    current_model = {"model_path": "old.joblib"}
-    mock_pipeline.evaluate_stored_model.side_effect = [
-        {"success": True, "f1_score": 0.4835},
-        {"success": True, "f1_score": 0.4118},
-    ]
-
-    old_gate, new_gate, mode = ml_window._prior_rollout_gate_metrics(
-        current_model,
-        new_live,
-        2,
-        old_live,
-        new_live,
-    )
-
-    assert mode == "prior_hurt"
-    assert old_gate["precision_at_30"] == old_live["precision_at_30"]
-    assert new_gate["precision_at_30"] == new_live["precision_at_30"]
-    assert old_gate["f1_score"] == 0.4118
-    assert new_gate["f1_score"] == 0.4835
-    assert ml_window.evaluate_model_update(old_gate, new_gate)
-
-
-def test_first_prior_transition_eases_big_win_bar():
-    """EU-like: modest p@30 gain + no-prior F1 dip within catastrophe cap."""
-    old = {
-        "precision_at_30": 0.5333,
-        "f1_score": 0.475,
-        "lead_recall_at_30": 0.8462,
-    }
-    new = {
-        "precision_at_30": 0.5667,
-        "f1_score": 0.4234,
-        "lead_recall_at_30": 0.9231,
-    }
-    assert not ml_window.evaluate_model_update(old, new)
-    assert ml_window.evaluate_model_update(old, new, first_prior_transition=True)
-    # Still reject when F1 crater exceeds hard drop even on transition.
-    assert not ml_window.evaluate_model_update(
-        old,
-        {**new, "f1_score": 0.350},
-        first_prior_transition=True,
     )
 
 
@@ -500,16 +327,7 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     mock_sync.vault_upload.assert_not_called()
 
 
-def test_score_push_policy_defaults_and_config():
-    assert ml_window._score_push_policy({}) == (True, 14)
-    assert ml_window._score_push_policy(
-        {"rank_normalize_scores": False, "score_push_days": 7}
-    ) == (False, 7)
-    assert ml_window._score_push_policy({"rank_normalize_scores": "false"})[0] is False
-    assert ml_window._score_push_policy({"score_push_days": 0})[1] == 1
-
-
-def test_rank_normalize_early_return_identical_both_flag_values():
-    row = [{"id": 1, "relevance_score": 0.42}]
-    assert ml_window._rank_normalize_push_scores(row) == row
-    assert ml_window._rank_normalize_push_scores([]) == []
+def test_score_push_days_defaults_and_config():
+    assert ml_window._score_push_days({}) == 14
+    assert ml_window._score_push_days({"score_push_days": 7}) == 7
+    assert ml_window._score_push_days({"score_push_days": 0}) == 1

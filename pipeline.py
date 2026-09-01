@@ -311,27 +311,16 @@ def build_prior_fit(
 
     π̂ is the class share of the *actual* fit weights (balanced class_weight
     times the sample_weight vector passed to ``fit``). π is the labeled
-    empirical distribution (unweighted counts), optionally replaced by
-    ``prior_target_override``. Absent classes are floored at ``0.5/N`` then
-    renormalized so logs stay finite.
+    empirical distribution (unweighted counts). Absent classes are floored
+    at ``0.5/N`` then renormalized so logs stay finite.
     """
     y_arr = np.asarray(y)
     n = int(y_arr.shape[0])
     floor = _prior_floor(n)
     names = list(class_names)
-    override = None
-    if config:
-        override = config.get("prior_target_override")
-        if override is not None and not isinstance(override, dict):
-            override = None
 
     counts = {c: int(np.sum(y_arr == c)) for c in names}
-    if override:
-        target_raw = {c: float(override[c]) for c in names if c in override}
-        if len(target_raw) != len(names):
-            target_raw = {c: counts[c] / float(max(n, 1)) for c in names}
-    else:
-        target_raw = {c: counts[c] / float(max(n, 1)) for c in names}
+    target_raw = {c: counts[c] / float(max(n, 1)) for c in names}
     target = _renormalize_priors(target_raw, names, floor)
 
     weights = _fit_row_weights(y_arr, sample_weight)
@@ -641,24 +630,6 @@ def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
 
     out["ranking_note"] = "; ".join(s for s in notes if s)
     return out
-
-
-def _discovery_adjusted_relevance(composite: float, p_lead: float,
-                                   profile_id: Optional[int] = None) -> float:
-    """
-    Optional blend toward investigation_lead for discovery (config:
-    discovery_lead_blend in [0, 0.25]).
-    """
-    if profile_id is not None:
-        cfg = db.get_effective_config(profile_id)
-    else:
-        cfg = get_config()
-    blend = float(cfg.get("discovery_lead_blend", 0.0) or 0.0)
-    blend = max(0.0, min(0.25, blend))
-    if blend <= 0.0:
-        return composite
-    raw = (1.0 - blend) * composite + blend * p_lead
-    return float(min(1.0, max(0.0, raw)))
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1995,14 +1966,12 @@ def _score_transformer(
         entry = entries[orig_idx]
         probs = dict(zip(class_names, probabilities[j].tolist()))
         composite = _relevance_from_probs(probs, class_names)
-        p_lead = float(probs.get("investigation_lead", 0.0))
-        relevance = _discovery_adjusted_relevance(composite, p_lead, profile_id=pid)
         pred_idx = int(np.argmax(probabilities[j]))
         predicted_label = class_names[pred_idx]
         results.append({
             "entry_type": entry["entry_type"],
             "entry_id": entry["entry_id"],
-            "relevance_score": round(relevance, 4),
+            "relevance_score": round(composite, 4),
             "predicted_label": predicted_label,
             "probabilities": {k: round(v, 4) for k, v in probs.items()},
         })
@@ -2230,14 +2199,12 @@ def _score_tfidf(
     for i, entry in enumerate(entries):
         probs = dict(zip(class_names, probabilities[i].tolist()))
         composite = _relevance_from_probs(probs, class_names)
-        p_lead = float(probs.get("investigation_lead", 0.0))
-        relevance = _discovery_adjusted_relevance(composite, p_lead, profile_id=pid)
         pred_idx = int(np.argmax(probabilities[i]))
         predicted_label = class_names[pred_idx]
         results.append({
             "entry_type": entry["entry_type"],
             "entry_id": entry["entry_id"],
-            "relevance_score": round(relevance, 4),
+            "relevance_score": round(composite, 4),
             "predicted_label": predicted_label,
             "probabilities": {k: round(v, 4) for k, v in probs.items()},
         })

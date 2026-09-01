@@ -396,12 +396,6 @@ def get_profile_by_slug(slug: str) -> Optional[dict]:
 
 def _normalize_training_settings_dict(d: dict) -> None:
     """Clamp per-profile training overrides to valid ranges (mutates in place)."""
-    if "discovery_lead_blend" in d:
-        try:
-            b = float(d.get("discovery_lead_blend", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            b = 0.0
-        d["discovery_lead_blend"] = max(0.0, min(0.25, b))
     if "label_time_decay_days" in d:
         try:
             hl = int(float(d.get("label_time_decay_days", 0) or 0))
@@ -1237,61 +1231,6 @@ def log_sync(direction: str, items_count: int, details: str = "",
     conn.execute(
         "INSERT INTO sync_log (profile_id, direction, items_count, details) VALUES (?, ?, ?, ?)",
         (profile_id, direction, items_count, details)
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_score_drift_baseline(profile_id: int) -> Optional[dict]:
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM score_drift_baseline WHERE profile_id = ?",
-        (profile_id,),
-    ).fetchone()
-    conn.close()
-    return dict(row) if row is not None else None
-
-
-def upsert_score_drift_baseline(
-    profile_id: int,
-    ewma_mean: float,
-    window_count: int,
-    last_rank_normalize: Optional[int],
-    last_count: int,
-    last_mean: float,
-    last_p10: float,
-    last_p50: float,
-    last_p90: float,
-) -> None:
-    conn = get_db()
-    conn.execute(
-        """
-        INSERT INTO score_drift_baseline (
-            profile_id, ewma_mean, window_count, last_rank_normalize,
-            last_count, last_mean, last_p10, last_p50, last_p90, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(profile_id) DO UPDATE SET
-            ewma_mean = excluded.ewma_mean,
-            window_count = excluded.window_count,
-            last_rank_normalize = excluded.last_rank_normalize,
-            last_count = excluded.last_count,
-            last_mean = excluded.last_mean,
-            last_p10 = excluded.last_p10,
-            last_p50 = excluded.last_p50,
-            last_p90 = excluded.last_p90,
-            updated_at = datetime('now')
-        """,
-        (
-            profile_id,
-            float(ewma_mean),
-            int(window_count),
-            last_rank_normalize,
-            int(last_count),
-            float(last_mean),
-            float(last_p10),
-            float(last_p50),
-            float(last_p90),
-        ),
     )
     conn.commit()
     conn.close()
