@@ -131,6 +131,14 @@ DEFAULTS = {
     # When matched, the phrase is prepended to the embedded text AND the recipe
     # keyword for it is boosted toward investigation_lead.
     "legal_signal_patterns": [],
+    # Classifier head regularization. Lower C = stronger regularization (less overfitting
+    # on small label sets). 0.01 was validated across all desks in D2+D3 evaluation
+    # (Sep 2026): improves ranking and lead recall without per-desk tuning.
+    "classifier_c": 0.01,
+    # Apply prior correction during scoring. False = temperature-only calibration (P1).
+    # Prior correction (P3) was found to hurt minority-class recall because the training
+    # class balance doesn't match the live stream distribution (batch-imported labels).
+    "classifier_apply_prior": False,
     # Which profile is the labeling workspace (slug in URLs for Label/Gemini/etc.).
     # None = use DB default profile until user picks one in Settings.
     "active_profile_id": None,

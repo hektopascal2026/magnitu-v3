@@ -428,11 +428,16 @@ def _transformer_fit_kwargs(sample_weight) -> dict:
 
 
 def build_transformer_head_pipeline() -> Pipeline:
-    """StandardScaler + balanced LogReg on frozen embedding vectors."""
+    """StandardScaler + balanced LogReg on frozen embedding vectors.
+
+    C is configurable via ``classifier_c`` in config (default 0.01).
+    Lower C regularizes more, reducing overfitting on small label sets.
+    """
+    c_val = float(get_config().get("classifier_c", 0.01))
     return Pipeline([
         ("scaler", StandardScaler()),
         ("classifier", LogisticRegression(
-            C=1.0,
+            C=c_val,
             class_weight="balanced",
             max_iter=1000,
             solver="lbfgs",
@@ -508,13 +513,17 @@ def classifier_probabilities(
     X: np.ndarray,
     model_path: str,
     cal: Optional[dict] = None,
-    apply_prior: bool = True,
+    apply_prior: Optional[bool] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Return (probabilities, class_names). Single scoring path: prior-correct
     logits (sidecar v2), then temperature-scale. Sidecar v1 (no ``prior_fit``)
     is temperature only — byte-identical to pre-v2 scoring.
+
+    apply_prior defaults to config ``classifier_apply_prior`` (default False).
     """
+    if apply_prior is None:
+        apply_prior = bool(get_config().get("classifier_apply_prior", False))
     class_names = clf.classes_.tolist()
     if cal is None and model_path:
         cal = load_calibration(model_path)
@@ -1419,7 +1428,7 @@ def evaluate_fitted_model(
     y_test,
     model_path: str = "",
     cal: Optional[dict] = None,
-    apply_prior: bool = True,
+    apply_prior: Optional[bool] = None,
 ) -> dict:
     """Score a loaded classifier on a holdout via ``classifier_probabilities()``."""
     try:
@@ -1496,7 +1505,7 @@ def current_holdout_features(
 def evaluate_stored_model(
     model_info: Optional[dict],
     profile_id: int = 1,
-    apply_prior: bool = True,
+    apply_prior: Optional[bool] = None,
 ) -> dict:
     """Load a stored ``.joblib`` + sidecar and score the current labeled holdout.
 
@@ -1567,9 +1576,15 @@ def load_active_model(profile_id: int = 1):
 def score_entries(
     entries: List[dict],
     profile_id: int = 1,
-    apply_prior: bool = True,
+    apply_prior: Optional[bool] = None,
 ) -> List[dict]:
-    """Score entries using the active model for the given profile."""
+    """Score entries using the active model for the given profile.
+
+    apply_prior defaults to the config key ``classifier_apply_prior`` (default False).
+    Set explicitly to override per-call.
+    """
+    if apply_prior is None:
+        apply_prior = bool(get_config().get("classifier_apply_prior", False))
     model_info = db.get_active_model(profile_id=profile_id)
     if not model_info:
         return []
@@ -1888,7 +1903,7 @@ def _embedding_blobs_for_entries(entries: List[dict]) -> dict:
 def _score_transformer(
     entries: List[dict],
     model_info: dict,
-    apply_prior: bool = True,
+    apply_prior: Optional[bool] = None,
 ) -> List[dict]:
     """Score entries using cached embeddings + LogReg classifier.
 
@@ -2177,7 +2192,7 @@ def _train_tfidf(profile_id: int = 1,
 def _score_tfidf(
     entries: List[dict],
     model_info: Optional[dict] = None,
-    apply_prior: bool = True,
+    apply_prior: Optional[bool] = None,
 ) -> List[dict]:
     """Score entries using the TF-IDF + LogReg pipeline."""
     if model_info is None:
