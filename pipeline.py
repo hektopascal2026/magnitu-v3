@@ -1464,7 +1464,7 @@ def recent_holdout_features(
                e.source_category, e.fetched_at
         FROM labels l
         JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
-        WHERE l.profile_id = ? AND l.label NOT IN ('pending', 'pending_gemini')
+        WHERE l.profile_id = ? AND (l.pending_gemini_job_id IS NULL OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
         ORDER BY e.fetched_at DESC
         LIMIT ?
     """, (profile_id, n_recent)).fetchall()
