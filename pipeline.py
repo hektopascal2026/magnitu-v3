@@ -1441,6 +1441,67 @@ def evaluate_fitted_model(
     return _holdout_classification_metrics(probs, cn, y_test)
 
 
+def recent_holdout_features(
+    profile_id: int,
+    architecture: str,
+    n_recent: int = 100,
+) -> Tuple[Optional[Any], Optional[List[str]], str]:
+    """Build a holdout from the most recently fetched labeled items.
+
+    Sorts labels by the entry's ``fetched_at`` (when the story arrived in Seismo)
+    descending and takes the top ``n_recent``. This is the set that matters for
+    the journalist: "on the stories that recently arrived, does the model still
+    rank the good ones at the top?"
+
+    Used by the promote gate so old vs new comparison is on recent production
+    traffic, not a random hash slice of months-old data.
+    """
+    conn = db.get_db()
+    rows = conn.execute("""
+        SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at,
+               COALESCE(l.label_source, '') AS label_source,
+               e.title, e.description, e.content, e.source_type, e.source_name,
+               e.source_category, e.fetched_at
+        FROM labels l
+        JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
+        WHERE l.profile_id = ? AND l.label NOT IN ('pending', 'pending_gemini')
+        ORDER BY e.fetched_at DESC
+        LIMIT ?
+    """, (profile_id, n_recent)).fetchall()
+    conn.close()
+    labeled = [dict(r) for r in rows]
+    if len(labeled) < 2:
+        return None, None, "fewer than 2 recent labeled rows"
+    arch = (architecture or "transformer").strip().lower() or "transformer"
+    if arch == "transformer":
+        cfg = db.get_effective_config(profile_id)
+        embedding_dim = cfg.get("embedding_dim", 768)
+        emb_map = _embedding_blobs_for_entries(labeled)
+        X_list: List[np.ndarray] = []
+        y_list: List[str] = []
+        skipped = 0
+        for lbl in labeled:
+            key = db.entry_key_from_mapping(lbl)
+            emb_bytes = emb_map.get(key)
+            if not emb_bytes:
+                skipped += 1
+                continue
+            X_list.append(bytes_to_embedding(emb_bytes, embedding_dim))
+            y_list.append(lbl["label"])
+        if skipped:
+            logger.info(
+                "Recent-eval skipped %d labeled rows without embeddings (profile %s)",
+                skipped, profile_id,
+            )
+        if len(X_list) < 2:
+            return None, None, "not enough labeled embeddings in recent set"
+        return np.array(X_list), y_list, ""
+    else:
+        X = _prepare_text(labeled)
+        y_list = [e["label"] for e in labeled]
+        return X, y_list, ""
+
+
 def current_holdout_features(
     profile_id: int,
     architecture: str,
@@ -1539,6 +1600,52 @@ def evaluate_stored_model(
         out["architecture"] = arch
         out["model_path"] = str(path)
         out["eval_set"] = "current_holdout"
+    return out
+
+
+def evaluate_on_recent(
+    model_info: Optional[dict],
+    profile_id: int,
+    n_recent: int = 100,
+    apply_prior: Optional[bool] = None,
+) -> dict:
+    """Score a stored model on the most recent N labeled items.
+
+    Used by the promote gate: both old and new models are scored on the same
+    recent set, so the comparison answers "will the journalist's next day be
+    worse?" instead of "is F1 higher on a random slice of old data?"
+
+    Returns ``{success, precision_at_30, lead_recall_at_30, f1_score, ...}``
+    or ``{success: False, error: ...}``.
+    """
+    if not model_info:
+        return {"success": False, "error": "no model_info"}
+    model_path = model_info.get("model_path") or ""
+    if not model_path:
+        return {"success": False, "error": "no model_path"}
+    path = Path(model_path)
+    if not path.exists():
+        return {"success": False, "error": "artifact missing: {}".format(model_path)}
+    try:
+        clf = joblib.load(str(path))
+    except Exception as e:
+        logger.warning("Recent-eval failed to load %s: %s", model_path, e)
+        return {"success": False, "error": "load failed: {}".format(e)}
+
+    arch = model_info.get("architecture") or "transformer"
+    X_test, y_test, err = recent_holdout_features(profile_id, str(arch), n_recent=n_recent)
+    if err:
+        return {"success": False, "error": err}
+
+    out = evaluate_fitted_model(
+        clf, X_test, y_test, model_path=str(path), apply_prior=apply_prior
+    )
+    if out.get("success") is True:
+        out["version"] = model_info.get("version")
+        out["architecture"] = arch
+        out["model_path"] = str(path)
+        out["eval_set"] = "recent_{}".format(n_recent)
+        out["n_recent"] = len(y_test)
     return out
 
 

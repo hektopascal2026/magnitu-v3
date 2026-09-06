@@ -49,6 +49,22 @@ F1_HARD_DROP_LIMIT = 0.10
 # top-30. That is the doctrine for a threat-hunting system, not a tuning artifact.
 LEAD_RECALL_SLACK = 0.10
 
+# ── Recent-items promote gate ────────────────────────────────────────────
+# The gate scores both old and new models on the most recent N labeled items
+# (by entry fetched_at). This tests "will the journalist's next day be worse?"
+# rather than "is F1 higher on a random slice of old data?"
+# Number of recent labeled items to evaluate on. Capped by available labels.
+GATE_N_RECENT = 100
+# Minimum recent items for the gate to be meaningful. Below this, promote
+# (not enough data to reject a model that might be better).
+GATE_MIN_RECENT = 10
+# p@30 slack: one item flip in top-30 on a 100-row set ≈ 0.033.
+# Allow this much regression before rejecting — it's noise, not degradation.
+GATE_P30_SLACK = 0.05
+# Lead recall slack: with 5-10 leads, one flip = 0.10-0.20 step.
+# Allow one lead to drop before rejecting — quantization, not regression.
+GATE_LEAD_RECALL_SLACK = 0.10
+
 
 def _distill_recipe_in_subprocess(profile_id: int) -> int:
     """
@@ -331,6 +347,60 @@ def _should_promote(
 ) -> bool:
     """Delegate to evaluate_model_update (promote gate)."""
     return evaluate_model_update(current_model, res)
+
+
+def evaluate_recent_gate(
+    old_recent: Optional[dict],
+    new_recent: dict,
+) -> bool:
+    """Conservative promote gate on recent production traffic.
+
+    Tests "will the journalist's next day be worse?" by comparing old and new
+    models on the most recent N labeled items. Only ranking metrics matter —
+    F1 on a small set is noise.
+
+    Rules (all must pass):
+    1. Cold start (no old model): promote.
+    2. Too few recent items to evaluate: promote (can't reject without evidence).
+    3. Lead recall must not drop beyond GATE_LEAD_RECALL_SLACK.
+    4. p@30 must not drop beyond GATE_P30_SLACK.
+    """
+    if not old_recent or not old_recent.get("success"):
+        return True  # cold start or old model couldn't be evaluated
+    if not new_recent.get("success"):
+        return False  # new model couldn't be evaluated on recent set — don't promote blind
+
+    n = int(new_recent.get("n_recent") or 0)
+    if n < GATE_MIN_RECENT:
+        logger.info(
+            "Recent gate: only %d recent items (< %d), promoting without check.",
+            n, GATE_MIN_RECENT,
+        )
+        return True
+
+    old_p30 = float(old_recent.get("precision_at_30") or 0.0)
+    new_p30 = float(new_recent.get("precision_at_30") or 0.0)
+    old_lr = float(old_recent.get("lead_recall_at_30") or 0.0)
+    new_lr = float(new_recent.get("lead_recall_at_30") or 0.0)
+
+    # Lead recall guard: no caught lead may drop out of top-30.
+    # Skip when old has no leads (lr=0) — nothing to lose.
+    if old_lr > 0 and new_lr < old_lr - GATE_LEAD_RECALL_SLACK:
+        logger.info(
+            "Recent gate REJECT: lead_recall %.3f→%.3f (slack %.3f).",
+            old_lr, new_lr, GATE_LEAD_RECALL_SLACK,
+        )
+        return False
+
+    # p@30 guard: top of queue must not get worse.
+    if new_p30 < old_p30 - GATE_P30_SLACK:
+        logger.info(
+            "Recent gate REJECT: p@30 %.3f→%.3f (slack %.3f).",
+            old_p30, new_p30, GATE_P30_SLACK,
+        )
+        return False
+
+    return True
 
 
 def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
@@ -640,59 +710,42 @@ def main():
                 report["candidate_version"] = res.get("version")
                 report["p30_new"] = res.get("precision_at_30")
                 report["f1_new"] = res.get("f1_score")
-                old_for_gate = current_model
+
+                # ── Recent-items promote gate ──
+                # Score both old and new on the most recent N labeled items.
+                # This tests "will the journalist's next day be worse?"
+                # instead of "is F1 higher on a random slice of old data?"
+                new_recent = pipeline.evaluate_on_recent(
+                    res, profile_id=profile_id, n_recent=GATE_N_RECENT,
+                )
+                old_recent = None
                 if current_model:
-                    rematch = pipeline.evaluate_stored_model(
-                        current_model, profile_id=profile_id
+                    old_recent = pipeline.evaluate_on_recent(
+                        current_model, profile_id=profile_id, n_recent=GATE_N_RECENT,
                     )
-                    if rematch.get("success") is True:
-                        old_for_gate = rematch
-                        report["p30_old"] = rematch.get("precision_at_30")
-                        report["f1_old"] = rematch.get("f1_score")
-                        logger.info(
-                            "Common-eval rematch v%s on current holdout: "
-                            "p@30 stored=%.3f rematch=%.3f; "
-                            "f1 stored=%.3f rematch=%.3f.",
-                            current_model.get("version"),
-                            float(current_model.get("precision_at_30") or 0.0),
-                            float(rematch.get("precision_at_30") or 0.0),
-                            float(current_model.get("f1_score") or 0.0),
-                            float(rematch.get("f1_score") or 0.0),
-                        )
-                    else:
-                        logger.warning(
-                            "Common-eval rematch failed (%s); "
-                            "falling back to stored table metrics.",
-                            rematch.get("error", "unknown"),
-                        )
-                promoted = _should_promote(old_for_gate, res)
+
+                if new_recent.get("success"):
+                    report["p30_new_recent"] = new_recent.get("precision_at_30")
+                    report["lr30_new_recent"] = new_recent.get("lead_recall_at_30")
+                    report["n_recent"] = new_recent.get("n_recent")
+                if old_recent and old_recent.get("success"):
+                    report["p30_old_recent"] = old_recent.get("precision_at_30")
+                    report["lr30_old_recent"] = old_recent.get("lead_recall_at_30")
+
+                promoted = evaluate_recent_gate(old_recent, new_recent)
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:
-                    old_p30 = float(report["p30_old"] or 0.0)
-                    new_p30 = float(report["p30_new"] or 0.0)
-                    old_f1 = float(report["f1_old"] or 0.0)
-                    new_f1 = float(report["f1_new"] or 0.0)
-                    p30_gain = new_p30 - old_p30
-                    f1_gain = new_f1 - old_f1
-                    if p30_gain >= PROMOTE_BIG_P30_WIN and f1_gain < 0:
-                        logger.info(
-                            "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f, "
-                            "accepted f1 dip %.3f).",
-                            old_p30,
-                            new_p30,
-                            old_f1,
-                            new_f1,
-                            f1_gain,
-                        )
-                    else:
-                        logger.info(
-                            "Promote gate passed (p@30 %.3f→%.3f, f1 %.3f→%.3f).",
-                            old_p30,
-                            new_p30,
-                            old_f1,
-                            new_f1,
-                        )
+                    old_p30 = float(report.get("p30_old_recent") or 0.0)
+                    new_p30 = float(report.get("p30_new_recent") or 0.0)
+                    old_lr = float(report.get("lr30_old_recent") or 0.0)
+                    new_lr = float(report.get("lr30_new_recent") or 0.0)
+                    n = int(report.get("n_recent") or 0)
+                    logger.info(
+                        "Recent gate passed (n=%d): p@30 %.3f→%.3f, "
+                        "lead_recall %.3f→%.3f.",
+                        n, old_p30, new_p30, old_lr, new_lr,
+                    )
 
                 if promoted:
                     report["promoted"] = True
@@ -712,18 +765,24 @@ def main():
 
                 else:
                     report["train_rejected"] = True
-                    reject_msg = _train_reject_log(old_for_gate, res)
-                    logger.info(reject_msg)
-                    lr_veto = old_for_gate is not None and not _lead_recall_ok(
-                        old_for_gate, res
+                    old_p30 = float(report.get("p30_old_recent") or 0.0)
+                    new_p30 = float(report.get("p30_new_recent") or 0.0)
+                    old_lr = float(report.get("lr30_old_recent") or 0.0)
+                    new_lr = float(report.get("lr30_new_recent") or 0.0)
+                    reject_msg = (
+                        "Recent gate rejected v{} on {} recent items: "
+                        "p@30 {:.3f}→{:.3f}, lead_recall {:.3f}→{:.3f}. "
+                        "Keeping older model.".format(
+                            res["version"],
+                            int(report.get("n_recent") or 0),
+                            old_p30, new_p30, old_lr, new_lr,
+                        )
                     )
+                    logger.info(reject_msg)
                     db.log_sync(
                         "train_rejected",
                         1,
-                        "Kept older model, new version {} rejected.{}".format(
-                            res["version"],
-                            " lead_recall_at_30 crater." if lr_veto else "",
-                        ),
+                        reject_msg,
                         profile_id=profile_id,
                     )
 
