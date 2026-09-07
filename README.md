@@ -35,7 +35,7 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - **Temperature calibration**: probabilities are fit via out-of-fold logits on the training fold so they are less overconfident before being pushed
   - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; long bodies use **chunk pooling** (several E5 windows, length-weighted mean) so lex/Leg statutory text beyond the first ~512 tokens still influences the vector
   - **Lead discovery blend** (optional, 0–0.25): gently emphasises `investigation_lead` probability in the relevance score pushed to Seismo
-  - **Rank-normalized push scores**: on Push, relevance scores sent to Seismo are replaced with their percentile rank within the batch (ordering preserved; spreads scores across the full range instead of clustering near ~0.5). Local Top/Mismatch views still use the raw model composite
+  - **Absolute calibrated push scores**: on Push, relevance scores sent to Seismo are absolute class-weighted composites (`1.0·P(lead)+0.8·P(important)+0.2·P(background)+0.0·P(noise)`), temperature-calibrated and prior-corrected. A genuinely uncertain item scores at the desk's base-rate composite (~0.2–0.3), not 0.50. (Rank normalization was removed 2026-09-01; local Top/Mismatch views also use the raw composite.)
   - **Synthetic label down-weight** (default `synthetic_label_weight: 0.5`): confirmed Gemini labels count half as much as human labels during training and recipe distillation; set `1.0` to disable
 - **Advanced training knobs** (Settings → Advanced training, all opt-in)
   - **Label time-decay** and **reasoning-weight boost** — stored **per profile** (each workspace can use different values)
@@ -290,7 +290,7 @@ Design notes and implementation plans live in `docs/scoring-fix-plan.md` and `do
 | **Gemini labels** | `synthetic_label_weight` (default 0.5) in per-profile training settings |
 | **Label sync** | Normalized timestamp compare; `label_source` preserved on remote merge |
 
-Seismo evaluates the **recipe** on new/unscored rows; Magnitu-pushed **scores** take precedence when present. Recipe and push scores are related but not identical — rank normalization applies only to the pushed score batch.
+Seismo evaluates the **recipe** on new/unscored rows; Magnitu-pushed **scores** take precedence when present. Both are absolute class-weighted composites; rank normalization was removed 2026-09-01.
 
 ## Database Migration
 

@@ -155,7 +155,7 @@
             <li>Noise: <strong>Weight 0.0</strong></li>
         </ul>
 
-        <p>On <strong>Push to Seismo</strong>, scores in that batch are converted to <strong>percentile ranks</strong> (0–1, ties averaged) before upload. Ordering is unchanged, but the spread avoids everything clustering near 0.5 — Seismo only sorts and thresholds, so this is safe. Top/Mismatch views in Magnitu still show the raw model composite.</p>
+        <p>On <strong>Push to Seismo</strong>, scores are sent as <strong>absolute calibrated composites</strong> (temperature-calibrated, prior-corrected). A genuinely uncertain item scores at the desk's base-rate composite (~0.2–0.3), not 0.50 — the score reflects the model's confidence, not a relative batch position. (Rank normalization was removed 2026-09-01; local Top/Mismatch views also use the raw composite.)</p>
 
         <h4>Measuring Quality</h4>
         <p>Magnitu holds back ~10–20% of your labels as a <strong>stable test set</strong> (the same entries stay in test across retrains, keyed by entry id). It calculates <strong>Accuracy</strong> and an <strong>F1 Score</strong>, which is crucial because it penalizes models that inflate accuracy by simply calling everything "noise".</p>
