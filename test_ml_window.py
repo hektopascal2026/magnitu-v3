@@ -215,18 +215,20 @@ def test_ml_window_main_promotes(
         active_v2,  # report label counts
     ]
     
-    # Mock train returns success + better metrics
-    # Rematch falls back to stored table metrics unless success is True.
-    mock_pipeline.evaluate_stored_model.return_value = {
-        "success": False,
-        "error": "test fallback",
-    }
+    # Mock train returns success
     mock_pipeline.train.return_value = {
         "success": True,
         "precision_at_30": 0.6,
         "f1_score": 0.6,
         "version": 2
     }
+
+    # Mock evaluate_on_recent for the recent-items gate.
+    # new model better than old on recent set → promote
+    mock_pipeline.evaluate_on_recent.side_effect = [
+        {"success": True, "precision_at_30": 0.6, "lead_recall_at_30": 0.8, "n_recent": 20},  # new
+        {"success": True, "precision_at_30": 0.5, "lead_recall_at_30": 0.8, "n_recent": 20},  # old
+    ]
     
     # Mock sync compute pending (1st call returns 1, 2nd call returns 0)
     mock_sync._compute_pending_embeddings.side_effect = [1, 0]
@@ -247,10 +249,8 @@ def test_ml_window_main_promotes(
     
     assert res == 0
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
-    mock_pipeline.evaluate_stored_model.assert_called_once()
-    rematch_model = mock_pipeline.evaluate_stored_model.call_args[0][0]
-    assert rematch_model.get("version") == 1
-    assert mock_pipeline.evaluate_stored_model.call_args.kwargs.get("profile_id") == 1
+    # Recent-items gate: evaluate_on_recent called for both new and old models
+    assert mock_pipeline.evaluate_on_recent.call_count == 2
     mock_distill_sub.assert_called_once_with(1)
     mock_pipeline.release_embedder.assert_called()
     mock_export.assert_called_once_with(profile_id=1)
@@ -295,17 +295,19 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     # Mock model
     mock_db.get_active_model.return_value = {"trained_at": "2020-01-01T00:00:00Z", "precision_at_30": 0.5, "f1_score": 0.5, "version": 1}
     
-    # Mock train returns success but worse metrics -> REJECT
-    mock_pipeline.evaluate_stored_model.return_value = {
-        "success": False,
-        "error": "test fallback",
-    }
+    # Mock train returns success
     mock_pipeline.train.return_value = {
         "success": True,
         "precision_at_30": 0.4, # worse
         "f1_score": 0.4,
         "version": 2
     }
+
+    # Mock evaluate_on_recent — new model worse on recent set → REJECT
+    mock_pipeline.evaluate_on_recent.side_effect = [
+        {"success": True, "precision_at_30": 0.3, "lead_recall_at_30": 0.4, "n_recent": 20},  # new
+        {"success": True, "precision_at_30": 0.5, "lead_recall_at_30": 0.8, "n_recent": 20},  # old
+    ]
     
     # Mock sync compute pending
     mock_sync._compute_pending_embeddings.side_effect = [0]
@@ -320,10 +322,14 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     
     assert res == 0
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
-    mock_pipeline.evaluate_stored_model.assert_called_once()
-    rematch_model = mock_pipeline.evaluate_stored_model.call_args[0][0]
-    assert rematch_model.get("version") == 1
-    mock_db.log_sync.assert_called_once_with("train_rejected", 1, "Kept older model, new version 2 rejected.", profile_id=1)
+    # Recent-items gate: evaluate_on_recent called for both new and old models
+    assert mock_pipeline.evaluate_on_recent.call_count == 2
+    # Reject logged with train_rejected
+    mock_db.log_sync.assert_called_once()
+    log_args = mock_db.log_sync.call_args
+    assert log_args.args[0] == "train_rejected"
+    assert log_args.kwargs.get("profile_id") == 1
+    assert "Recent gate rejected v2" in log_args.args[2]
     mock_sync.vault_upload.assert_not_called()
 
 

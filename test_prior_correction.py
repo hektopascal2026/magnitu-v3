@@ -142,8 +142,8 @@ def test_t5_ranking_metrics_follow_corrected_path():
     cal_v2 = dict(cal_v1)
     cal_v2["version"] = 2
     cal_v2["prior_fit"] = {"prior_log_offsets": extreme}
-    p1, cn = pipeline.classifier_probabilities(clf, X, "", cal=cal_v1)
-    p2, _ = pipeline.classifier_probabilities(clf, X, "", cal=cal_v2)
+    p1, cn = pipeline.classifier_probabilities(clf, X, "", cal=cal_v1, apply_prior=True)
+    p2, _ = pipeline.classifier_probabilities(clf, X, "", cal=cal_v2, apply_prior=True)
     r1 = pipeline._ranking_metrics(p1, cn, y)
     r2 = pipeline._ranking_metrics(p2, cn, y)
     assert not np.allclose(p1, p2, atol=1e-3)
