@@ -122,6 +122,8 @@ def _migrate_db(conn: sqlite3.Connection):
     model_cols = {row[1] for row in cursor.fetchall()}
     if "architecture" not in model_cols:
         conn.execute("ALTER TABLE models ADD COLUMN architecture TEXT DEFAULT 'tfidf'")
+    if "embedding_l2_normalize" not in model_cols:
+        conn.execute("ALTER TABLE models ADD COLUMN embedding_l2_normalize INTEGER DEFAULT 0")
 
     # ── Profiles table ───────────────────────────────────────────────────────
     conn.execute("""
@@ -1168,7 +1170,8 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
                       ranking_auc: float = 0.0,
                       precision_at_30: float = 0.0,
                       lead_recall_at_30: float = 0.0,
-                      is_active: bool = True) -> int:
+                      is_active: bool = True,
+                      embedding_l2_normalize: bool = False) -> int:
     """Save a model training record and set it as active for this profile (if is_active=True)."""
     dist_json = "{}"
     if label_distribution is not None:
@@ -1178,16 +1181,17 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
         conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
     
     active_int = 1 if is_active else 0
+    l2_int = 1 if embedding_l2_normalize else 0
     conn.execute("""
         INSERT INTO models (profile_id, version, accuracy, f1_score, precision_score,
                            recall_score, label_count, feature_count, model_path,
                            recipe_path, recipe_quality, is_active, architecture,
                            label_distribution, ranking_auc, precision_at_30,
-                           lead_recall_at_30)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           lead_recall_at_30, embedding_l2_normalize)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (profile_id, version, accuracy, f1, precision, recall, label_count,
           feature_count, model_path, recipe_path, recipe_quality, active_int, architecture,
-          dist_json, ranking_auc, precision_at_30, lead_recall_at_30))
+          dist_json, ranking_auc, precision_at_30, lead_recall_at_30, l2_int))
     model_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()

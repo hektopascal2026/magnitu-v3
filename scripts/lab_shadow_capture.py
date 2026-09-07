@@ -274,12 +274,14 @@ def capture_profile(
 
 
 # Default incumbent/candidate pairs for --all
-# These are the messy-text vs clean-text pairs from §2b
+# Compares pre-mean_norm (l2=0) vs current mean_norm (l2=1) models.
+# Incumbents were trained without L2 normalization on clean text.
+# Candidates are the current production models with mean_norm pooling.
 DEFAULT_PAIRS = {
-    1: {"incumbent": 1017, "candidate": 1018, "name": "mothership"},
-    2: {"incumbent": 43, "candidate": 44, "name": "digital"},
-    3: {"incumbent": 55, "candidate": 56, "name": "sicherheit"},
-    4: {"incumbent": 40, "candidate": 42, "name": "eu"},
+    1: {"incumbent": 1018, "candidate": 1019, "name": "mothership"},
+    2: {"incumbent": 44, "candidate": 45, "name": "digital"},
+    3: {"incumbent": 56, "candidate": 57, "name": "sicherheit"},
+    4: {"incumbent": 42, "candidate": 43, "name": "eu"},
 }
 
 

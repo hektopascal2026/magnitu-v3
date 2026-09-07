@@ -1462,6 +1462,7 @@ def recent_holdout_features(
     profile_id: int,
     architecture: str,
     n_recent: int = 100,
+    l2_normalize: Optional[bool] = None,
 ) -> Tuple[Optional[Any], Optional[List[str]], str]:
     """Build a holdout from the most recently fetched labeled items.
 
@@ -1513,7 +1514,10 @@ def recent_holdout_features(
         if len(X_list) < 2:
             return None, None, "not enough labeled embeddings in recent set"
         X_ret = np.array(X_list)
-        if cfg.get("embedding_l2_normalize", False):
+        # Use per-model flag if provided; fall back to config for backward compat.
+        if l2_normalize is None:
+            l2_normalize = bool(cfg.get("embedding_l2_normalize", False))
+        if l2_normalize:
             X_ret = _l2_normalize(X_ret)
         return X_ret, y_list, ""
     else:
@@ -1525,6 +1529,7 @@ def recent_holdout_features(
 def current_holdout_features(
     profile_id: int,
     architecture: str,
+    l2_normalize: Optional[bool] = None,
 ) -> Tuple[Optional[Any], Optional[List[str]], str]:
     """Rebuild the current labeled holdout the same way ``train()`` splits it.
 
@@ -1564,7 +1569,9 @@ def current_holdout_features(
         if len(X_list) < 2:
             return None, None, "not enough labeled embeddings"
         X: Any = np.array(X_list)
-        if cfg.get("embedding_l2_normalize", False):
+        if l2_normalize is None:
+            l2_normalize = bool(cfg.get("embedding_l2_normalize", False))
+        if l2_normalize:
             X = _l2_normalize(X)
     else:
         X = _prepare_text(labeled)
@@ -1610,7 +1617,8 @@ def evaluate_stored_model(
         return {"success": False, "error": "load failed: {}".format(e)}
 
     arch = model_info.get("architecture") or "transformer"
-    X_test, y_test, err = current_holdout_features(profile_id, str(arch))
+    model_l2 = bool(model_info.get("embedding_l2_normalize", 0)) if arch == "transformer" else None
+    X_test, y_test, err = current_holdout_features(profile_id, str(arch), l2_normalize=model_l2)
     if err:
         return {"success": False, "error": err}
 
@@ -1655,7 +1663,11 @@ def evaluate_on_recent(
         return {"success": False, "error": "load failed: {}".format(e)}
 
     arch = model_info.get("architecture") or "transformer"
-    X_test, y_test, err = recent_holdout_features(profile_id, str(arch), n_recent=n_recent)
+    # Pass the per-model normalization flag so old models get unnormalized features.
+    model_l2 = bool(model_info.get("embedding_l2_normalize", 0)) if arch == "transformer" else None
+    X_test, y_test, err = recent_holdout_features(
+        profile_id, str(arch), n_recent=n_recent, l2_normalize=model_l2,
+    )
     if err:
         return {"success": False, "error": err}
 
@@ -1963,6 +1975,7 @@ def _train_transformer(profile_id: int = 1,
         precision_at_30=rank["precision_at_30"],
         lead_recall_at_30=rank["lead_recall_at_30"],
         is_active=activate,
+        embedding_l2_normalize=bool(config.get("embedding_l2_normalize", False)),
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -1986,6 +1999,8 @@ def _train_transformer(profile_id: int = 1,
         "label_distribution": label_dist,
         "feature_count": int(X.shape[1]),
         "model_path": model_path,
+        "profile_id": profile_id,
+        "embedding_l2_normalize": int(bool(config.get("embedding_l2_normalize", False))),
         "split_note": split_note + "; " + cal_note,
         "calibration_temperature": round(temperature, 4),
         "calibration_note": cal_note,
@@ -2051,6 +2066,10 @@ def _score_transformer(
     pid = int(model_info.get("profile_id") or 1)
     config = db.get_effective_config(pid)
     embedding_dim = config.get("embedding_dim", 768)
+    # Read normalization flag from the model record, not the global config.
+    # This ensures old models trained without normalization are scored with
+    # unnormalized embeddings, and vice versa.
+    l2_normalize = bool(model_info.get("embedding_l2_normalize", 0))
 
     # Fetch embeddings only for the entries being scored (not the whole store).
     emb_map = _embedding_blobs_for_entries(entries)
@@ -2101,7 +2120,7 @@ def _score_transformer(
     embeddings.sort(key=lambda x: x[0])
     scored_indices = [idx for idx, _ in embeddings]
     X = np.array([emb for _, emb in embeddings])
-    if config.get("embedding_l2_normalize", False):
+    if l2_normalize:
         X = _l2_normalize(X)
 
     probabilities, class_names = classifier_probabilities(
@@ -2315,6 +2334,8 @@ def _train_tfidf(profile_id: int = 1,
         "label_distribution": label_dist,
         "feature_count": int(feature_count),
         "model_path": model_path,
+        "profile_id": profile_id,
+        "embedding_l2_normalize": 0,
         "split_note": split_note + "; " + cal_note,
         "calibration_temperature": round(temperature, 4),
         "calibration_note": cal_note,
