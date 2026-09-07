@@ -8,6 +8,9 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
 ## Current stack
 
 - **Local model**: transformer embeddings (`intfloat/multilingual-e5-base` by default) + LogReg classifier
+- **Embedding normalization**: **mean_norm pooling** — cached mean-pooled E5 vectors are L2-normalized at training and scoring time (`embedding_l2_normalize` in config). The normalization flag is stored **per model** in the `models` table so old models trained without normalization are always scored with unnormalized features, and new models are scored with normalized features. This prevents representation mismatches in gate comparisons and shadow capture.
+- **HuggingFace revision pinning**: the E5 tokenizer and model are loaded with a pinned commit SHA (`transformer_model_revision` in config, currently `d128750597153bb5987e10b1c3493a34e5a4502a`, 2026-04-02). This prevents silent embedding drift if HuggingFace updates the model repository.
+- **Embedding stack**: `e5-v3` — clean-text E5-base embeddings (768d, 512 ctx) with chunk pooling for long bodies, `source_type`/`source_name`/`source_category` prepended to the text fingerprint.
 - **Seismo runtime**: keyword recipe evaluated in PHP (distilled from local model via knowledge distillation)
 - **Data sync**: pull **entries** from global mothership Settings; pull **labels** from each profile’s satellite (or mothership if satellite URL/key blank); push scores/recipe/labels per profile
 - **Multi-profile**: multiple topic profiles (e.g. security, digital policy) each with their own labels, model, and push target — sharing one entry pool
@@ -34,6 +37,8 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
 - **Scoring quality**
   - **Temperature calibration**: probabilities are fit via out-of-fold logits on the training fold so they are less overconfident before being pushed
   - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; long bodies use **chunk pooling** (several E5 windows, length-weighted mean) so lex/Leg statutory text beyond the first ~512 tokens still influences the vector
+  - **Mean_norm pooling**: cached mean-pooled embeddings are L2-normalized at training and scoring time. The normalization flag travels with each model record (`embedding_l2_normalize` column in the `models` table), so gate comparisons and shadow capture always score old and new models with the feature representation they were trained on — never the current global config
+  - **HuggingFace revision pinning**: the E5 tokenizer and model are loaded with a pinned commit SHA to prevent silent embedding drift. Both `AutoTokenizer.from_pretrained` and `AutoModel.from_pretrained` pass `revision=` from config
   - **Lead discovery blend** (optional, 0–0.25): gently emphasises `investigation_lead` probability in the relevance score pushed to Seismo
   - **Absolute calibrated push scores**: on Push, relevance scores sent to Seismo are absolute class-weighted composites (`1.0·P(lead)+0.8·P(important)+0.2·P(background)+0.0·P(noise)`), temperature-calibrated and prior-corrected. A genuinely uncertain item scores at the desk's base-rate composite (~0.2–0.3), not 0.50. (Rank normalization was removed 2026-09-01; local Top/Mismatch views also use the raw composite.)
   - **Synthetic label down-weight** (default `synthetic_label_weight: 0.5`): confirmed Gemini labels count half as much as human labels during training and recipe distillation; set `1.0` to disable
@@ -198,6 +203,10 @@ Settings are split into **global** (apply to every profile) and **per-profile**.
 - **Mothership Seismo URL + API key** — where entries are pulled from
 - **Model architecture** — `transformer` or `tfidf`
 - **Transformer model name** — HuggingFace model id (default `intfloat/multilingual-e5-base`)
+- **Transformer model revision** — pinned HuggingFace commit SHA (default `d128750597153bb5987e10b1c3493a34e5a4502a`). Prevents silent embedding drift. Override with `transformer_model_revision` in config.
+- **Embedding L2 normalization** — when `embedding_l2_normalize` is `True` (default), cached mean-pooled embeddings are L2-normalized at training and scoring time (mean_norm pooling). The flag is stored per-model in the `models` table so old and new models are always scored with the representation they were trained on.
+- **Embedding stack generation** — `embedding_stack_generation` (currently `e5-v3`) identifies the embedding stack used to generate cached vectors. Used for cache invalidation when the stack changes.
+- **Classifier C** — `classifier_c` (default `0.01`). Inverse regularization strength for the LogReg head. Lower = stronger regularization. One-size-fits-all across all desks.
 - **GPU toggle** — CUDA/MPS acceleration when available
 - **Legal-signal patterns** — shared across profiles (they are baked into the same cached embeddings for every entry)
 
