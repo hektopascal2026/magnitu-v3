@@ -26,3 +26,14 @@ models/*.json
 
 # ── Optional local install bundle (not source) ──
 install.zip
+
+# ── Lab experiment data (large; regenerate via scripts/) ──
+lab_data/
+vps_data/
+vps_models/
+magnitu_lab.db
+magnitu_vps.db
+magnitu_vps_fresh.db
+lab_encoder_c_sweep_results*.json
+lab_granite_full_context_results*.json
+lab_head_ablation_results*.json
