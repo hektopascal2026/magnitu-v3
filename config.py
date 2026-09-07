@@ -78,6 +78,9 @@ MODELS_DIR.mkdir(exist_ok=True)
 
 # Default HuggingFace embedding backbone (multilingual E5, 768-D).
 DEFAULT_TRANSFORMER_MODEL = "intfloat/multilingual-e5-base"
+# Pinned HF revision (commit SHA) for the default encoder. Prevents silent
+# embedding drift if the HF repo is updated. Verified 2026-09-07.
+DEFAULT_TRANSFORMER_REVISION = "d128750597153bb5987e10b1c3493a34e5a4502a"
 # Bump when backbone, prefix rules, or content/token caps change (triggers re-embed).
 EMBEDDING_STACK_GENERATION = "e5-v3"
 
@@ -92,6 +95,7 @@ DEFAULTS = {
     # Transformer settings (cached embeddings + classifier head)
     "model_architecture": "transformer",     # "tfidf" or "transformer"
     "transformer_model_name": DEFAULT_TRANSFORMER_MODEL,
+    "transformer_model_revision": DEFAULT_TRANSFORMER_REVISION,
     "embedding_dim": 768,
     "embedding_stack_generation": EMBEDDING_STACK_GENERATION,
     "embedding_max_tokens": 512,
@@ -139,6 +143,11 @@ DEFAULTS = {
     # Prior correction (P3) was found to hurt minority-class recall because the training
     # class balance doesn't match the live stream distribution (batch-imported labels).
     "classifier_apply_prior": False,
+    # L2-normalize embeddings before classifier fitting/scoring (mean_norm pooling).
+    # Validated in D3 chronological evaluation (Sep 2026): helps or neutral on all
+    # 4 desks. Digital +0.017 F1 / +0.033 p@30; Sicherheit +0.029 lr@30;
+    # EU +0.008 F1; mothership neutral. Universal win at C=0.01.
+    "embedding_l2_normalize": True,
     # Which profile is the labeling workspace (slug in URLs for Label/Gemini/etc.).
     # None = use DB default profile until user picks one in Settings.
     "active_profile_id": None,

@@ -35,6 +35,7 @@ from typing import Any, Optional, List, Tuple, Dict, Callable
 import db
 from config import (
     DEFAULT_TRANSFORMER_MODEL,
+    DEFAULT_TRANSFORMER_REVISION,
     MODELS_DIR,
     get_config,
 )
@@ -718,23 +719,25 @@ def _get_embedder():
 
     config = get_config()
     model_name = config.get("transformer_model_name", DEFAULT_TRANSFORMER_MODEL)
+    model_revision = config.get("transformer_model_revision", DEFAULT_TRANSFORMER_REVISION)
 
     _enable_hf_download_logging()
     _log_hf_model_cache_status(model_name)
 
-    logger.info("Loading E5 tokenizer: %s ...", model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    logger.info("Loading E5 tokenizer: %s (rev=%s) ...", model_name, model_revision[:12])
+    tokenizer = AutoTokenizer.from_pretrained(model_name, revision=model_revision)
     logger.info("Tokenizer ready for %s", model_name)
 
     device = _select_device()
     model_dtype = torch.float16 if device.type == "cuda" else torch.float32
 
     logger.info(
-        "Loading E5 weights: %s (device=%s, dtype=%s) ...",
-        model_name, device.type, str(model_dtype).split(".")[-1],
+        "Loading E5 weights: %s (rev=%s, device=%s, dtype=%s) ...",
+        model_name, model_revision[:12], device.type, str(model_dtype).split(".")[-1],
     )
     model = AutoModel.from_pretrained(
         model_name,
+        revision=model_revision,
         torch_dtype=model_dtype,
         low_cpu_mem_usage=True,
     )
@@ -869,6 +872,20 @@ def bytes_to_embedding(data: bytes, dim: int = 768) -> np.ndarray:
             dim, len(emb)
         )
     return emb
+
+
+def _l2_normalize(X: np.ndarray) -> np.ndarray:
+    """L2-normalize rows of X (mean_norm pooling).
+
+    Applied after mean pooling and before classifier fitting/scoring when
+    ``embedding_l2_normalize`` is True in config. This is equivalent to
+    mean_norm pooling in the calibration framework.
+    """
+    if X.ndim == 1:
+        norm = np.linalg.norm(X)
+        return (X / max(norm, 1e-12)).astype(np.float32)
+    norms = np.linalg.norm(X, axis=1, keepdims=True)
+    return (X / np.clip(norms, 1e-12, None)).astype(np.float32)
 
 
 def invalidate_embedder_cache():
@@ -1495,7 +1512,10 @@ def recent_holdout_features(
             )
         if len(X_list) < 2:
             return None, None, "not enough labeled embeddings in recent set"
-        return np.array(X_list), y_list, ""
+        X_ret = np.array(X_list)
+        if cfg.get("embedding_l2_normalize", False):
+            X_ret = _l2_normalize(X_ret)
+        return X_ret, y_list, ""
     else:
         X = _prepare_text(labeled)
         y_list = [e["label"] for e in labeled]
@@ -1544,6 +1564,8 @@ def current_holdout_features(
         if len(X_list) < 2:
             return None, None, "not enough labeled embeddings"
         X: Any = np.array(X_list)
+        if cfg.get("embedding_l2_normalize", False):
+            X = _l2_normalize(X)
     else:
         X = _prepare_text(labeled)
         y_list = [e["label"] for e in labeled]
@@ -1819,6 +1841,8 @@ def _train_transformer(profile_id: int = 1,
 
     _step(48, "Building train/test split...")
     X = np.array(X_list)
+    if config.get("embedding_l2_normalize", False):
+        X = _l2_normalize(X)
     y = y_list
     sw_all = compute_sample_weights(lbl_list, config)
     labels_series = pd.Series(y)
@@ -2077,6 +2101,8 @@ def _score_transformer(
     embeddings.sort(key=lambda x: x[0])
     scored_indices = [idx for idx, _ in embeddings]
     X = np.array([emb for _, emb in embeddings])
+    if config.get("embedding_l2_normalize", False):
+        X = _l2_normalize(X)
 
     probabilities, class_names = classifier_probabilities(
         clf, X, model_path, apply_prior=apply_prior
