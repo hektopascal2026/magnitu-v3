@@ -61,7 +61,7 @@ DENIED_EXACT_TOKENS = {
 }
 
 LEGAL_TEMPLATE_PHRASES = {
-    # Cross-border market access / third-country signals
+    # Cross-border market access / third-country signals (Gold-critical)
     "third country": {"investigation_lead": 0.45, "important": 0.25},
     "third countries": {"investigation_lead": 0.45, "important": 0.25},
     "pays tiers": {"investigation_lead": 0.45, "important": 0.25},
@@ -84,6 +84,36 @@ LEGAL_TEMPLATE_PHRASES = {
     "corrigendum": {"noise": 0.3},
     "annex amendment": {"noise": 0.3},
     "administrative procedure": {"noise": 0.3, "background": 0.15},
+}
+
+# Group tags for desk-scoped legal priors (Phase 3).  Profiles opt OUT of
+# groups via config key ``legal_template_group_exclusions``.  Default: all
+# groups apply (backward compatible).  Gold-critical phrases are in
+# ``trade_market``; a profile would have to explicitly opt out to lose them.
+LEGAL_TEMPLATE_PHRASE_GROUPS = {
+    # Cross-border market access / third-country / EEA-EWR / equivalence
+    "third country": "trade_market",
+    "third countries": "trade_market",
+    "pays tiers": "trade_market",
+    "drittstaaten": "trade_market",
+    "member states only": "trade_market",
+    "eu eea": "trade_market",
+    "eu ewr": "trade_market",
+    "market access": "trade_market",
+    "single market": "trade_market",
+    "internal market": "trade_market",
+    "equivalence decision": "trade_market",
+    # Compliance and technical barriers
+    "conformity assessment": "compliance",
+    "ce marking": "compliance",
+    "technical regulation": "compliance",
+    "compliance requirement": "compliance",
+    # Procedural boilerplate (negative relevance signal)
+    "implementing act": "procedural_noise",
+    "delegated regulation": "procedural_noise",
+    "corrigendum": "procedural_noise",
+    "annex amendment": "procedural_noise",
+    "administrative procedure": "procedural_noise",
 }
 
 # Mirrors RecipeScorer.php tokenizer: split on anything outside this class.
@@ -202,7 +232,9 @@ def _is_low_signal_feature(token: str) -> bool:
 
     Seismo RecipeKeywordDenylist mirrors this: URL debris, bare years,
     short unigrams, stopword unigrams, and n-grams whose every token is a
-    stopword/denied/year (e.g. ``in der``, ``on the``).
+    stopword/denied/number (e.g. ``in der``, ``on the``, ``08 31``,
+    ``2026 08``).  Any pure-number part counts as low signal inside n-grams
+    so date/quantity fragments cannot drown real signal terms.
     """
     key = " ".join(_seismo_tokenize(token or ""))
     if not key:
@@ -218,7 +250,8 @@ def _is_low_signal_feature(token: str) -> bool:
             return True
         return w in LOW_SIGNAL_STOPWORDS
     for w in parts:
-        if w in DENIED_EXACT_TOKENS or w in LOW_SIGNAL_STOPWORDS or re.fullmatch(r"\d{4}", w):
+        if (w in DENIED_EXACT_TOKENS or w in LOW_SIGNAL_STOPWORDS
+                or re.fullmatch(r"\d+", w)):
             continue
         return False
     return True
@@ -478,12 +511,20 @@ def _apply_floor_weights(keywords: dict) -> dict:
     legal_signal_patterns from config still pass through the cap — promote
     a pattern into the curated list if it deserves the floor.
 
+    Phase 3: respects ``legal_template_group_exclusions`` — excluded groups
+    are neither injected nor floored.  This keeps floor and injection in
+    sync so an excluded phrase doesn't get floored without its seed weight.
+
     Symmetric across signs: applies to positive (investigation_lead,
     important) priors and to noise/background priors. EU procedural
     boilerplate ("implementing act", "corrigendum") gets sharper noise
     suppression at the same time anchors get sharper IL signal.
     """
+    exclusions = _legal_group_exclusions()
     for phrase, cls_wts in LEGAL_TEMPLATE_PHRASES.items():
+        group = LEGAL_TEMPLATE_PHRASE_GROUPS.get(phrase)
+        if group and group in exclusions:
+            continue
         if phrase not in keywords:
             keywords[phrase] = {}
         for cls, floor_wt in cls_wts.items():
@@ -577,42 +618,173 @@ def _distill_from_transformer(top_n: int, profile_id: int = 1) -> dict:
     return result
 
 
+def _build_discrim_index(labels_with_entries: list) -> tuple:
+    """Build n-gram -> [labels] index and label totals for discriminative testing.
+
+    Uses the same text the recipe actually scores (``_seismo_score_text``) so
+    the discriminative test reflects real PHP-side keyword matching, not
+    reasoning prose.
+    """
+    index = {}  # ngram -> list of labels (one per entry containing it)
+    label_totals = {}
+    for lbl in labels_with_entries:
+        label = lbl.get("label", "")
+        if not label:
+            continue
+        label_totals[label] = label_totals.get(label, 0) + 1
+        text = _seismo_score_text(lbl)
+        ngrams = set(_seismo_tokens(text))
+        for ng in ngrams:
+            index.setdefault(ng, []).append(label)
+    return index, label_totals
+
+
+def _is_discriminative(phrase: str, label: str, index: dict, label_totals: dict,
+                       min_count: int = 2, min_ratio: float = 2.0) -> bool:
+    """Check if phrase appears discriminatively in entry text for this label.
+
+    Likelihood-ratio gate: P(phrase in text | label) / P(phrase in text | other)
+    >= min_ratio, with at least min_count entries of the target label containing
+    the phrase.  When the phrase never appears in other-label entries, it is
+    maximally discriminative (seed it).
+    """
+    labels_for_phrase = index.get(phrase)
+    if not labels_for_phrase:
+        return False
+    with_label = sum(1 for l in labels_for_phrase if l == label)
+    if with_label < min_count:
+        return False
+    with_other = len(labels_for_phrase) - with_label
+    total_label = label_totals.get(label, 0)
+    total_other = sum(v for k, v in label_totals.items() if k != label)
+    if total_label == 0:
+        return False
+    p_given_label = with_label / total_label
+    p_given_other = with_other / total_other if total_other > 0 else 0.0
+    if p_given_other == 0:
+        return p_given_label > 0
+    return (p_given_label / p_given_other) >= min_ratio
+
+
 def _boost_from_reasoning(keywords: dict, profile_id: int = 1) -> dict:
     """
     Extract key phrases from user reasoning annotations and boost their
     weights in the recipe.  This ensures that explicitly-stated reasons
     ('links politician X to company Y') increase the recipe's sensitivity
     to those terms.
+
+    Seeding policy (keeps the recipe small and signal-focused):
+    - Tokens already in the recipe with a POSITIVE weight for this label are
+      always boosted (x1.5).  No new keyword keys are added, so the recipe
+      cannot bloat from already-discovered terms.
+    - Tokens already in the recipe with a NEGATIVE weight for this label are
+      left negative.  A reasoning mention alone is not proof the term supports
+      the label ("no connection to defence procurement" mentions the term
+      contrastively).  Preserves learned negative evidence.
+    - NEW tokens (not in the recipe) are seeded only when ALL hold:
+        * they are phrases (bigrams/trigrams) -- reasoning unigrams are
+          almost always generic prose ("article", "links", "through");
+        * they pass ``_is_low_signal_feature`` (stopwords, URL debris,
+          bare years, all-stopword/number n-grams);
+        * they recur across at least ``recipe_reasoning_min_entries``
+          distinct entries' reasoning for the same label;
+        * they are discriminative in actual entry text: the phrase appears
+          in >= ``recipe_reasoning_min_discrim_count`` entries labeled
+          ``label`` and its likelihood ratio
+          P(phrase|label) / P(phrase|other) >=
+          ``recipe_reasoning_min_discrim_ratio``.  This stops boilerplate
+          ("this article discusses") that recurs in reasoning but appears
+          equally across all labels.
     """
     reasoning_labels = db.get_all_reasoning_texts(profile_id=profile_id)
     if not reasoning_labels:
         return keywords
 
+    cfg = get_config()
     BOOST_FACTOR = 1.5  # single documented multiplier; applies to unigrams AND phrases
+    min_entries = int(cfg.get("recipe_reasoning_min_entries", 3) or 3)
+    min_discrim_count = int(cfg.get("recipe_reasoning_min_discrim_count", 2) or 2)
+    min_discrim_ratio = float(cfg.get("recipe_reasoning_min_discrim_ratio", 2.0) or 2.0)
 
-    pairs = set()
+    # Phase 1: build discriminative index from labeled entry text.
+    # Falls back to recurrence-only gate when labeled entries are unavailable.
+    discrim_index = None
+    label_totals = {}
+    try:
+        all_labels = db.get_all_labels(profile_id=profile_id)
+        if all_labels:
+            discrim_index, label_totals = _build_discrim_index(all_labels)
+    except Exception:
+        pass
+
+    def passes_discrim_gate(phrase: str, label: str) -> bool:
+        if discrim_index is None:
+            return True  # fallback: recurrence gate is the only filter
+        return _is_discriminative(phrase, label, discrim_index, label_totals,
+                                  min_discrim_count, min_discrim_ratio)
+
+    # Pass 1: count distinct entries per (token, label). Dedupes re-labels of
+    # the same entry so a re-annotated row cannot inflate the recurrence count.
+    entry_counts = {}  # (token, label) -> set of (entry_type, entry_id)
     for rl in reasoning_labels:
         reasoning = rl.get("reasoning", "")
         label = rl.get("label", "")
         if not reasoning or not label:
             continue
+        entry_key = (rl.get("entry_type"), rl.get("entry_id"))
         tokens = _tokenize_text(reasoning)
         for token in set(tokens + _compose_ngrams(tokens, max_n=3)):
             if " " not in token and len(token) < 3:
                 continue
-            pairs.add((token, label))
+            entry_counts.setdefault((token, label), set()).add(entry_key)
 
-    for token, label in pairs:
+    # Pass 2: boost existing keywords; gate new seeds.
+    for (token, label), entries in entry_counts.items():
         existing = keywords.get(token, {}).get(label)
-        if existing is not None and existing > 0:
-            new_w = existing * BOOST_FACTOR
-        else:
-            new_w = 0.16 if " " in token else 0.10
-            if existing is not None:
-                new_w = max(existing, new_w)
+        if token in keywords:
+            # Existing recipe keyword: amplify positive, preserve negative.
+            if existing is not None and existing > 0:
+                new_w = existing * BOOST_FACTOR
+            elif existing is not None and existing < 0:
+                # Phase 2: reasoning mention alone doesn't reverse a learned
+                # negative.  Contrastive mentions ("no connection to X") are
+                # common in reasoning prose.
+                continue
+            else:
+                # existing is None (token exists, new label) or exactly 0.
+                # Seed positive only if discriminative in entry text.
+                if not passes_discrim_gate(token, label):
+                    continue
+                new_w = 0.16 if " " in token else 0.10
+                if existing is not None:
+                    new_w = max(existing, new_w)
+            keywords.setdefault(token, {})[label] = round(new_w, 4)
+            continue
+
+        # New keyword key: phrases only, low-signal filter, recurrence gate,
+        # discriminative gate.
+        if " " not in token:
+            continue
+        if _is_low_signal_feature(token):
+            continue
+        if len(entries) < min_entries:
+            continue
+        if not passes_discrim_gate(token, label):
+            continue
+        new_w = 0.16 if " " in token else 0.10
         keywords.setdefault(token, {})[label] = round(new_w, 4)
 
     return keywords
+
+
+def _legal_group_exclusions() -> set:
+    """Return the set of LEGAL_TEMPLATE_PHRASES group names excluded for the
+    active profile (Phase 3).  Default empty = all groups apply."""
+    try:
+        raw = get_config().get("legal_template_group_exclusions") or []
+    except Exception:
+        return set()
+    return set(str(g).strip() for g in raw if str(g).strip())
 
 
 def _boost_legal_templates(keywords: dict) -> dict:
@@ -622,8 +794,17 @@ def _boost_legal_templates(keywords: dict) -> dict:
     ``legal_signal_patterns`` from config — the latter get a single boost toward
     ``investigation_lead`` so Seismo's keyword recipe tracks what the user
     marked as legislative signal.
+
+    Phase 3: profiles can opt out of specific phrase groups via config key
+    ``legal_template_group_exclusions`` (e.g. a security desk excluding
+    ``compliance`` to drop "ce marking" without losing Gold-critical
+    "third country").
     """
+    exclusions = _legal_group_exclusions()
     for phrase, cls_wts in LEGAL_TEMPLATE_PHRASES.items():
+        group = LEGAL_TEMPLATE_PHRASE_GROUPS.get(phrase)
+        if group and group in exclusions:
+            continue
         if phrase not in keywords:
             keywords[phrase] = {}
         for cls, wt in cls_wts.items():

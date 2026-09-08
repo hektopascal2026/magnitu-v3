@@ -125,6 +125,34 @@ DEFAULTS = {
     "recipe_min_abs_keep": 0.01,
     "recipe_normalize_target": 2.0,
     "recipe_optimize_caps": True,
+    # Minimum number of distinct entries whose reasoning must mention a NEW
+    # phrase before _boost_from_reasoning seeds it as a recipe keyword.
+    # Stops one-off prose fragments ("focused on", "firms or") from polluting
+    # the recipe and drowning real signal terms. Existing recipe keywords are
+    # always boosted regardless of this threshold.
+    "recipe_reasoning_min_entries": 3,
+    # Phase 1: a NEW reasoning phrase must also appear discriminatively in
+    # actual entry text (not just reasoning prose).  A phrase is
+    # discriminative when it appears in >= recipe_reasoning_min_discrim_count
+    # entries labeled `label` AND its likelihood ratio
+    # P(phrase|label) / P(phrase|other labels) >= recipe_reasoning_min_discrim_ratio.
+    # Stops "this article discusses" (appears in all labels equally) while
+    # keeping "third country exclusion" (appears in lead entries, not noise).
+    "recipe_reasoning_min_discrim_count": 2,
+    "recipe_reasoning_min_discrim_ratio": 2.0,
+    # Phase 3: per-profile opt-out of LEGAL_TEMPLATE_PHRASES groups.  Default
+    # empty = all groups apply (backward compatible).  A security desk can
+    # exclude "compliance" to drop "ce marking" / "conformity assessment"
+    # without losing Gold-critical "third country" / "member states only".
+    #
+    # Phase 5 audit findings (scripts/audit_legal_phrases.py):
+    # - trade_market: Gold-critical, discriminative where it fires.  Keep.
+    # - compliance: dead weight on non-legislative desks (p1, p3), "conformity
+    #   assessment" actively fires in noise on p3.  Exclude on desks without
+    #   EU product-regulation content.
+    # - procedural_noise: mostly inert.  "delegated regulation" correctly
+    #   fires in noise on p3.  Keep unless the desk has no EU legislative text.
+    "legal_template_group_exclusions": [],
     # Chars around legal-signal matches pulled from full (uncapped) content for embedding.
     "embedding_extractive_window": 280,
     # Multiplier applied to labels that have a non-empty reasoning note. 1 = off.
