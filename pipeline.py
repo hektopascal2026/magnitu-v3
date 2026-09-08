@@ -248,7 +248,17 @@ def logits_for_classifier_head(clf, X) -> np.ndarray:
     Sklearn ``Pipeline`` does not always expose ``decision_function`` even when
     the final step supports it (depends on version), so we unwrap known
     Magnitu layouts explicitly.
+
+    P0-1: a ``_LabelDecodingClassifier`` exposes a full-width
+    ``decision_function`` aligned to ``clf.classes_``; use it directly instead
+    of unwrapping to the inner pipeline (whose columns cover only the classes
+    present in the training fold).
     """
+    if getattr(clf, "_is_label_decoding", False) and hasattr(clf, "decision_function"):
+        try:
+            return clf.decision_function(X)
+        except (AttributeError, NotImplementedError):
+            pass
     if hasattr(clf, "_pipeline"):
         return logits_for_classifier_head(clf._pipeline, X)
     if hasattr(clf, "named_steps"):
@@ -1409,11 +1419,18 @@ def _get_architecture() -> str:
 
 def train(profile_id: int = 1,
           progress_cb: Optional[Callable[[int, str], None]] = None,
-          activate: bool = True) -> dict:
-    """Train a new model on labeled entries for the given profile."""
+          activate: bool = True,
+          recent_holdout_n: int = 0) -> dict:
+    """Train a new model on labeled entries for the given profile.
+
+    ``recent_holdout_n``: if > 0, exclude the most recent N labeled items from
+    candidate training so the recent-items promote gate evaluates the
+    candidate on rows it never saw (P0-3).
+    """
     arch = _get_architecture()
     if arch == "transformer":
-        return _train_transformer(profile_id=profile_id, progress_cb=progress_cb, activate=activate)
+        return _train_transformer(profile_id=profile_id, progress_cb=progress_cb,
+                                   activate=activate, recent_holdout_n=recent_holdout_n)
     return _train_tfidf(profile_id=profile_id, progress_cb=progress_cb, activate=activate)
 
 
@@ -1758,25 +1775,71 @@ class _LabelDecodingClassifier:
     """Wraps a Pipeline that was trained on integer-encoded labels and
     translates predictions back to the original string labels.  Exposes
     the same interface as sklearn classifiers (predict, predict_proba,
-    classes_) so scoring and explainer code works unchanged."""
+    classes_) so scoring and explainer code works unchanged.
+
+    P0-1 fix: the underlying pipeline is fit on ``y_train_enc``, which may
+    omit classes that are absent from the training fold.  Its
+    ``predict_proba`` / ``decision_function`` therefore return columns for
+    only the *present* classes, while ``self.classes_`` advertises the full
+    label set (the LabelEncoder was fit on ``CLASSES``).  Zipping the subset
+    columns with the full class list misaligns probabilities (e.g. ``noise``
+    read as ``investigation_lead``).  We expand both methods to full width,
+    zero-filling absent classes, so the column order always matches
+    ``self.classes_``.
+    """
 
     def __init__(self, pipeline, label_encoder):
         self._pipeline = pipeline
         self._le = label_encoder
         self.classes_ = label_encoder.classes_
+        self._is_label_decoding = True
+        # Map the inner pipeline's actual class indices (encoded ints present
+        # in y_train) to positions in the full self.classes_ list.
+        inner_classes_enc = list(pipeline.classes_)  # encoded ints, subset
+        inner_labels = list(label_encoder.inverse_transform(inner_classes_enc))
+        full = list(self.classes_)
+        self._inner_to_full_idx = [full.index(lbl) for lbl in inner_labels]
+        self._n_full = len(full)
+
+    def _expand_to_full(self, sub: np.ndarray, ncols: int) -> np.ndarray:
+        """Map a (n_samples, n_inner) array to (n_samples, n_full) with zeros."""
+        sub = np.asarray(sub, dtype=np.float64)
+        if sub.ndim == 1:
+            sub = sub.reshape(1, -1)
+        n, n_inner = sub.shape
+        if n_inner == self._n_full:
+            return sub
+        out = np.zeros((n, self._n_full), dtype=np.float64)
+        for j_inner, j_full in enumerate(self._inner_to_full_idx):
+            out[:, j_full] = sub[:, j_inner]
+        return out
+
+    def decision_function(self, X):
+        sub = self._pipeline.decision_function(X)
+        return self._expand_to_full(sub, self._n_full)
 
     def predict(self, X):
         encoded = self._pipeline.predict(X)
         return self._le.inverse_transform(encoded)
 
     def predict_proba(self, X):
-        return self._pipeline.predict_proba(X)
+        sub = self._pipeline.predict_proba(X)
+        return self._expand_to_full(sub, self._n_full)
 
 
 def _train_transformer(profile_id: int = 1,
                        progress_cb: Optional[Callable[[int, str], None]] = None,
-                       activate: bool = True) -> dict:
-    """Train a LogReg classifier on cached transformer embeddings for a profile."""
+                       activate: bool = True,
+                       recent_holdout_n: int = 0) -> dict:
+    """Train a LogReg classifier on cached transformer embeddings for a profile.
+
+    P0-3: when ``recent_holdout_n > 0``, the most recent N labeled items (by
+    ``entries.fetched_at``) are excluded from candidate training so the
+    production recent-items gate evaluates the candidate on rows it never saw.
+    This prevents the ~90% train/eval overlap that inflated recent metrics and
+    allowed in-sample candidates to promote.  The holdout count is reported in
+    the result as ``recent_holdout_n``.
+    """
 
     def _step(pct: int, msg: str) -> None:
         if progress_cb:
@@ -1788,6 +1851,33 @@ def _train_transformer(profile_id: int = 1,
 
     _step(5, "Loading labels...")
     labeled = db.get_all_labels(profile_id)
+    recent_holdout_keys = set()
+    if recent_holdout_n > 0 and len(labeled) > min_labels:
+        # Exclude the most recent N (by fetched_at) so the gate evaluates the
+        # candidate on truly unseen rows.  Mirrors recent_holdout_features().
+        conn = db.get_db()
+        rows = conn.execute(
+            """SELECT l.entry_type, l.entry_id
+               FROM labels l
+               JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
+               WHERE l.profile_id = ?
+                 AND (l.pending_gemini_job_id IS NULL OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
+               ORDER BY e.fetched_at DESC
+               LIMIT ?""",
+            (profile_id, recent_holdout_n),
+        ).fetchall()
+        conn.close()
+        recent_holdout_keys = {
+            db.entry_key_from_mapping({"entry_type": r["entry_type"], "entry_id": r["entry_id"]})
+            for r in rows
+        }
+        before = len(labeled)
+        labeled = [lbl for lbl in labeled
+                   if db.entry_key_from_mapping(lbl) not in recent_holdout_keys]
+        logger.info(
+            "P0-3 recent holdout: excluded %d recent rows from candidate training "
+            "(%d -> %d usable).", len(recent_holdout_keys), before, len(labeled),
+        )
     if len(labeled) < min_labels:
         return {
             "success": False,
@@ -2004,6 +2094,7 @@ def _train_transformer(profile_id: int = 1,
         "split_note": split_note + "; " + cal_note,
         "calibration_temperature": round(temperature, 4),
         "calibration_note": cal_note,
+        "recent_holdout_n": len(recent_holdout_keys),
         "class_report": report,
     }
 

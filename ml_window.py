@@ -701,7 +701,11 @@ def main():
         if do_train:
             logger.info("Gate passed: training model for %s...", url)
             report["trained"] = True
-            res = pipeline.train(profile_id=profile_id, activate=False)
+            # P0-3: hold out the recent-items gate set from candidate training so
+            # the gate evaluates the candidate on rows it never saw (no in-sample
+            # inflation).  GATE_N_RECENT matches evaluate_on_recent below.
+            res = pipeline.train(profile_id=profile_id, activate=False,
+                                  recent_holdout_n=GATE_N_RECENT)
 
             if not res.get("success"):
                 logger.warning("Training failed: %s", res.get("error"))
