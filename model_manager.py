@@ -119,7 +119,15 @@ def _build_manifest(model_name: str, model_uuid: str, description: str,
             "f1":        active_model.get("f1_score", 0.0),
             "precision": active_model.get("precision_score", 0.0),
             "recall":    active_model.get("recall_score", 0.0),
+            "ranking_auc":       active_model.get("ranking_auc", 0.0),
+            "precision_at_30":    active_model.get("precision_at_30", 0.0),
+            "lead_recall_at_30":  active_model.get("lead_recall_at_30", 0.0),
         }
+        # P0-2: serialize the per-model normalization flag so imported models
+        # are scored with the same representation they were trained on.
+        manifest["embedding_l2_normalize"] = bool(
+            active_model.get("embedding_l2_normalize", 0)
+        )
 
     if extra:
         manifest.update(extra)
@@ -357,6 +365,11 @@ def import_model(
 
             f1_val = metrics.get("f1", metrics.get("f1_score", 0.0))
 
+            # P0-2: restore the per-model normalization flag from the manifest
+            # so imported models are scored with the representation they were
+            # trained on.  Default False for legacy manifests without the key.
+            imported_l2 = bool(manifest.get("embedding_l2_normalize", False))
+
             db.save_model_record(
                 version=store_version,
                 accuracy=float(metrics.get("accuracy", 0.0) or 0.0),
@@ -370,6 +383,10 @@ def import_model(
                 architecture=imported_architecture,
                 profile_id=profile_id,
                 label_distribution=pack_label_dist,
+                ranking_auc=float(metrics.get("ranking_auc", 0.0) or 0.0),
+                precision_at_30=float(metrics.get("precision_at_30", 0.0) or 0.0),
+                lead_recall_at_30=float(metrics.get("lead_recall_at_30", 0.0) or 0.0),
+                embedding_l2_normalize=imported_l2,
             )
             result["model_loaded"] = True
             result["activated_version"] = store_version
