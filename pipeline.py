@@ -1996,14 +1996,21 @@ def _train_transformer(profile_id: int = 1,
         )
         oof_samples = len(oof_y)
         if oof_samples >= 3:
-            off = _prior_offset_vector({"prior_fit": prior_fit}, class_names_fit)
-            if off is not None:
-                oof_logits = _add_logit_offsets(oof_logits, off)
+            # P1-1: only apply prior offsets to OOF logits if the scoring path
+            # will also apply them.  Training and scoring must use the same
+            # logit path for temperature calibration to be consistent.
+            # Default classifier_apply_prior=False => temperature is fit on
+            # raw logits, matching the production scoring path.
+            apply_prior_fit = bool(config.get("classifier_apply_prior", False))
+            if apply_prior_fit:
+                off = _prior_offset_vector({"prior_fit": prior_fit}, class_names_fit)
+                if off is not None:
+                    oof_logits = _add_logit_offsets(oof_logits, off)
             temperature = _fit_temperature_scalar(
                 oof_logits, np.array(oof_y), class_names_fit
             )
-            cal_note = "temperature T={:.3f} fit on {} OOF samples ({} folds)".format(
-                temperature, oof_samples, n_folds
+            cal_note = "temperature T={:.3f} fit on {} OOF samples ({} folds, prior={})".format(
+                temperature, oof_samples, n_folds, "on" if apply_prior_fit else "off",
             )
         else:
             temperature = 1.0
