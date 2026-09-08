@@ -2603,6 +2603,21 @@ def train_tfidf_student(profile_id: int = 1) -> Optional[Pipeline]:
     if not scores:
         return None
 
+    # P1-3: guard against silent embedding-coverage failure.  score_entries
+    # caps on-the-fly embedding at MAX_ONTHEFLY_EMBEDDINGS (10).  If most
+    # sampled entries lack cached embeddings, the TF-IDF student trains on
+    # a tiny biased subset and recipe_quality becomes misleading.  Warn
+    # loudly and bail out so the caller keeps the previous recipe instead
+    # of replacing it with a degenerate one.
+    min_distill_scores = max(50, len(distill_entries) // 10)
+    if len(scores) < min_distill_scores:
+        logger.warning(
+            "Distillation scored only %d / %d entries (min=%d). Embeddings "
+            "likely not cached — run sync first. Keeping previous recipe.",
+            len(scores), len(distill_entries), min_distill_scores,
+        )
+        return None
+
     teacher_prob_map = {
         db.entry_key_from_mapping(s): s.get("probabilities") or {}
         for s in scores
