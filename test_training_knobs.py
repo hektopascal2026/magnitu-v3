@@ -187,7 +187,7 @@ t("train TF-IDF end to end")
 try:
     cfg["model_architecture"] = "tfidf"
     config.save_config(cfg)
-    res = pipeline.train(profile_id=1)
+    res = pipeline.train(profile_id=1, activate=True, activation_origin="test")
     assert res["success"], res.get("error", "")
     ok()
 except Exception as e:
@@ -215,7 +215,7 @@ try:
     c2.execute("DELETE FROM models WHERE profile_id=1")
     c2.commit()
     c2.close()
-    res = pipeline.train(profile_id=1)
+    res = pipeline.train(profile_id=1, activate=True, activation_origin="test")
     assert res["success"], res.get("error", "")
     ok()
 except Exception as e:
@@ -358,7 +358,7 @@ try:
     cfg_iso["min_labels_to_train"] = 20
     config.save_config(cfg_iso)
 
-    res = pipeline.train(profile_id=1)
+    res = pipeline.train(profile_id=1, activate=True, activation_origin="test")
     assert res["success"], "train failed: {}".format(res.get("error", ""))
 
     # Critical: OOF calibration must run on the training fold.
@@ -411,7 +411,7 @@ try:
     conn.commit()
     conn.close()
 
-    res = pipeline.train(profile_id=1)
+    res = pipeline.train(profile_id=1, activate=True, activation_origin="test")
     assert res["success"], "knobs-on train failed: {}".format(res.get("error"))
     cal_note = res.get("calibration_note", "")
     assert "OOF samples" in cal_note, \
@@ -467,7 +467,7 @@ try:
     cfg_rare["min_labels_to_train"] = 20
     config.save_config(cfg_rare)
 
-    res = pipeline.train(profile_id=1)
+    res = pipeline.train(profile_id=1, activate=True, activation_origin="test")
     assert res["success"], "train failed: {}".format(res.get("error", ""))
     ok()
 except Exception as e:

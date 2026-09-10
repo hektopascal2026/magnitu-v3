@@ -36,6 +36,7 @@ import db
 from config import (
     DEFAULT_TRANSFORMER_MODEL,
     DEFAULT_TRANSFORMER_REVISION,
+    EMBEDDING_STACK_GENERATION,
     MODELS_DIR,
     get_config,
 )
@@ -221,9 +222,181 @@ def write_calibration_sidecar(model_path: str, cal: dict) -> None:
         json.dump(cal, f, indent=2, ensure_ascii=False)
 
 
+def calibration_report_path(model_path: str) -> Path:
+    """Path to the train-time calibration math-check report (``.calreport.json``)."""
+    p = Path(model_path)
+    return p.with_name(p.stem + ".calreport.json")
+
+
+def _write_calibration_report(probs, class_names, y_true, model_path: str) -> None:
+    """Write a composite→relevance reliability report next to the model.
+
+    Never raises — calibration telemetry must not break training. Buckets the
+    composite score and measures the observed rate of
+    ``investigation_lead ∪ important`` (the product definition of "worth
+    attention"), plus a 5-decile summary and ECE on that mapping.
+    """
+    try:
+        probs_arr = np.asarray(probs, dtype=float)
+        y_arr = np.asarray(y_true)
+        if probs_arr.ndim != 2 or len(y_arr) == 0:
+            return
+        n = int(probs_arr.shape[0])
+        n_cols = int(probs_arr.shape[1])
+        w = np.array(
+            [CLASS_WEIGHT_MAP.get(class_names[i], 0.0) for i in range(n_cols)],
+            dtype=float,
+        )
+        composite = probs_arr.dot(w) if n_cols else np.zeros(n)
+        relevant = np.array(
+            [
+                1 if str(y) in ("investigation_lead", "important") else 0
+                for y in y_arr
+            ],
+            dtype=float,
+        )
+        observed_rate = float(relevant.mean())
+
+        # Equal-width composite buckets on [0, 1].
+        n_bins = 10
+        edges = np.linspace(0.0, 1.0, n_bins + 1)
+        reliability = []
+        ece = 0.0
+        for b in range(n_bins):
+            lo, hi = float(edges[b]), float(edges[b + 1])
+            if b == n_bins - 1:
+                mask = (composite >= lo) & (composite <= hi)
+            else:
+                mask = (composite >= lo) & (composite < hi)
+            n_b = int(mask.sum())
+            if n_b == 0:
+                continue
+            obs = float(relevant[mask].mean())
+            conf = float(composite[mask].mean())
+            ece += (n_b / float(n)) * abs(obs - conf)
+            reliability.append({
+                "range": [round(lo, 2), round(hi, 2)],
+                "n": n_b,
+                "obs": round(obs, 4),
+                "mean_composite": round(conf, 4),
+            })
+
+        # 5 equal-count composite decile groups (quintiles of the score).
+        order = np.argsort(composite)
+        composite_deciles = []
+        for q in range(5):
+            start = int(round(q * n / 5.0))
+            end = int(round((q + 1) * n / 5.0))
+            if end <= start:
+                continue
+            idx = order[start:end]
+            composite_deciles.append({
+                "quintile": q + 1,
+                "n": int(len(idx)),
+                "composite_lo": round(float(composite[idx].min()), 4),
+                "composite_hi": round(float(composite[idx].max()), 4),
+                "obs_relevant": round(float(relevant[idx].mean()), 4),
+            })
+
+        report = {
+            "holdout_n": n,
+            "ece": round(float(ece), 4),
+            "observed_relevant_rate": round(observed_rate, 4),
+            "reliability": reliability,
+            "composite_deciles": composite_deciles,
+        }
+        path = calibration_report_path(model_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(path), "w") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("Calibration report skipped: %s", exc)
+
+
+def isotonic_display_path(model_path: str) -> Path:
+    """Sidecar for the display-only isotonic map (composite → P(relevant))."""
+    p = Path(model_path)
+    return p.with_name(p.stem + ".isotonic.json")
+
+
+def fit_isotonic_display_map(probs, class_names, y_true, model_path: str) -> None:
+    """Fit monotone map from composite to observed P(lead∪important); persist.
+
+    Display-only — Seismo continues to receive the raw composite. Never raises.
+    """
+    try:
+        from sklearn.isotonic import IsotonicRegression
+
+        probs_arr = np.asarray(probs, dtype=float)
+        y_arr = np.asarray(y_true)
+        if probs_arr.ndim != 2 or len(y_arr) < 5:
+            return
+        n_cols = probs_arr.shape[1]
+        w = np.array(
+            [CLASS_WEIGHT_MAP.get(class_names[i], 0.0) for i in range(n_cols)],
+            dtype=float,
+        )
+        composite = probs_arr.dot(w)
+        relevant = np.array(
+            [
+                1.0 if str(y) in ("investigation_lead", "important") else 0.0
+                for y in y_arr
+            ],
+            dtype=float,
+        )
+        if relevant.sum() < 1 or (1.0 - relevant).sum() < 1:
+            return
+        iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+        iso.fit(composite, relevant)
+        payload = {
+            "version": 1,
+            "method": "isotonic_relevant",
+            "x": [float(v) for v in iso.X_thresholds_],
+            "y": [float(v) for v in iso.y_thresholds_],
+            "n": int(len(y_arr)),
+            "observed_relevant_rate": float(relevant.mean()),
+        }
+        path = isotonic_display_path(model_path)
+        with open(str(path), "w") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("Isotonic display fit failed: %s", exc)
+
+
+def apply_isotonic_display(composite: float, model_path: str) -> Optional[float]:
+    """Map a raw composite through the display isotonic sidecar, if present."""
+    path = isotonic_display_path(model_path)
+    if not path.exists():
+        return None
+    try:
+        with open(str(path), "r") as f:
+            payload = json.load(f)
+        xs = payload.get("x") or []
+        ys = payload.get("y") or []
+        if len(xs) < 2 or len(xs) != len(ys):
+            return None
+        return float(np.interp(float(composite), xs, ys))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _as_2d_logits(raw) -> np.ndarray:
+    """Normalize a classifier's raw scores to ``(n_samples, n_classes)``.
+
+    Binary sklearn ``decision_function`` returns ``(n_samples,)`` — the margin
+    for ``classes_[1]``. Splitting it into ``[-d/2, +d/2]`` keeps the softmax
+    identical to the binary sigmoid while preserving the sample axis. Never
+    ``reshape(1, -1)``: that collapses a whole batch into one pseudo-row.
+    """
+    arr = np.asarray(raw, dtype=np.float64)
+    if arr.ndim == 1:
+        return np.column_stack([-arr / 2.0, arr / 2.0])
+    return arr
+
+
 def _step_logits(step, X) -> np.ndarray:
     """
-    Logits from a single classifier step.
+    Logits from a single classifier step, always ``(n_samples, n_classes)``.
 
     Prefers ``decision_function`` (true pre-softmax logits for linear models
     like LogisticRegression).  Falls back to ``log(predict_proba)`` for
@@ -234,7 +407,7 @@ def _step_logits(step, X) -> np.ndarray:
     """
     if hasattr(step, "decision_function"):
         try:
-            return step.decision_function(X)
+            return _as_2d_logits(step.decision_function(X))
         except (AttributeError, NotImplementedError):
             pass
     probs = step.predict_proba(X)
@@ -256,7 +429,7 @@ def logits_for_classifier_head(clf, X) -> np.ndarray:
     """
     if getattr(clf, "_is_label_decoding", False) and hasattr(clf, "decision_function"):
         try:
-            return clf.decision_function(X)
+            return _as_2d_logits(clf.decision_function(X))
         except (AttributeError, NotImplementedError):
             pass
     if hasattr(clf, "_pipeline"):
@@ -276,10 +449,19 @@ def logits_for_classifier_head(clf, X) -> np.ndarray:
 
 
 def _softmax_rows(logits: np.ndarray) -> np.ndarray:
-    """Stable row-wise softmax. logits shape (n_samples, n_classes)."""
+    """Stable row-wise softmax over ``(n_samples, n_classes)``.
+
+    1-D input is rejected: callers must normalize via ``_as_2d_logits`` so a
+    binary ``(n_samples,)`` margin can never be softmaxed across the sample
+    axis (which silently produced one bogus row for a whole batch).
+    """
     logits = np.asarray(logits, dtype=np.float64)
-    if logits.ndim == 1:
-        logits = logits.reshape(1, -1)
+    if logits.ndim != 2:
+        raise ValueError(
+            "softmax expected (n_samples, n_classes); got shape {}".format(
+                logits.shape
+            )
+        )
     z = logits - np.max(logits, axis=1, keepdims=True)
     exp = np.exp(z)
     return exp / np.sum(exp, axis=1, keepdims=True)
@@ -399,22 +581,48 @@ def _fit_temperature_scalar(
     """
     Choose T > 0 that minimizes mean NLL of true labels on softmax(logits / T).
     Falls back to 1.0 when data is degenerate.
+
+    Grid endpoints (0.25 / 12.0) mean the optimum was outside the search range;
+    callers should treat that as ``temperature_clamped``.
     """
     if logits is None or len(logits) == 0:
         return 1.0
+    logits = _as_2d_logits(logits)
     idx_map = {c: i for i, c in enumerate(class_names)}
     try:
         y_idx = np.array([idx_map[str(yi)] for yi in y_str], dtype=np.int64)
     except KeyError:
         return 1.0
+    if logits.shape[0] != len(y_idx):
+        logger.warning(
+            "Temperature fit: logit rows (%d) != labels (%d); using T=1.0",
+            logits.shape[0], len(y_idx),
+        )
+        return 1.0
+    # Columns must already be aligned to class_names (callers expand absent
+    # classes). Guessing an alignment here would mis-attribute probabilities.
+    if logits.shape[1] != len(class_names):
+        logger.warning(
+            "Temperature fit: %d logit columns != %d class names; using T=1.0",
+            logits.shape[1], len(class_names),
+        )
+        return 1.0
+
+    grid = np.geomspace(0.25, 12.0, num=40)
     best_t, best_nll = 1.0, float("inf")
-    for t in np.geomspace(0.25, 12.0, num=40):
+    for t in grid:
         probs = _softmax_rows(logits / float(t))
         p_true = probs[np.arange(len(y_idx)), y_idx]
         nll = -float(np.mean(np.log(np.clip(p_true, 1e-9, 1.0))))
         if nll < best_nll:
             best_nll = nll
             best_t = float(t)
+    if best_t <= float(grid[0]) + 1e-12 or best_t >= float(grid[-1]) - 1e-12:
+        logger.warning(
+            "Temperature fit landed on grid endpoint T=%.3f (clamped; "
+            "optimum may be outside [0.25, 12.0]).",
+            best_t,
+        )
     return best_t
 
 
@@ -467,11 +675,17 @@ def _collect_oof_logits(
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Out-of-fold logits on the training fold for stable temperature scaling.
+
+    Each fold's logits are expanded to the full ``label_encoder.classes_``
+    width (absent classes get a large negative sentinel) so temperature
+    fitting never sees a ragged / binary-collapsed array.
     """
     from sklearn.model_selection import StratifiedKFold
 
     y_enc = label_encoder.transform(y_list)
     n_samples = len(y_enc)
+    n_full = len(label_encoder.classes_)
+    full_labels = list(label_encoder.classes_)
     sw_arr = None
     if sample_weight is not None and len(sample_weight) == n_samples:
         sw_arr = np.asarray(sample_weight, dtype=np.float64)
@@ -497,9 +711,20 @@ def _collect_oof_logits(
                 sw_arr[train_idx] if sw_arr is not None else None
             )
             pipe.fit(X[train_idx], y_enc[train_idx], **fit_kwargs)
-            logits_val = logits_for_classifier_head(pipe, X[val_idx])
+            raw = logits_for_classifier_head(pipe, X[val_idx])
+            raw = np.asarray(raw, dtype=np.float64)
+            # Binary → two columns aligned to pipe.classes_ order.
+            if raw.ndim == 1:
+                raw = np.column_stack([-raw / 2.0, raw / 2.0])
+            # Map inner encoded classes → full label-encoder positions.
+            inner_enc = list(pipe.classes_)
+            inner_labels = list(label_encoder.inverse_transform(inner_enc))
+            wide = np.full((raw.shape[0], n_full), -1e9, dtype=np.float64)
+            for j_inner, lbl in enumerate(inner_labels):
+                if j_inner < raw.shape[1]:
+                    wide[:, full_labels.index(lbl)] = raw[:, j_inner]
             for j, vi in enumerate(val_idx):
-                oof_logits[vi] = logits_val[j]
+                oof_logits[vi] = wide[j]
                 oof_y[vi] = y_list[vi]
             if fold_progress_cb:
                 fold_progress_cb(fold_num, n_folds)
@@ -575,15 +800,17 @@ _RANKING_K = 30  # matches the Top-30 review page
 def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
     """Ranking quality of the (calibrated) composite on a holdout.
 
-    Returns ranking_auc, precision_at_k, lead_recall_at_k (all in [0, 1]) and a
-    ranking_note explaining any degeneracy. 0.0 means "not available", not
-    "zero quality" — the UI renders 0.0 as "—".
+    Returns ranking_auc, precision_at_k, lead_recall_at_k, util_at_30,
+    ndcg_at_30 (all in [0, 1]) and a ranking_note explaining any degeneracy.
+    0.0 means "not available", not "zero quality" — the UI renders 0.0 as "—".
 
     - composite is CLASS_WEIGHT_MAP applied to the per-class probs (exactly what
-      gets pushed, modulo the monotone rank-normalization, which preserves AUC);
+      gets pushed as relevance_score);
     - "relevant" = investigation_lead + important;
     - precision@k = share of relevant among the top-k by composite;
-    - lead_recall@k = fraction of all investigation_lead labels in the top-k.
+    - lead_recall@k = fraction of all investigation_lead labels in the top-k;
+    - util@k = mean true CLASS_WEIGHT_MAP of the top-k (graded primary metric);
+    - ndcg@k = DCG of true weights / ideal DCG.
     Guards: AUC is undefined when either class has <2 holdout samples → 0.0;
     k is clipped to the holdout size and noted when the fold is smaller than k.
     """
@@ -591,7 +818,12 @@ def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
         "ranking_auc": 0.0,
         "precision_at_30": 0.0,
         "lead_recall_at_30": 0.0,
+        "util_at_30": 0.0,
+        "ndcg_at_30": 0.0,
         "ranking_note": "",
+        "n_leads": 0,
+        "composites": None,
+        "true_weights": None,
     }
     notes = []
     try:
@@ -604,11 +836,6 @@ def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
         return out
 
     probs_arr = np.asarray(probs, dtype=float)
-    # Per-class weight vector looked up by class name. The model may emit fewer
-    # probability columns than class_names when the training fold lacked a class
-    # (e.g. a class with zero samples is dropped). Align to the probability
-    # columns positionally — the same alignment argmax already relies on — and
-    # note it so the metric is never silently wrong.
     n_cols = probs_arr.shape[1] if probs_arr.ndim == 2 else 0
     if n_cols and n_cols != len(class_names):
         notes.append(
@@ -619,6 +846,11 @@ def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
         dtype=float,
     )
     composite = probs_arr.dot(w) if n_cols else np.zeros(probs_arr.shape[0])
+    true_w = np.array(
+        [CLASS_WEIGHT_MAP.get(str(y), 0.0) for y in y_arr], dtype=float
+    )
+    out["composites"] = composite
+    out["true_weights"] = true_w
 
     rel = np.array(
         [1 if (y in _RANKING_RELEVANT_CLASSES) else 0 for y in y_arr], dtype=int
@@ -642,11 +874,20 @@ def _ranking_metrics(probs, class_names, y_true, k: int = _RANKING_K) -> dict:
     if k_eff > 0:
         out["precision_at_30"] = float(rel[order].mean())
         n_lead_total = int(np.sum(y_arr == "investigation_lead"))
+        out["n_leads"] = n_lead_total
         if n_lead_total > 0:
             top_labels = y_arr[order]
             out["lead_recall_at_30"] = float(
                 np.sum(top_labels == "investigation_lead") / n_lead_total
             )
+        out["util_at_30"] = float(true_w[order].mean())
+        # NDCG@k with CLASS_WEIGHT_MAP gains
+        gains = true_w[order]
+        discounts = 1.0 / np.log2(np.arange(2, k_eff + 2))
+        dcg = float(np.sum(gains * discounts))
+        ideal = np.sort(true_w)[::-1][:k_eff]
+        idcg = float(np.sum(ideal * discounts))
+        out["ndcg_at_30"] = float(dcg / idcg) if idcg > 0.0 else 0.0
 
     out["ranking_note"] = "; ".join(s for s in notes if s)
     return out
@@ -1419,19 +1660,30 @@ def _get_architecture() -> str:
 
 def train(profile_id: int = 1,
           progress_cb: Optional[Callable[[int, str], None]] = None,
-          activate: bool = True,
-          recent_holdout_n: int = 0) -> dict:
+          activate: bool = False,
+          recent_holdout_n: int = 0,
+          activation_origin: str = "",
+          ungated: bool = False) -> dict:
     """Train a new model on labeled entries for the given profile.
 
-    ``recent_holdout_n``: if > 0, exclude the most recent N labeled items from
-    candidate training so the recent-items promote gate evaluates the
-    candidate on rows it never saw (P0-3).
+    Defaults to ``activate=False`` so activation goes through the promote gate
+    (P0-f). Pass ``activate=True`` only with an explicit ``activation_origin``.
+
+    ``recent_holdout_n``: if > 0, also exclude the most recent N labeled items
+    (by ``labels.created_at``) in addition to the persistent eval reserve.
+    The persistent eval reserve is *always* excluded from training.
     """
     arch = _get_architecture()
     if arch == "transformer":
-        return _train_transformer(profile_id=profile_id, progress_cb=progress_cb,
-                                   activate=activate, recent_holdout_n=recent_holdout_n)
-    return _train_tfidf(profile_id=profile_id, progress_cb=progress_cb, activate=activate)
+        return _train_transformer(
+            profile_id=profile_id, progress_cb=progress_cb,
+            activate=activate, recent_holdout_n=recent_holdout_n,
+            activation_origin=activation_origin, ungated=ungated,
+        )
+    return _train_tfidf(
+        profile_id=profile_id, progress_cb=progress_cb, activate=activate,
+        activation_origin=activation_origin, ungated=ungated,
+    )
 
 
 def _holdout_classification_metrics(probs, class_names, y_test) -> dict:
@@ -1443,7 +1695,7 @@ def _holdout_classification_metrics(probs, class_names, y_test) -> dict:
     prec = precision_score(y_test, y_pred, average="macro", zero_division=0)
     rec = recall_score(y_test, y_pred, average="macro", zero_division=0)
     rank = _ranking_metrics(probs, class_names, y_test)
-    return {
+    out = {
         "success": True,
         "accuracy": round(acc, 4),
         "f1_score": round(f1, 4),
@@ -1452,7 +1704,67 @@ def _holdout_classification_metrics(probs, class_names, y_test) -> dict:
         "ranking_auc": round(rank["ranking_auc"], 4),
         "precision_at_30": round(rank["precision_at_30"], 4),
         "lead_recall_at_30": round(rank["lead_recall_at_30"], 4),
+        "util_at_30": round(rank["util_at_30"], 4),
+        "ndcg_at_30": round(rank["ndcg_at_30"], 4),
+        "n_leads": int(rank.get("n_leads") or 0),
         "ranking_note": rank["ranking_note"],
+    }
+    # Keep arrays for bootstrap gate (not JSON-serialised by callers).
+    if rank.get("composites") is not None:
+        out["_composites"] = rank["composites"]
+    if rank.get("true_weights") is not None:
+        out["_true_weights"] = rank["true_weights"]
+    return out
+
+
+def bootstrap_util_delta(
+    old_composites,
+    new_composites,
+    true_weights,
+    k: int = _RANKING_K,
+    n_boot: int = 500,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> dict:
+    """Bootstrap CI on UTIL@k(new) - UTIL@k(old) over the same holdout rows.
+
+    Reject only when the CI lies entirely below zero (new is worse).
+    """
+    old_c = np.asarray(old_composites, dtype=float)
+    new_c = np.asarray(new_composites, dtype=float)
+    tw = np.asarray(true_weights, dtype=float)
+    n = int(tw.shape[0])
+    if n < 2 or old_c.shape[0] != n or new_c.shape[0] != n:
+        return {
+            "delta": 0.0,
+            "ci_lo": 0.0,
+            "ci_hi": 0.0,
+            "n": n,
+            "reject_new_worse": False,
+            "tie": True,
+        }
+
+    def _util(comp, idx):
+        k_eff = min(k, len(idx))
+        order = np.argsort(-comp[idx])[:k_eff]
+        return float(tw[idx][order].mean()) if k_eff else 0.0
+
+    full_idx = np.arange(n)
+    delta = _util(new_c, full_idx) - _util(old_c, full_idx)
+    rng = np.random.RandomState(seed)
+    deltas = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
+        idx = rng.randint(0, n, size=n)
+        deltas[i] = _util(new_c, idx) - _util(old_c, idx)
+    lo = float(np.percentile(deltas, 100.0 * alpha / 2.0))
+    hi = float(np.percentile(deltas, 100.0 * (1.0 - alpha / 2.0)))
+    return {
+        "delta": float(delta),
+        "ci_lo": lo,
+        "ci_hi": hi,
+        "n": n,
+        "reject_new_worse": hi < 0.0,
+        "tie": lo <= 0.0 <= hi,
     }
 
 
@@ -1481,30 +1793,45 @@ def recent_holdout_features(
     n_recent: int = 100,
     l2_normalize: Optional[bool] = None,
 ) -> Tuple[Optional[Any], Optional[List[str]], str]:
-    """Build a holdout from the most recently fetched labeled items.
+    """Build a holdout from the persistent eval reserve (preferred).
 
-    Sorts labels by the entry's ``fetched_at`` (when the story arrived in Seismo)
-    descending and takes the top ``n_recent``. This is the set that matters for
-    the journalist: "on the stories that recently arrived, does the model still
-    rank the good ones at the top?"
+    Falls back to the most recently *labeled* items (by ``labels.created_at``,
+    deterministic tie-break) when the reserve has fewer than 2 rows. Never uses
+    ``entries.fetched_at`` — that is a sync artifact.
 
-    Used by the promote gate so old vs new comparison is on recent production
-    traffic, not a random hash slice of months-old data.
+    Used by the promote gate so old vs new comparison is on rows neither model
+    was trained on (when the reserve is maintained).
     """
-    conn = db.get_db()
-    rows = conn.execute("""
-        SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at,
-               COALESCE(l.label_source, '') AS label_source,
-               e.title, e.description, e.content, e.source_type, e.source_name,
-               e.source_category, e.fetched_at
-        FROM labels l
-        JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
-        WHERE l.profile_id = ? AND (l.pending_gemini_job_id IS NULL OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
-        ORDER BY e.fetched_at DESC
-        LIMIT ?
-    """, (profile_id, n_recent)).fetchall()
-    conn.close()
-    labeled = [dict(r) for r in rows]
+    try:
+        db.roll_eval_reserve(
+            profile_id,
+            target_n=max(int(n_recent), 1),
+            min_train_labels=db.get_effective_config(profile_id).get(
+                "min_labels_to_train", 20
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Eval reserve roll in recent_holdout_features failed: %s", exc)
+
+    labeled = db.get_eval_reserve_rows(profile_id, limit=int(n_recent))
+    if len(labeled) < 2:
+        # Cold-start fallback: newest labels by created_at.
+        conn = db.get_db()
+        rows = conn.execute("""
+            SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at,
+                   COALESCE(l.label_source, '') AS label_source,
+                   e.title, e.description, e.content, e.source_type, e.source_name,
+                   e.source_category, e.fetched_at
+            FROM labels l
+            JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
+            WHERE l.profile_id = ?
+              AND (l.pending_gemini_job_id IS NULL
+                   OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
+            ORDER BY l.created_at DESC, l.entry_type ASC, l.entry_id ASC
+            LIMIT ?
+        """, (profile_id, n_recent)).fetchall()
+        conn.close()
+        labeled = [dict(r) for r in rows]
     if len(labeled) < 2:
         return None, None, "fewer than 2 recent labeled rows"
     arch = (architecture or "transformer").strip().lower() or "transformer"
@@ -1512,6 +1839,28 @@ def recent_holdout_features(
         cfg = db.get_effective_config(profile_id)
         embedding_dim = cfg.get("embedding_dim", 768)
         emb_map = _embedding_blobs_for_entries(labeled)
+        # Reserve rows are withheld from training, so the training path never
+        # computes their embeddings. Fill the gap here (bounded by the reserve
+        # size) or the gate would have no holdout and stall every promotion.
+        missing = [
+            lbl for lbl in labeled
+            if not emb_map.get(db.entry_key_from_mapping(lbl))
+        ]
+        if missing:
+            logger.info(
+                "Recent-eval computing %d missing embeddings (profile %s)",
+                len(missing), profile_id,
+            )
+            try:
+                new_bytes = embed_entries(missing)
+                updates = []
+                for lbl, eb in zip(missing, new_bytes):
+                    updates.append((eb, lbl["entry_type"], lbl["entry_id"]))
+                    emb_map[db.entry_key_from_mapping(lbl)] = eb
+                db.store_embeddings_batch(updates)
+            except Exception as exc:
+                logger.warning("Recent-eval embedding backfill failed: %s", exc)
+
         X_list: List[np.ndarray] = []
         y_list: List[str] = []
         skipped = 0
@@ -1524,14 +1873,13 @@ def recent_holdout_features(
             X_list.append(bytes_to_embedding(emb_bytes, embedding_dim))
             y_list.append(lbl["label"])
         if skipped:
-            logger.info(
-                "Recent-eval skipped %d labeled rows without embeddings (profile %s)",
-                skipped, profile_id,
+            logger.warning(
+                "Recent-eval skipped %d of %d labeled rows without embeddings "
+                "(profile %s)", skipped, len(labeled), profile_id,
             )
         if len(X_list) < 2:
             return None, None, "not enough labeled embeddings in recent set"
         X_ret = np.array(X_list)
-        # Use per-model flag if provided; fall back to config for backward compat.
         if l2_normalize is None:
             l2_normalize = bool(cfg.get("embedding_l2_normalize", False))
         if l2_normalize:
@@ -1802,7 +2150,33 @@ class _LabelDecodingClassifier:
         self._n_full = len(full)
 
     def _expand_to_full(self, sub: np.ndarray, ncols: int) -> np.ndarray:
-        """Map a (n_samples, n_inner) array to (n_samples, n_full) with zeros."""
+        """Map a (n_samples, n_inner) array to (n_samples, n_full).
+
+        Absent classes are filled with a large negative sentinel so that
+        softmax drives them to ~0. Zero-fill is correct for *probabilities*
+        but wrong for *logits* (zero is an ordinary competitive logit and
+        hallucinates ~25% mass on a never-seen class).
+        """
+        sub = np.asarray(sub, dtype=np.float64)
+        # Binary sklearn decision_function returns (n_samples,) — expand to
+        # two columns before mapping to full width. Never reshape(1, -1): that
+        # collapses every sample into one row of "classes".
+        if sub.ndim == 1:
+            sub = np.column_stack([-sub / 2.0, sub / 2.0])
+        n, n_inner = sub.shape
+        if n_inner == self._n_full:
+            return sub
+        # Large negative for absent classes (logit space). For predict_proba
+        # callers the subsequent softmax / renormalization is not applied here;
+        # predict_proba uses zeros via _expand_proba_to_full instead.
+        out = np.full((n, self._n_full), -1e9, dtype=np.float64)
+        for j_inner, j_full in enumerate(self._inner_to_full_idx):
+            if j_inner < n_inner:
+                out[:, j_full] = sub[:, j_inner]
+        return out
+
+    def _expand_proba_to_full(self, sub: np.ndarray) -> np.ndarray:
+        """Map probability columns; absent classes stay at true zero."""
         sub = np.asarray(sub, dtype=np.float64)
         if sub.ndim == 1:
             sub = sub.reshape(1, -1)
@@ -1811,7 +2185,8 @@ class _LabelDecodingClassifier:
             return sub
         out = np.zeros((n, self._n_full), dtype=np.float64)
         for j_inner, j_full in enumerate(self._inner_to_full_idx):
-            out[:, j_full] = sub[:, j_inner]
+            if j_inner < n_inner:
+                out[:, j_full] = sub[:, j_inner]
         return out
 
     def decision_function(self, X):
@@ -1824,21 +2199,21 @@ class _LabelDecodingClassifier:
 
     def predict_proba(self, X):
         sub = self._pipeline.predict_proba(X)
-        return self._expand_to_full(sub, self._n_full)
+        return self._expand_proba_to_full(sub)
 
 
 def _train_transformer(profile_id: int = 1,
                        progress_cb: Optional[Callable[[int, str], None]] = None,
-                       activate: bool = True,
-                       recent_holdout_n: int = 0) -> dict:
+                       activate: bool = False,
+                       recent_holdout_n: int = 0,
+                       activation_origin: str = "",
+                       ungated: bool = False) -> dict:
     """Train a LogReg classifier on cached transformer embeddings for a profile.
 
-    P0-3: when ``recent_holdout_n > 0``, the most recent N labeled items (by
-    ``entries.fetched_at``) are excluded from candidate training so the
-    production recent-items gate evaluates the candidate on rows it never saw.
-    This prevents the ~90% train/eval overlap that inflated recent metrics and
-    allowed in-sample candidates to promote.  The holdout count is reported in
-    the result as ``recent_holdout_n``.
+    Always excludes the persistent eval reserve from training so both incumbent
+    and challenger are evaluated out-of-sample (P0-b).  When
+    ``recent_holdout_n > 0``, also excludes the most recent N labels by
+    ``labels.created_at`` (capped so training keeps at least ``min_labels``).
     """
 
     def _step(pct: int, msg: str) -> None:
@@ -1850,34 +2225,71 @@ def _train_transformer(profile_id: int = 1,
     embedding_dim = config.get("embedding_dim", 768)
 
     _step(5, "Loading labels...")
-    labeled = db.get_all_labels(profile_id)
-    recent_holdout_keys = set()
-    if recent_holdout_n > 0 and len(labeled) > min_labels:
-        # Exclude the most recent N (by fetched_at) so the gate evaluates the
-        # candidate on truly unseen rows.  Mirrors recent_holdout_features().
-        conn = db.get_db()
-        rows = conn.execute(
-            """SELECT l.entry_type, l.entry_id
-               FROM labels l
-               JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
-               WHERE l.profile_id = ?
-                 AND (l.pending_gemini_job_id IS NULL OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
-               ORDER BY e.fetched_at DESC
-               LIMIT ?""",
-            (profile_id, recent_holdout_n),
-        ).fetchall()
-        conn.close()
-        recent_holdout_keys = {
-            db.entry_key_from_mapping({"entry_type": r["entry_type"], "entry_id": r["entry_id"]})
-            for r in rows
-        }
-        before = len(labeled)
-        labeled = [lbl for lbl in labeled
-                   if db.entry_key_from_mapping(lbl) not in recent_holdout_keys]
+    # Keep the eval reserve current before training so exclusion is meaningful.
+    try:
+        roll = db.roll_eval_reserve(profile_id, min_train_labels=min_labels)
         logger.info(
-            "P0-3 recent holdout: excluded %d recent rows from candidate training "
-            "(%d -> %d usable).", len(recent_holdout_keys), before, len(labeled),
+            "Eval reserve roll profile %s: %s→%s (admitted %s, target %s of %s labels)",
+            profile_id, roll.get("before"), roll.get("after"),
+            roll.get("admitted"), roll.get("target"), roll.get("n_labels"),
         )
+    except Exception as exc:
+        logger.warning("Eval reserve roll failed: %s", exc)
+
+    labeled = db.get_all_labels(profile_id)
+    recent_holdout_keys = set(db.get_eval_reserve_keys(profile_id))
+    if recent_holdout_keys:
+        before = len(labeled)
+        labeled = [
+            lbl for lbl in labeled
+            if db.entry_key_from_mapping(lbl) not in recent_holdout_keys
+        ]
+        logger.info(
+            "Eval reserve: excluded %d reserved rows from training (%d -> %d).",
+            before - len(labeled), before, len(labeled),
+        )
+
+    # The reserve already *is* the gate set once it is populated, so the
+    # legacy recent-N exclusion would only starve training a second time.
+    # Keep it solely for the cold-start case where the gate falls back to
+    # "newest labels" (see recent_holdout_features).
+    if len(recent_holdout_keys) >= 2:
+        recent_holdout_n = 0
+
+    if recent_holdout_n > 0 and len(labeled) > min_labels:
+        # Extra exclusion of the most recent N by label created_at (P0-c).
+        max_excludable = max(0, len(labeled) - min_labels)
+        exclude_n = min(recent_holdout_n, max_excludable)
+        if exclude_n > 0:
+            conn = db.get_db()
+            rows = conn.execute(
+                """SELECT l.entry_type, l.entry_id
+                   FROM labels l
+                   WHERE l.profile_id = ?
+                     AND (l.pending_gemini_job_id IS NULL
+                          OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
+                   ORDER BY l.created_at DESC, l.entry_type ASC, l.entry_id ASC
+                   LIMIT ?""",
+                (profile_id, exclude_n),
+            ).fetchall()
+            conn.close()
+            extra = {
+                db.entry_key_from_mapping(
+                    {"entry_type": r["entry_type"], "entry_id": r["entry_id"]}
+                )
+                for r in rows
+            }
+            before = len(labeled)
+            labeled = [
+                lbl for lbl in labeled
+                if db.entry_key_from_mapping(lbl) not in extra
+            ]
+            recent_holdout_keys |= extra
+            logger.info(
+                "P0-3 recent holdout: excluded %d recent rows from candidate training "
+                "(%d -> %d usable, cap=%d).",
+                before - len(labeled), before, len(labeled), exclude_n,
+            )
     if len(labeled) < min_labels:
         return {
             "success": False,
@@ -2042,6 +2454,12 @@ def _train_transformer(profile_id: int = 1,
     model_filename = "model_p{}_v{}.joblib".format(profile_id, version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(clf, model_path)
+    # Record clamp when T sits on a grid endpoint.
+    t_clamped = (
+        float(temperature) <= 0.25 + 1e-9
+        or float(temperature) >= 12.0 - 1e-9
+    )
+    cal_dict["temperature_clamped"] = bool(t_clamped)
     write_calibration_sidecar(model_path, cal_dict)
 
     probs_test, cn = classifier_probabilities(clf, X_test, "", cal=cal_dict)
@@ -2053,8 +2471,21 @@ def _train_transformer(profile_id: int = 1,
     rec = recall_score(y_test, y_pred, average="macro", zero_division=0)
 
     rank = _ranking_metrics(probs_test, cn, y_test)
+    _write_calibration_report(probs_test, cn, y_test, model_path)
+    try:
+        fit_isotonic_display_map(probs_test, cn, y_test, model_path)
+    except Exception as exc:
+        logger.warning("Isotonic display map skipped: %s", exc)
 
     label_dist = {k: int(v) for k, v in labels_series.value_counts().items()}
+
+    origin = (activation_origin or "").strip()
+    if activate and not origin:
+        origin = "ungated"
+        ungated = True
+    stack_gen = str(
+        config.get("embedding_stack_generation") or EMBEDDING_STACK_GENERATION
+    )
 
     db.save_model_record(
         version=version,
@@ -2071,8 +2502,13 @@ def _train_transformer(profile_id: int = 1,
         ranking_auc=rank["ranking_auc"],
         precision_at_30=rank["precision_at_30"],
         lead_recall_at_30=rank["lead_recall_at_30"],
+        util_at_30=rank["util_at_30"],
+        ndcg_at_30=rank["ndcg_at_30"],
         is_active=activate,
         embedding_l2_normalize=bool(config.get("embedding_l2_normalize", False)),
+        embedding_stack_generation=stack_gen,
+        activation_origin=origin,
+        ungated=bool(ungated),
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -2091,6 +2527,8 @@ def _train_transformer(profile_id: int = 1,
         "ranking_auc": round(rank["ranking_auc"], 4),
         "precision_at_30": round(rank["precision_at_30"], 4),
         "lead_recall_at_30": round(rank["lead_recall_at_30"], 4),
+        "util_at_30": round(rank["util_at_30"], 4),
+        "ndcg_at_30": round(rank["ndcg_at_30"], 4),
         "ranking_note": rank["ranking_note"],
         "label_count": len(labeled),
         "label_distribution": label_dist,
@@ -2098,12 +2536,31 @@ def _train_transformer(profile_id: int = 1,
         "model_path": model_path,
         "profile_id": profile_id,
         "embedding_l2_normalize": int(bool(config.get("embedding_l2_normalize", False))),
+        "embedding_stack_generation": stack_gen,
+        "activation_origin": origin,
+        "ungated": int(bool(ungated)),
         "split_note": split_note + "; " + cal_note,
         "calibration_temperature": round(temperature, 4),
         "calibration_note": cal_note,
         "recent_holdout_n": len(recent_holdout_keys),
         "class_report": report,
     }
+
+
+def attach_display_scores(scored: List[dict], model_path: str = "") -> List[dict]:
+    """Add ``display_score`` (isotonic map of composite when available).
+
+    Ranking and Seismo push keep using ``relevance_score`` (raw composite).
+    Magnitu Top page should render ``display_score``.
+    """
+    if not scored:
+        return scored
+    path = model_path or ""
+    for row in scored:
+        raw = float(row.get("relevance_score") or 0.0)
+        mapped = apply_isotonic_display(raw, path) if path else None
+        row["display_score"] = float(mapped) if mapped is not None else raw
+    return scored
 
 
 MAX_ONTHEFLY_EMBEDDINGS = 10
@@ -2250,7 +2707,9 @@ def _score_transformer(
 
 def _train_tfidf(profile_id: int = 1,
                  progress_cb: Optional[Callable[[int, str], None]] = None,
-                 activate: bool = True) -> dict:
+                 activate: bool = False,
+                 activation_origin: str = "",
+                 ungated: bool = False) -> dict:
     """Train a TF-IDF LogReg classifier for a profile."""
 
     def _step(pct: int, msg: str) -> None:
@@ -2261,7 +2720,22 @@ def _train_tfidf(profile_id: int = 1,
     min_labels = config.get("min_labels_to_train", 20)
 
     _step(5, "Loading labels...")
+    try:
+        db.roll_eval_reserve(profile_id, min_train_labels=min_labels)
+    except Exception as exc:
+        logger.warning("Eval reserve roll failed: %s", exc)
     labeled = db.get_all_labels(profile_id)
+    reserve_keys = set(db.get_eval_reserve_keys(profile_id))
+    if reserve_keys:
+        before = len(labeled)
+        labeled = [
+            lbl for lbl in labeled
+            if db.entry_key_from_mapping(lbl) not in reserve_keys
+        ]
+        logger.info(
+            "Eval reserve: excluded %d reserved rows from TF-IDF training (%d -> %d).",
+            before - len(labeled), before, len(labeled),
+        )
     if len(labeled) < min_labels:
         return {
             "success": False,
@@ -2350,14 +2824,18 @@ def _train_tfidf(profile_id: int = 1,
     if X_val is not None and len(X_val) >= 3:
         _step(65, "Calibrating probabilities...")
         logits_val = logits_for_classifier_head(pipeline, X_val)
-        off = _prior_offset_vector({"prior_fit": prior_fit}, class_names_fit)
-        if off is not None:
-            logits_val = _add_logit_offsets(logits_val, off)
+        # P1-1 parity with transformer path: only prior-adjust validation
+        # logits when scoring will also apply prior (classifier_apply_prior).
+        apply_prior_fit = bool(config.get("classifier_apply_prior", False))
+        if apply_prior_fit:
+            off = _prior_offset_vector({"prior_fit": prior_fit}, class_names_fit)
+            if off is not None:
+                logits_val = _add_logit_offsets(logits_val, off)
         temperature = _fit_temperature_scalar(
             logits_val, np.array(y_val), class_names_fit
         )
-        cal_note = "temperature T={:.3f} fit on {} validation samples".format(
-            temperature, len(X_val)
+        cal_note = "temperature T={:.3f} fit on {} validation samples (prior={})".format(
+            temperature, len(X_val), "on" if apply_prior_fit else "off",
         )
     else:
         temperature = 1.0
@@ -2376,6 +2854,11 @@ def _train_tfidf(profile_id: int = 1,
     model_filename = "model_p{}_v{}.joblib".format(profile_id, version)
     model_path = str(MODELS_DIR / model_filename)
     joblib.dump(pipeline, model_path)
+    t_clamped = (
+        float(temperature) <= 0.25 + 1e-9
+        or float(temperature) >= 12.0 - 1e-9
+    )
+    cal_dict["temperature_clamped"] = bool(t_clamped)
     write_calibration_sidecar(model_path, cal_dict)
 
     probs_test, cn = classifier_probabilities(pipeline, X_test, "", cal=cal_dict)
@@ -2387,11 +2870,21 @@ def _train_tfidf(profile_id: int = 1,
     rec = recall_score(y_test, y_pred, average="macro", zero_division=0)
 
     rank = _ranking_metrics(probs_test, cn, y_test)
+    _write_calibration_report(probs_test, cn, y_test, model_path)
+    try:
+        fit_isotonic_display_map(probs_test, cn, y_test, model_path)
+    except Exception as exc:
+        logger.warning("Isotonic display map skipped: %s", exc)
 
     tfidf = pipeline.named_steps["features"].transformers_[0][1]
     feature_count = len(tfidf.vocabulary_) if hasattr(tfidf, "vocabulary_") else 0
 
     label_dist = {k: int(v) for k, v in pd.Series(labels).value_counts().items()}
+
+    origin = (activation_origin or "").strip()
+    if activate and not origin:
+        origin = "ungated"
+        ungated = True
 
     db.save_model_record(
         version=version,
@@ -2408,7 +2901,11 @@ def _train_tfidf(profile_id: int = 1,
         ranking_auc=rank["ranking_auc"],
         precision_at_30=rank["precision_at_30"],
         lead_recall_at_30=rank["lead_recall_at_30"],
+        util_at_30=rank["util_at_30"],
+        ndcg_at_30=rank["ndcg_at_30"],
         is_active=activate,
+        activation_origin=origin,
+        ungated=bool(ungated),
     )
 
     report = classification_report(y_test, y_pred, zero_division=0, output_dict=True)
@@ -2427,6 +2924,8 @@ def _train_tfidf(profile_id: int = 1,
         "ranking_auc": round(rank["ranking_auc"], 4),
         "precision_at_30": round(rank["precision_at_30"], 4),
         "lead_recall_at_30": round(rank["lead_recall_at_30"], 4),
+        "util_at_30": round(rank["util_at_30"], 4),
+        "ndcg_at_30": round(rank["ndcg_at_30"], 4),
         "ranking_note": rank["ranking_note"],
         "label_count": len(labeled),
         "label_distribution": label_dist,
@@ -2434,6 +2933,8 @@ def _train_tfidf(profile_id: int = 1,
         "model_path": model_path,
         "profile_id": profile_id,
         "embedding_l2_normalize": 0,
+        "activation_origin": origin,
+        "ungated": int(bool(ungated)),
         "split_note": split_note + "; " + cal_note,
         "calibration_temperature": round(temperature, 4),
         "calibration_note": cal_note,

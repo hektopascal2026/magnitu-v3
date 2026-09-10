@@ -24,7 +24,7 @@ import db
 import sync
 import pipeline
 from config import get_config
-from magnitu.time_display import format_seismo_timestamp
+from magnitu.time_display import format_utc_sql_timestamp
 from model_manager import export_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -49,20 +49,17 @@ F1_HARD_DROP_LIMIT = 0.10
 # top-30. That is the doctrine for a threat-hunting system, not a tuning artifact.
 LEAD_RECALL_SLACK = 0.10
 
-# ── Recent-items promote gate ────────────────────────────────────────────
-# The gate scores both old and new models on the most recent N labeled items
-# (by entry fetched_at). This tests "will the journalist's next day be worse?"
-# rather than "is F1 higher on a random slice of old data?"
-# Number of recent labeled items to evaluate on. Capped by available labels.
+# ── Eval-reserve promote gate ────────────────────────────────────────────
+# Gate scores both old and new models on the persistent eval_reserve
+# (labels.created_at aged ≥7d, retired at 90d; fallback = newest labels).
+# Primary metric: UTIL@30 (mean true CLASS_WEIGHT_MAP of top-30).
+# Bootstrap CI decides reject; p@30 / lead_recall are diagnostics only.
 GATE_N_RECENT = 100
 # Minimum recent items for the gate to be meaningful. Below this, promote
 # (not enough data to reject a model that might be better).
 GATE_MIN_RECENT = 10
-# p@30 slack: one item flip in top-30 on a 100-row set ≈ 0.033.
-# Allow this much regression before rejecting — it's noise, not degradation.
+# Legacy slacks kept for replay scripts / diagnostics only.
 GATE_P30_SLACK = 0.05
-# Lead recall slack: with 5-10 leads, one flip = 0.10-0.20 step.
-# Allow one lead to drop before rejecting — quantization, not regression.
 GATE_LEAD_RECALL_SLACK = 0.10
 
 
@@ -248,7 +245,7 @@ def _model_meta_for_push(profile_id: int, model_row: Dict) -> Optional[Dict]:
         "model_uuid": profile_info.get("model_uuid", ""),
         "model_description": profile_info.get("description", ""),
         "model_version": model_row.get("version"),
-        "model_trained_at": format_seismo_timestamp(model_row.get("trained_at", "")),
+        "model_trained_at": format_utc_sql_timestamp(model_row.get("trained_at", "")),
         "accuracy": model_row.get("accuracy", 0.0),
         "f1_score": model_row.get("f1_score", 0.0),
         "label_count": model_row.get("label_count", 0),
@@ -257,23 +254,30 @@ def _model_meta_for_push(profile_id: int, model_row: Dict) -> Optional[Dict]:
 
 
 def _label_counts(profile_id: int, trained_at: Optional[str] = None) -> Dict[str, int]:
-    """Total / trainable (joined) / orphan / since-last-train counts for a profile."""
+    """Total / trainable (joined) / orphan / since-last-train counts for a profile.
+
+    All counts filter to *confirmed* labels (rows not awaiting Gemini Accept),
+    matching ``db.get_all_labels`` and the training path.  Counting pending
+    rows here inflated ``labels_since_train`` and triggered phantom retrains
+    that then failed because training skips pending rows.
+    """
+    confirmed = db._labels_confirmed_sql("l")
     conn = db.get_db()
     total = conn.execute(
-        "SELECT COUNT(*) FROM labels WHERE profile_id=?",
+        "SELECT COUNT(*) FROM labels l WHERE l.profile_id=? AND " + confirmed,
         (profile_id,),
     ).fetchone()[0]
     trainable = conn.execute(
         """
         SELECT COUNT(*) FROM labels l
         JOIN entries e ON e.entry_type = l.entry_type AND e.entry_id = l.entry_id
-        WHERE l.profile_id=?
-        """,
+        WHERE l.profile_id=? AND """ + confirmed,
         (profile_id,),
     ).fetchone()[0]
     if trained_at:
         since_train = conn.execute(
-            "SELECT COUNT(*) FROM labels WHERE profile_id=? AND updated_at > ?",
+            "SELECT COUNT(*) FROM labels l "
+            "WHERE l.profile_id=? AND " + confirmed + " AND l.updated_at > ?",
             (profile_id, trained_at),
         ).fetchone()[0]
     else:
@@ -305,17 +309,12 @@ def evaluate_model_update(
     old_metrics: Optional[dict],
     new_metrics: dict,
 ) -> bool:
-    """Promote gate: mission first, macro-F1 as a catastrophe breaker.
+    """LEGACY promote gate on *stored* train-time metrics.
 
-    (1) Cold start promotes.
-    (2) Lead-recall guard applies to every promote path: a promotion that
-        craters lead_recall_at_30 is vetoed even if metrics improved.
-    (3) Big top-of-feed win: p@30 up >= PROMOTE_BIG_P30_WIN (~one relevant
-        item on a ~20-row holdout) tolerates an F1 dip up to
-        F1_HARD_DROP_LIMIT (~2-3 tail rows; beyond that we don't trust the
-        distilled recipe).
-    (4) Legacy two-path gate unchanged (small ranking win with strict F1
-        guard, or F1 win with ranking slack).
+    UNSAFE for cross-generation comparison: stored metrics describe the holdout
+    as it existed at each model's training time (and the embedding generation
+    then in force). Prefer ``evaluate_recent_gate`` / common-eval re-scoring.
+    Kept for replay/lab scripts only — not used by the live ML window.
     """
     if not old_metrics:
         return True
@@ -352,54 +351,96 @@ def _should_promote(
 def evaluate_recent_gate(
     old_recent: Optional[dict],
     new_recent: dict,
+    has_incumbent: Optional[bool] = None,
 ) -> bool:
-    """Conservative promote gate on recent production traffic.
+    """Promote gate on the eval reserve / recent labeled set.
 
-    Tests "will the journalist's next day be worse?" by comparing old and new
-    models on the most recent N labeled items. Only ranking metrics matter —
-    F1 on a small set is noise.
+    Decides on **UTIL@30 alone** (mean true class weight of the top-30).
+    When both arms expose per-row composites, a bootstrap CI on the UTIL
+    delta decides: reject only when the CI lies entirely below zero.
+    Falls back to a one-item weight slack when arrays are missing.
 
-    Rules (all must pass):
-    1. Cold start (no old model): promote.
-    2. Too few recent items to evaluate: promote (can't reject without evidence).
-    3. Lead recall must not drop beyond GATE_LEAD_RECALL_SLACK.
-    4. p@30 must not drop beyond GATE_P30_SLACK.
+    ``has_incumbent`` distinguishes a genuine cold start (no active model →
+    promote) from a broken evaluation of an existing incumbent (→ keep the
+    incumbent). Without it, any failure to build the holdout would silently
+    disable the gate and promote everything. Defaults to inferring from
+    ``old_recent`` for backward compatibility.
+
+    p@30 and lead_recall remain logged as diagnostics.
     """
-    if not old_recent or not old_recent.get("success"):
-        return True  # cold start or old model couldn't be evaluated
+    if has_incumbent is None:
+        has_incumbent = old_recent is not None
     if not new_recent.get("success"):
-        return False  # new model couldn't be evaluated on recent set — don't promote blind
+        logger.info("Recent gate REJECT: new model could not be evaluated.")
+        return False
+    if not old_recent or not old_recent.get("success"):
+        if has_incumbent:
+            logger.warning(
+                "Recent gate REJECT: incumbent could not be evaluated (%s). "
+                "Refusing to promote blind — keeping the active model.",
+                (old_recent or {}).get("error", "no evaluation"),
+            )
+            return False
+        logger.info("Recent gate: cold start (no active model) — promote.")
+        return True
 
-    n = int(new_recent.get("n_recent") or 0)
+    n = int(new_recent.get("n_recent") or new_recent.get("n") or 0)
+    n_leads = int(new_recent.get("n_leads") or 0)
     if n < GATE_MIN_RECENT:
         logger.info(
-            "Recent gate: only %d recent items (< %d), promoting without check.",
-            n, GATE_MIN_RECENT,
+            "Recent gate: only %d recent items (< %d), promoting without check "
+            "(n_leads=%d).",
+            n, GATE_MIN_RECENT, n_leads,
         )
         return True
 
+    old_util = float(old_recent.get("util_at_30") or 0.0)
+    new_util = float(new_recent.get("util_at_30") or 0.0)
     old_p30 = float(old_recent.get("precision_at_30") or 0.0)
     new_p30 = float(new_recent.get("precision_at_30") or 0.0)
     old_lr = float(old_recent.get("lead_recall_at_30") or 0.0)
     new_lr = float(new_recent.get("lead_recall_at_30") or 0.0)
 
-    # Lead recall guard: no caught lead may drop out of top-30.
-    # Skip when old has no leads (lr=0) — nothing to lose.
-    if old_lr > 0 and new_lr < old_lr - GATE_LEAD_RECALL_SLACK:
-        logger.info(
-            "Recent gate REJECT: lead_recall %.3f→%.3f (slack %.3f).",
-            old_lr, new_lr, GATE_LEAD_RECALL_SLACK,
-        )
-        return False
+    old_c = old_recent.get("_composites")
+    new_c = new_recent.get("_composites")
+    tw = new_recent.get("_true_weights")
+    if tw is None:
+        tw = old_recent.get("_true_weights")
 
-    # p@30 guard: top of queue must not get worse.
-    if new_p30 < old_p30 - GATE_P30_SLACK:
-        logger.info(
-            "Recent gate REJECT: p@30 %.3f→%.3f (slack %.3f).",
-            old_p30, new_p30, GATE_P30_SLACK,
+    decision = "promote"
+    tolerance_note = ""
+    if (
+        old_c is not None and new_c is not None and tw is not None
+        and len(old_c) == len(new_c) == len(tw)
+    ):
+        boot = pipeline.bootstrap_util_delta(old_c, new_c, tw)
+        tolerance_note = (
+            "bootstrap UTIL delta={:+.4f} CI[{:.4f}, {:.4f}]".format(
+                boot["delta"], boot["ci_lo"], boot["ci_hi"],
+            )
         )
-        return False
+        if boot["reject_new_worse"]:
+            decision = "reject"
+        elif boot["tie"]:
+            decision = "tie"
+            # Ties promote (no evidence of regression) — same as equal metrics.
+    else:
+        # One-item slack: max class weight / k.
+        slack = 1.0 / float(max(min(30, n), 1))
+        tolerance_note = "one-item slack={:.4f}".format(slack)
+        if new_util < old_util - slack:
+            decision = "reject"
+        elif abs(new_util - old_util) <= slack:
+            decision = "tie"
 
+    logger.info(
+        "Recent gate %s (n=%d, n_leads=%d): UTIL@30 %.3f→%.3f (%s); "
+        "diag p@30 %.3f→%.3f, lead_recall %.3f→%.3f.",
+        decision.upper(), n, n_leads, old_util, new_util, tolerance_note,
+        old_p30, new_p30, old_lr, new_lr,
+    )
+    if decision == "reject":
+        return False
     return True
 
 
@@ -731,54 +772,76 @@ def main():
                 if new_recent.get("success"):
                     report["p30_new_recent"] = new_recent.get("precision_at_30")
                     report["lr30_new_recent"] = new_recent.get("lead_recall_at_30")
+                    report["util_new_recent"] = new_recent.get("util_at_30")
                     report["n_recent"] = new_recent.get("n_recent")
+                    report["n_leads_recent"] = new_recent.get("n_leads")
                 if old_recent and old_recent.get("success"):
                     report["p30_old_recent"] = old_recent.get("precision_at_30")
                     report["lr30_old_recent"] = old_recent.get("lead_recall_at_30")
+                    report["util_old_recent"] = old_recent.get("util_at_30")
 
-                promoted = evaluate_recent_gate(old_recent, new_recent)
+                # An ungated incumbent still gets compared: how it was
+                # activated says nothing about how it scores on the reserve,
+                # and skipping the comparison would promote blind.
+                if current_model and int(current_model.get("ungated") or 0):
+                    logger.info(
+                        "Incumbent v%s was activated ungated (%s); comparing on "
+                        "the eval reserve anyway.",
+                        current_model.get("version"),
+                        current_model.get("activation_origin") or "unknown",
+                    )
+
+                promoted = evaluate_recent_gate(
+                    old_recent, new_recent, has_incumbent=bool(current_model)
+                )
                 if promoted and not current_model:
                     logger.info("Cold start promote.")
                 elif promoted:
+                    old_util = float(report.get("util_old_recent") or 0.0)
+                    new_util = float(report.get("util_new_recent") or 0.0)
                     old_p30 = float(report.get("p30_old_recent") or 0.0)
                     new_p30 = float(report.get("p30_new_recent") or 0.0)
                     old_lr = float(report.get("lr30_old_recent") or 0.0)
                     new_lr = float(report.get("lr30_new_recent") or 0.0)
                     n = int(report.get("n_recent") or 0)
                     logger.info(
-                        "Recent gate passed (n=%d): p@30 %.3f→%.3f, "
-                        "lead_recall %.3f→%.3f.",
-                        n, old_p30, new_p30, old_lr, new_lr,
+                        "Recent gate passed (n=%d, n_leads=%d): UTIL@30 %.3f→%.3f; "
+                        "diag p@30 %.3f→%.3f, lead_recall %.3f→%.3f.",
+                        n, int(report.get("n_leads_recent") or 0),
+                        old_util, new_util, old_p30, new_p30, old_lr, new_lr,
                     )
 
                 if promoted:
                     report["promoted"] = True
                     promoted_this_desk = True
                     logger.info("Model promoted! Activating version %s", res["version"])
-                    conn = db.get_db()
-                    conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
-                    conn.execute(
-                        "UPDATE models SET is_active = 1 WHERE profile_id = ? AND version = ?",
-                        (profile_id, res["version"]),
+                    db.activate_model(
+                        profile_id=profile_id,
+                        version=res["version"],
+                        origin="window",
+                        ungated=False,
                     )
-                    conn.commit()
-                    conn.close()
                     current_model = db.get_active_model(profile_id)
                     if current_model:
                         report["active_version"] = current_model.get("version")
 
                 else:
                     report["train_rejected"] = True
+                    old_util = float(report.get("util_old_recent") or 0.0)
+                    new_util = float(report.get("util_new_recent") or 0.0)
                     old_p30 = float(report.get("p30_old_recent") or 0.0)
                     new_p30 = float(report.get("p30_new_recent") or 0.0)
                     old_lr = float(report.get("lr30_old_recent") or 0.0)
                     new_lr = float(report.get("lr30_new_recent") or 0.0)
                     reject_msg = (
-                        "Recent gate rejected v{} on {} recent items: "
-                        "p@30 {:.3f}→{:.3f}, lead_recall {:.3f}→{:.3f}. "
+                        "Recent gate rejected v{} on {} recent items "
+                        "(n_leads={}): UTIL@30 {:.3f}→{:.3f}; "
+                        "diag p@30 {:.3f}→{:.3f}, lead_recall {:.3f}→{:.3f}. "
                         "Keeping older model.".format(
                             res["version"],
                             int(report.get("n_recent") or 0),
+                            int(report.get("n_leads_recent") or 0),
+                            old_util, new_util,
                             old_p30, new_p30, old_lr, new_lr,
                         )
                     )

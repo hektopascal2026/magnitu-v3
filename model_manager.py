@@ -122,11 +122,16 @@ def _build_manifest(model_name: str, model_uuid: str, description: str,
             "ranking_auc":       active_model.get("ranking_auc", 0.0),
             "precision_at_30":    active_model.get("precision_at_30", 0.0),
             "lead_recall_at_30":  active_model.get("lead_recall_at_30", 0.0),
+            "util_at_30":         active_model.get("util_at_30", 0.0),
+            "ndcg_at_30":         active_model.get("ndcg_at_30", 0.0),
         }
         # P0-2: serialize the per-model normalization flag so imported models
         # are scored with the same representation they were trained on.
         manifest["embedding_l2_normalize"] = bool(
             active_model.get("embedding_l2_normalize", 0)
+        )
+        manifest["embedding_stack_generation"] = (
+            active_model.get("embedding_stack_generation") or ""
         )
 
     if extra:
@@ -386,7 +391,14 @@ def import_model(
                 ranking_auc=float(metrics.get("ranking_auc", 0.0) or 0.0),
                 precision_at_30=float(metrics.get("precision_at_30", 0.0) or 0.0),
                 lead_recall_at_30=float(metrics.get("lead_recall_at_30", 0.0) or 0.0),
+                util_at_30=float(metrics.get("util_at_30", 0.0) or 0.0),
+                ndcg_at_30=float(metrics.get("ndcg_at_30", 0.0) or 0.0),
                 embedding_l2_normalize=imported_l2,
+                embedding_stack_generation=str(
+                    manifest.get("embedding_stack_generation") or ""
+                ),
+                activation_origin="import",
+                ungated=True,
             )
             result["model_loaded"] = True
             result["activated_version"] = store_version

@@ -282,7 +282,7 @@ try:
     cfg["model_architecture"] = "tfidf"
     config.save_config(cfg)
 
-    result = pipeline.train()
+    result = pipeline.train(activate=True, activation_origin="test")
     assert result["success"], result.get("error", "")
     assert result["architecture"] == "tfidf"
     assert result["version"] >= 1
@@ -397,7 +397,7 @@ try:
     conn.commit()
     conn.close()
 
-    result = pipeline.train()
+    result = pipeline.train(activate=True, activation_origin="test")
     assert result["success"], result.get("error", "")
     assert result["architecture"] == "transformer"
     assert result["feature_count"] == 768
@@ -462,7 +462,7 @@ try:
     conn.commit()
     conn.close()
 
-    result = pipeline.train()
+    result = pipeline.train(activate=True, activation_origin="test")
     assert result["success"]
 
     recipe = distiller.distill_recipe()
@@ -537,7 +537,7 @@ try:
     conn.commit()
     conn.close()
 
-    result = pipeline.train()
+    result = pipeline.train(activate=True, activation_origin="test")
     assert result["success"]
 
     exp = explainer.explain_entry(test_entries[0])
@@ -820,7 +820,7 @@ try:
     conn.commit()
     conn.close()
 
-    result = pipeline.train()
+    result = pipeline.train(activate=True, activation_origin="test")
     assert result["success"], result.get("error", "")
 
     recipe = distiller.distill_recipe()

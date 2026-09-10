@@ -226,8 +226,10 @@ def test_ml_window_main_promotes(
     # Mock evaluate_on_recent for the recent-items gate.
     # new model better than old on recent set → promote
     mock_pipeline.evaluate_on_recent.side_effect = [
-        {"success": True, "precision_at_30": 0.6, "lead_recall_at_30": 0.8, "n_recent": 20},  # new
-        {"success": True, "precision_at_30": 0.5, "lead_recall_at_30": 0.8, "n_recent": 20},  # old
+        {"success": True, "precision_at_30": 0.6, "lead_recall_at_30": 0.8,
+         "util_at_30": 0.55, "n_recent": 20, "n_leads": 4},  # new
+        {"success": True, "precision_at_30": 0.5, "lead_recall_at_30": 0.8,
+         "util_at_30": 0.45, "n_recent": 20, "n_leads": 4},  # old
     ]
     
     # Mock sync compute pending (1st call returns 1, 2nd call returns 0)
@@ -248,7 +250,7 @@ def test_ml_window_main_promotes(
     res = ml_window.main()
     
     assert res == 0
-    mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
+    mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False, recent_holdout_n=ml_window.GATE_N_RECENT)
     # Recent-items gate: evaluate_on_recent called for both new and old models
     assert mock_pipeline.evaluate_on_recent.call_count == 2
     mock_distill_sub.assert_called_once_with(1)
@@ -260,9 +262,14 @@ def test_ml_window_main_promotes(
     push_kwargs = mock_sync.push_scores.call_args.kwargs
     assert push_kwargs.get("model_meta") is not None
     assert "model_trained_at" in push_kwargs["model_meta"]
+    # model_trained_at must be UTC, not Zurich time (1-2h ahead in summer).
+    assert push_kwargs["model_meta"]["model_trained_at"] == "2020-01-01 00:00:00"
 
     # Ensure compute embeddings looped twice
     assert mock_sync._compute_pending_embeddings.call_count == 2
+    mock_db.activate_model.assert_called_once_with(
+        profile_id=1, version=2, origin="window", ungated=False,
+    )
     mock_sync.vault_upload.assert_called_once_with(vault_password="vault-secret", package_path=mock_export.return_value, overwrite=True)
     mock_db.get_recent_entries.assert_called_with(days=14, include_embedding=False)
 
@@ -305,8 +312,10 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
 
     # Mock evaluate_on_recent — new model worse on recent set → REJECT
     mock_pipeline.evaluate_on_recent.side_effect = [
-        {"success": True, "precision_at_30": 0.3, "lead_recall_at_30": 0.4, "n_recent": 20},  # new
-        {"success": True, "precision_at_30": 0.5, "lead_recall_at_30": 0.8, "n_recent": 20},  # old
+        {"success": True, "precision_at_30": 0.3, "lead_recall_at_30": 0.4,
+         "util_at_30": 0.20, "n_recent": 20, "n_leads": 4},  # new
+        {"success": True, "precision_at_30": 0.5, "lead_recall_at_30": 0.8,
+         "util_at_30": 0.55, "n_recent": 20, "n_leads": 4},  # old
     ]
     
     # Mock sync compute pending
@@ -321,7 +330,7 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     res = ml_window.main()
     
     assert res == 0
-    mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False)
+    mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False, recent_holdout_n=ml_window.GATE_N_RECENT)
     # Recent-items gate: evaluate_on_recent called for both new and old models
     assert mock_pipeline.evaluate_on_recent.call_count == 2
     # Reject logged with train_rejected
@@ -337,3 +346,100 @@ def test_score_push_days_defaults_and_config():
     assert ml_window._score_push_days({}) == 14
     assert ml_window._score_push_days({"score_push_days": 7}) == 7
     assert ml_window._score_push_days({"score_push_days": 0}) == 1
+
+
+# ── _label_counts filters confirmed labels (no pending Gemini rows) ──
+
+def test_label_counts_filters_confirmed_labels():
+    """_label_counts must exclude pending Gemini rows, matching get_all_labels."""
+    from unittest.mock import MagicMock
+
+    ml_window.db = MagicMock()
+    conn = MagicMock()
+    ml_window.db.get_db.return_value = conn
+    ml_window.db._labels_confirmed_sql = lambda alias: (
+        "(%spending_gemini_job_id IS NULL OR TRIM(COALESCE(%spending_gemini_job_id,''))='')"
+        % (alias + ".", alias + ".")
+    )
+
+    # Each execute() returns a row; fetchone()[0] gives the count.
+    # total=30, trainable=28, since_train=12
+    conn.execute.side_effect = [
+        MagicMock(fetchone=MagicMock(return_value=[30])),  # total
+        MagicMock(fetchone=MagicMock(return_value=[28])),  # trainable
+        MagicMock(fetchone=MagicMock(return_value=[12])),  # since_train
+    ]
+
+    counts = ml_window._label_counts(profile_id=1, trained_at="2025-01-01 00:00:00")
+    assert counts == {
+        "labels_total": 30,
+        "labels_trainable": 28,
+        "labels_orphan": 2,
+        "labels_since_train": 12,
+    }
+
+    # All three queries must include the confirmed-label filter.
+    sqls = [call.args[0] for call in conn.execute.call_args_list]
+    assert all("pending_gemini_job_id" in sql for sql in sqls), \
+        "every _label_counts query must filter confirmed labels"
+
+
+def test_label_counts_since_train_defaults_to_total_when_no_model():
+    """When trained_at is None, since_train = total (confirmed)."""
+    from unittest.mock import MagicMock
+
+    ml_window.db = MagicMock()
+    conn = MagicMock()
+    ml_window.db.get_db.return_value = conn
+    ml_window.db._labels_confirmed_sql = lambda alias: "1=1"
+
+    conn.execute.side_effect = [
+        MagicMock(fetchone=MagicMock(return_value=[25])),  # total
+        MagicMock(fetchone=MagicMock(return_value=[23])),  # trainable
+    ]
+
+    counts = ml_window._label_counts(profile_id=1, trained_at=None)
+    assert counts["labels_since_train"] == 25
+    assert counts["labels_total"] == 25
+
+
+# ── model_trained_at sent as UTC, not Zurich time ──
+
+def test_model_meta_trained_at_is_utc_not_zurich():
+    """model_trained_at must be naive UTC so Seismo's normaliseTimestamp
+    (which treats bare YYYY-MM-DD HH:MM:SS as UTC) compares correctly.
+    A Zurich conversion would shift it 1-2h ahead in summer.
+    """
+    from unittest.mock import MagicMock
+
+    ml_window.db = MagicMock()
+    ml_window.db.get_model_profile.return_value = {"model_name": "X", "model_uuid": "u", "description": "d"}
+    model_row = {"version": 5, "trained_at": "2025-07-15T10:30:00Z", "accuracy": 0.9, "f1_score": 0.8, "label_count": 50, "architecture": "transformer"}
+
+    meta = ml_window._model_meta_for_push(profile_id=1, model_row=model_row)
+    assert meta is not None
+    # UTC 10:30, not Zurich 12:30 (CEST, +2h in July)
+    assert meta["model_trained_at"] == "2025-07-15 10:30:00"
+
+
+def test_model_meta_trained_at_handles_naive_sql_timestamp():
+    """Naive SQLite datetime strings (already UTC) pass through as-is."""
+    from unittest.mock import MagicMock
+
+    ml_window.db = MagicMock()
+    ml_window.db.get_model_profile.return_value = {"model_name": "X", "model_uuid": "u", "description": "d"}
+    model_row = {"version": 5, "trained_at": "2025-07-15 10:30:00", "accuracy": 0.9, "f1_score": 0.8, "label_count": 50, "architecture": "transformer"}
+
+    meta = ml_window._model_meta_for_push(profile_id=1, model_row=model_row)
+    assert meta["model_trained_at"] == "2025-07-15 10:30:00"
+
+
+def test_model_meta_trained_at_empty_on_garbage():
+    from unittest.mock import MagicMock
+
+    ml_window.db = MagicMock()
+    ml_window.db.get_model_profile.return_value = {"model_name": "X", "model_uuid": "u", "description": "d"}
+    model_row = {"version": 5, "trained_at": "", "accuracy": 0.9, "f1_score": 0.8, "label_count": 50, "architecture": "transformer"}
+
+    meta = ml_window._model_meta_for_push(profile_id=1, model_row=model_row)
+    assert meta["model_trained_at"] == ""

@@ -520,7 +520,13 @@
                             if (result.recipe_quality !== undefined) {
                                 msg += ', recipe quality ' + (result.recipe_quality * 100).toFixed(0) + '%';
                             }
-                            flash(msg, 'success');
+                            if (result.promoted === false) {
+                                msg = 'Model v' + result.version + ' trained but NOT activated — ' +
+                                    'the promote gate kept the previous model. ' + msg;
+                                flash(msg, 'error');
+                            } else {
+                                flash(msg, 'success');
+                            }
                             setTimeout(function() { location.reload(); }, statusDoneMs);
                         },
                         function(errMsg) {

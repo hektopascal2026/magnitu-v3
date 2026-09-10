@@ -867,6 +867,8 @@ async def top_page(request: Request, slug: str, view: str = "predicted_noise"):
     if view == "recent":
         entries = db.get_recent_entries(days=7)
         scored = pipeline.score_entries(entries, profile_id=profile_id)
+        active = db.get_active_model(profile_id) or {}
+        pipeline.attach_display_scores(scored, active.get("model_path") or "")
         labeled_ids = db.get_all_labeled_entry_keys(profile_id)
         unlabeled_scored = [
             s for s in scored
@@ -895,6 +897,8 @@ async def top_page(request: Request, slug: str, view: str = "predicted_noise"):
     elif view == "mismatches":
         labeled_entries = db.get_labeled_entries(profile_id)
         scored = pipeline.score_entries(labeled_entries, profile_id=profile_id)
+        active = db.get_active_model(profile_id) or {}
+        pipeline.attach_display_scores(scored, active.get("model_path") or "")
         score_map = {db.entry_key_from_mapping(s): s for s in scored}
         mismatch_pool = []
         for entry in labeled_entries:
@@ -921,6 +925,8 @@ async def top_page(request: Request, slug: str, view: str = "predicted_noise"):
     elif view == "predicted_noise":
         entries = db.get_all_entries()
         scored = pipeline.score_entries(entries, profile_id=profile_id)
+        active = db.get_active_model(profile_id) or {}
+        pipeline.attach_display_scores(scored, active.get("model_path") or "")
         entry_map = {db.entry_key_from_mapping(e): e for e in entries}
         noise_pool = []
         for s in scored:
@@ -955,6 +961,8 @@ async def top_page(request: Request, slug: str, view: str = "predicted_noise"):
     elif view == "all":
         entries = db.get_all_entries()
         scored = pipeline.score_entries(entries, profile_id=profile_id)
+        active = db.get_active_model(profile_id) or {}
+        pipeline.attach_display_scores(scored, active.get("model_path") or "")
         entry_map = {db.entry_key_from_mapping(e): e for e in entries}
         scored.sort(key=lambda s: s["relevance_score"], reverse=True)
         top_entries = []
@@ -1579,6 +1587,9 @@ async def sync_health(slug: str):
 
 def _train_impl(progress_cb=None, profile_id: int = 1) -> dict:
     """Train model, distill recipe, and evaluate recipe quality."""
+    # Imported lazily: ml_window calls logging.basicConfig at import time,
+    # which would add a root handler to the web app and duplicate uvicorn logs.
+    import ml_window
 
     def step(pct: int, msg: str) -> None:
         if progress_cb:
@@ -1590,9 +1601,47 @@ def _train_impl(progress_cb=None, profile_id: int = 1) -> dict:
         outer = 5 + int(inner_pct * 0.68)
         step(outer, msg)
 
-    result = pipeline.train(profile_id=profile_id, progress_cb=train_progress)
+    result = pipeline.train(
+        profile_id=profile_id,
+        progress_cb=train_progress,
+        activate=False,
+        recent_holdout_n=ml_window.GATE_N_RECENT,
+        activation_origin="",
+        ungated=False,
+    )
     if not result.get("success"):
         raise ValueError(result.get("error", "Training failed"))
+
+    # P0-f: UI train goes through the same promote gate as the ML window.
+    step(72, "Evaluating promote gate...")
+    current_model = db.get_active_model(profile_id)
+    new_recent = pipeline.evaluate_on_recent(
+        result, profile_id=profile_id, n_recent=ml_window.GATE_N_RECENT,
+    )
+    old_recent = None
+    if current_model:
+        old_recent = pipeline.evaluate_on_recent(
+            current_model, profile_id=profile_id, n_recent=ml_window.GATE_N_RECENT,
+        )
+    promoted = ml_window.evaluate_recent_gate(
+        old_recent, new_recent, has_incumbent=bool(current_model)
+    )
+    if promoted:
+        db.activate_model(
+            profile_id=profile_id,
+            version=result["version"],
+            origin="ui",
+            ungated=False,
+        )
+        result["promoted"] = True
+        result["activation_origin"] = "ui"
+    else:
+        result["promoted"] = False
+        result["train_rejected"] = True
+        result["gate_note"] = (
+            "Promote gate kept the previous model active "
+            "(candidate v{} saved but not activated).".format(result.get("version"))
+        )
 
     step(75, "Distilling recipe for Seismo...")
     recipe = distiller.distill_recipe(profile_id=profile_id)

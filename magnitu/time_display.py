@@ -74,6 +74,23 @@ def format_seismo_timestamp(value: Optional[str]) -> str:
     return local.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def format_utc_sql_timestamp(value: Optional[str]) -> str:
+    """
+    Naive UTC ``YYYY-MM-DD HH:MM:SS`` string for Seismo model metadata.
+
+    Seismo's PHP ``normaliseTimestamp`` treats bare ``YYYY-MM-DD HH:MM:SS``
+    strings as UTC, so this keeps ``model_trained_at`` aligned with the
+    ``labeled_at`` compares Seismo performs against it.  The previous
+    Zurich-time conversion shifted the displayed training time by 1–2 hours.
+    """
+    dt = parse_stored_timestamp(value)
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def utc_now_sql() -> str:
     """Naive UTC timestamp string for SQLite inserts."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

@@ -125,6 +125,43 @@ def _migrate_db(conn: sqlite3.Connection):
     if "embedding_l2_normalize" not in model_cols:
         conn.execute("ALTER TABLE models ADD COLUMN embedding_l2_normalize INTEGER DEFAULT 0")
 
+    model_cols = {row[1] for row in conn.execute("PRAGMA table_info(models)").fetchall()}
+    if "embedding_stack_generation" not in model_cols:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN embedding_stack_generation TEXT DEFAULT ''"
+        )
+    if "activation_origin" not in model_cols:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN activation_origin TEXT DEFAULT ''"
+        )
+    if "ungated" not in model_cols:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN ungated INTEGER DEFAULT 0"
+        )
+    if "util_at_30" not in model_cols:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN util_at_30 REAL DEFAULT 0.0"
+        )
+    if "ndcg_at_30" not in model_cols:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN ndcg_at_30 REAL DEFAULT 0.0"
+        )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS eval_reserve (
+            profile_id  INTEGER NOT NULL,
+            entry_type  TEXT    NOT NULL,
+            entry_id    INTEGER NOT NULL,
+            added_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            label_created_at TEXT DEFAULT '',
+            PRIMARY KEY (profile_id, entry_type, entry_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_eval_reserve_profile "
+        "ON eval_reserve(profile_id, added_at)"
+    )
+
     # ── Profiles table ───────────────────────────────────────────────────────
     conn.execute("""
         CREATE TABLE IF NOT EXISTS profiles (
@@ -1170,8 +1207,13 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
                       ranking_auc: float = 0.0,
                       precision_at_30: float = 0.0,
                       lead_recall_at_30: float = 0.0,
+                      util_at_30: float = 0.0,
+                      ndcg_at_30: float = 0.0,
                       is_active: bool = True,
-                      embedding_l2_normalize: bool = False) -> int:
+                      embedding_l2_normalize: bool = False,
+                      embedding_stack_generation: str = "",
+                      activation_origin: str = "",
+                      ungated: bool = False) -> int:
     """Save a model training record and set it as active for this profile (if is_active=True)."""
     dist_json = "{}"
     if label_distribution is not None:
@@ -1179,23 +1221,203 @@ def save_model_record(version: int, accuracy: float, f1: float, precision: float
     conn = get_db()
     if is_active:
         conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
-    
+
     active_int = 1 if is_active else 0
     l2_int = 1 if embedding_l2_normalize else 0
+    ungated_int = 1 if ungated else 0
+    # Empty origin + active => treat as ungated legacy / bypass.
+    origin = (activation_origin or "").strip()
+    if is_active and not origin:
+        origin = "ungated"
+        ungated_int = 1
     conn.execute("""
         INSERT INTO models (profile_id, version, accuracy, f1_score, precision_score,
                            recall_score, label_count, feature_count, model_path,
                            recipe_path, recipe_quality, is_active, architecture,
                            label_distribution, ranking_auc, precision_at_30,
-                           lead_recall_at_30, embedding_l2_normalize)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           lead_recall_at_30, util_at_30, ndcg_at_30,
+                           embedding_l2_normalize, embedding_stack_generation,
+                           activation_origin, ungated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (profile_id, version, accuracy, f1, precision, recall, label_count,
           feature_count, model_path, recipe_path, recipe_quality, active_int, architecture,
-          dist_json, ranking_auc, precision_at_30, lead_recall_at_30, l2_int))
+          dist_json, ranking_auc, precision_at_30, lead_recall_at_30,
+          util_at_30, ndcg_at_30, l2_int, embedding_stack_generation or "",
+          origin, ungated_int))
     model_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()
     return model_id
+
+
+def activate_model(
+    profile_id: int,
+    version: int,
+    origin: str = "window",
+    ungated: bool = False,
+) -> None:
+    """Mark a model version active for a profile; record activation provenance."""
+    conn = get_db()
+    conn.execute("UPDATE models SET is_active = 0 WHERE profile_id = ?", (profile_id,))
+    conn.execute(
+        """UPDATE models
+           SET is_active = 1,
+               activation_origin = ?,
+               ungated = ?
+           WHERE profile_id = ? AND version = ?""",
+        (origin or "window", 1 if ungated else 0, profile_id, version),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ─── Evaluation reserve (persistent out-of-sample holdout) ───────────────────
+
+EVAL_RESERVE_TARGET = 100
+EVAL_RESERVE_ADMIT_DAYS = 7
+EVAL_RESERVE_RETIRE_DAYS = 90
+# The reserve is withheld from training, so it must never starve the model.
+# Cap it at this share of all labels, and always leave at least
+# ``min_train_labels`` rows trainable.
+EVAL_RESERVE_MAX_FRACTION = 0.3
+
+
+def get_eval_reserve_keys(profile_id: int) -> set:
+    """Return ``{(entry_type, entry_id), ...}`` currently in the eval reserve."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT entry_type, entry_id FROM eval_reserve WHERE profile_id = ?",
+        (profile_id,),
+    ).fetchall()
+    conn.close()
+    return {entry_key(r["entry_type"], r["entry_id"]) for r in rows}
+
+
+def get_eval_reserve_rows(profile_id: int, limit: Optional[int] = None) -> List[dict]:
+    """Labeled rows currently in the eval reserve, newest label first."""
+    conn = get_db()
+    sql = """
+        SELECT l.entry_type, l.entry_id, l.label, l.reasoning, l.created_at,
+               COALESCE(l.label_source, '') AS label_source,
+               e.title, e.description, e.content, e.source_type, e.source_name,
+               e.source_category, e.fetched_at, r.added_at
+        FROM eval_reserve r
+        JOIN labels l ON l.profile_id = r.profile_id
+                     AND l.entry_type = r.entry_type
+                     AND l.entry_id = r.entry_id
+        JOIN entries e ON l.entry_type = e.entry_type AND l.entry_id = e.entry_id
+        WHERE r.profile_id = ?
+          AND (l.pending_gemini_job_id IS NULL OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
+        ORDER BY COALESCE(NULLIF(r.label_created_at, ''), l.created_at) DESC,
+                 l.entry_type ASC, l.entry_id ASC
+    """
+    params = [profile_id]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def roll_eval_reserve(
+    profile_id: int,
+    target_n: int = EVAL_RESERVE_TARGET,
+    admit_days: int = EVAL_RESERVE_ADMIT_DAYS,
+    retire_days: int = EVAL_RESERVE_RETIRE_DAYS,
+    min_train_labels: int = 20,
+    max_fraction: float = EVAL_RESERVE_MAX_FRACTION,
+) -> dict:
+    """Retire stale reserve rows and admit eligible labels up to an effective target.
+
+    Eligibility: label ``created_at`` at least ``admit_days`` old (journalist
+    judgement age), not already reserved. Retirement: ``added_at`` older than
+    ``retire_days``. Deterministic tie-break on ``(created_at, entry_type, entry_id)``.
+
+    The effective target is capped by ``max_fraction`` of all confirmed labels
+    and by leaving at least ``min_train_labels`` rows trainable, so a small
+    desk can never reserve itself out of being able to train.
+    """
+    conn = get_db()
+    # Retire
+    conn.execute(
+        """DELETE FROM eval_reserve
+           WHERE profile_id = ?
+             AND added_at < datetime('now', ?)""",
+        (profile_id, "-{} days".format(int(retire_days))),
+    )
+    n_total = conn.execute(
+        """SELECT COUNT(*) FROM labels l
+           WHERE l.profile_id = ?
+             AND (l.pending_gemini_job_id IS NULL
+                  OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')""",
+        (profile_id,),
+    ).fetchone()[0]
+    effective_target = min(
+        int(target_n),
+        int(int(n_total) * float(max_fraction)),
+        max(0, int(n_total) - int(min_train_labels)),
+    )
+    effective_target = max(0, effective_target)
+
+    # Shrink an oversized reserve (label set shrank, or cap tightened).
+    conn.execute(
+        """DELETE FROM eval_reserve
+           WHERE profile_id = ?
+             AND (entry_type, entry_id) IN (
+                 SELECT entry_type, entry_id FROM eval_reserve
+                 WHERE profile_id = ?
+                 ORDER BY added_at ASC, entry_type ASC, entry_id ASC
+                 LIMIT MAX(0, (SELECT COUNT(*) FROM eval_reserve WHERE profile_id = ?) - ?)
+             )""",
+        (profile_id, profile_id, profile_id, effective_target),
+    )
+    current = conn.execute(
+        "SELECT COUNT(*) FROM eval_reserve WHERE profile_id = ?",
+        (profile_id,),
+    ).fetchone()[0]
+    admitted = 0
+    need = max(0, int(effective_target) - int(current))
+    if need > 0:
+        candidates = conn.execute(
+            """SELECT l.entry_type, l.entry_id, l.created_at
+               FROM labels l
+               WHERE l.profile_id = ?
+                 AND (l.pending_gemini_job_id IS NULL
+                      OR TRIM(COALESCE(l.pending_gemini_job_id,''))='')
+                 AND l.created_at <= datetime('now', ?)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM eval_reserve r
+                     WHERE r.profile_id = l.profile_id
+                       AND r.entry_type = l.entry_type
+                       AND r.entry_id = l.entry_id
+                 )
+               ORDER BY l.created_at DESC, l.entry_type ASC, l.entry_id ASC
+               LIMIT ?""",
+            (profile_id, "-{} days".format(int(admit_days)), need),
+        ).fetchall()
+        for row in candidates:
+            conn.execute(
+                """INSERT OR IGNORE INTO eval_reserve
+                   (profile_id, entry_type, entry_id, label_created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (profile_id, row["entry_type"], row["entry_id"], row["created_at"] or ""),
+            )
+            admitted += 1
+    conn.commit()
+    final_n = conn.execute(
+        "SELECT COUNT(*) FROM eval_reserve WHERE profile_id = ?",
+        (profile_id,),
+    ).fetchone()[0]
+    conn.close()
+    return {
+        "before": int(current),
+        "admitted": int(admitted),
+        "after": int(final_n),
+        "target": int(effective_target),
+        "requested_target": int(target_n),
+        "n_labels": int(n_total),
+    }
 
 
 def get_active_model(profile_id: int = 1) -> Optional[dict]:

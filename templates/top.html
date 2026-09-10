@@ -118,7 +118,7 @@
                         </div>
                         <div class="top-rank-score">
                             <span class="top-rank-half">#{{ loop.index }}</span>
-                            <span class="top-score-half" data-score="{{ (s.relevance_score * 100) | round(0) }}">{{ (s.relevance_score * 100) | round(0) }}</span>
+                            <span class="top-score-half" data-score="{{ ((s.display_score if s.display_score is defined else s.relevance_score) * 100) | round(0) }}">{{ ((s.display_score if s.display_score is defined else s.relevance_score) * 100) | round(0) }}</span>
                         </div>
                     </div>
 
