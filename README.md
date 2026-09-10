@@ -53,8 +53,10 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - Corpus capped by `distillation_max_entries` (default `8000`): keep all human labels, sample unlabeled rows — avoids OOM on large stores under a 4G cgroup
   - VPS ML window: promote → score/`model_meta` push → distill in a subprocess after releasing the embedder (child OOM cannot strand desk model metadata)
   - VPS ML window trains desks with the most labels since last model first (after a shared label-pull pass)
+  - **Promote gate (UTIL@30):** old vs new are scored on a persistent **eval reserve** (labels aged ≥7 days by `labels.created_at`, target ~100, capped so training is never starved). Primary metric is **UTIL@30** (mean true class weight of the top-30). Bootstrap CI: **reject only when the new model is clearly worse**; on a statistical tie / not proven worse the **new model wins** (more labels should help). p@30 and lead-recall stay as diagnostics. UI Train uses the same gate (`activate=False` until it passes).
   - Recipe export tuned against a **PHP-parity scorer** (once-per-keyword hit, synopsis-only lex/Leg text, accent-preserving tokens) so normalization and cap optimization match what Seismo actually runs
   - Per-profile model/recipe files (`model_p{id}_v{n}.joblib`, `recipe_p{id}_v{n}.json`) — multi-profile desks cannot overwrite each other's classifiers
+  - **Display-only isotonic map** (optional sidecar): Magnitu Top can show a calibrated `display_score`; Seismo still receives the raw composite `relevance_score`
 - **Explainability**
   - Per-entry explanation showing top weighted features
   - Dashboard: learned legal-phrase patterns with impact scores
@@ -291,7 +293,7 @@ Design notes and implementation plans live in `docs/scoring-fix-plan.md` and `do
 | Area | Behaviour |
 |------|-----------|
 | **Class weights** | Single source in `pipeline.CLASS_WEIGHT_MAP` (1.0 / 0.80 / 0.20 / 0.0); exported in recipe JSON |
-| **Ranking metrics** | Every train records **AUC + precision@30 + `investigation_lead` recall@30** on the stable holdout (relevant = `investigation_lead` + `important`) in the `models` table and on the model page; `recipe_quality` is the **Spearman** rank correlation of recipe vs model composites (was Pearson). The recipe JSON `metrics` block also stores `recipe_pearson` and `recipe_top30_overlap`. Distill cap search maximises Spearman with top-30 overlap as tie-break. `recipe_quality_floor` (default 0.30, 0 disables) skips the Seismo recipe push on a below-floor distill — the promoted model still scores. |
+| **Ranking metrics** | Every train records **AUC + precision@30 + lead recall@30 + UTIL@30 + NDCG@30** on the holdout (relevant = `investigation_lead` + `important`; UTIL = mean true `CLASS_WEIGHT_MAP` of top-30) in the `models` table and on the model page. **Promote gate** uses UTIL@30 on the persistent `eval_reserve` (not the random train holdout, not `entries.fetched_at`). `recipe_quality` is the **Spearman** rank correlation of recipe vs model composites. Distill cap search maximises Spearman with top-30 overlap as tie-break. `recipe_quality_floor` (default 0.30, 0 disables) skips the Seismo recipe push on a below-floor distill — the promoted model still scores. |
 | **Push to Seismo** | Absolute composite scores (prior-corrected, temperature-calibrated) |
 | **Recipe** | Distilled TF-IDF student → keyword JSON; PHP scorer parity for tuning; legal-template floors |
 | **Multi-profile** | Separate `model_p*_*` / `recipe_p*_*` files per profile |
@@ -308,6 +310,8 @@ Magnitu migrates existing installations automatically on startup:
 - Existing model records are assigned to the default profile
 - The old `model_profile` table is ported to the new `profiles` table
 - The `profiles` table gains a `training_settings` JSON column for per-profile training overrides (empty until you save Training / Advanced knobs for a profile)
+- Models gain `util_at_30`, `ndcg_at_30`, `activation_origin`, `ungated`, `embedding_stack_generation`
+- Persistent `eval_reserve` table holds out-of-sample labels for the promote gate
 - No data is lost
 
 ## Notes

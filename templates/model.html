@@ -28,6 +28,12 @@
             </div>
             <div class="stat-card">
                 <div class="stat-value">
+                    {% if (active_model.util_at_30 or 0) > 0 %}{{ "%.3f" | format(active_model.util_at_30) }}{% else %}—{% endif %}
+                </div>
+                <div class="stat-label">UTIL @30 (gate)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">
                     {% if (active_model.precision_at_30 or 0) > 0 %}{{ (active_model.precision_at_30 * 100) | round(0) }}%{% else %}—{% endif %}
                 </div>
                 <div class="stat-label">Precision @30</div>
@@ -62,9 +68,10 @@
             </div>
         </div>
         <div style="margin-top: 12px; font-size: 12px; color: #666;">
-            <strong>Ranking AUC / Precision @30 / Lead recall @30</strong> measure live ranking quality
-            (relevant = investigation_lead + important) — whether the Top-30 queue surfaces the right entries.
-            Accuracy/F1 are secondary. <em>—</em> = older model or degenerate fold. See Training History for detail.
+            <strong>UTIL @30</strong> is the promote-gate metric (mean true class weight of the top-30).
+            Ranking AUC / Precision @30 / Lead recall @30 are diagnostics for the same ranking job
+            (relevant = investigation_lead + important). Accuracy/F1 are secondary.
+            <em>—</em> = older model or degenerate fold. See Training History for detail.
         </div>
         {% if architecture == 'transformer' %}
         <div style="margin-top: 12px; font-size: 12px; color: #666;">
@@ -168,18 +175,19 @@
 <div class="dashboard-section">
     <h2>Training History</h2>
     <p class="section-desc" style="margin-top: 0;">
-        <strong>Ranking AUC / Precision @30 / Lead recall @30 reflect the live ranking job</strong>
-        (relevant = <em>investigation_lead + important</em>). They are the numbers that matter for whether the
-        Top-30 review queue surfaces the right entries. Accuracy and F1 are 4-class argmax metrics and read
-        pessimistically for this task — useful as a secondary signal, not the headline.
-        All metrics are measured on a <strong>stable holdout</strong> (~10–20% of labeled entries, fixed by entry id),
-        so version-to-version values are comparable. Older models (or degenerate folds) show <em>—</em>.
+        <strong>UTIL @30</strong> is what the promote gate optimizes (mean true class weight of the top-30 on the
+        persistent <code>eval_reserve</code>). Ranking AUC / Precision @30 / Lead recall @30 are diagnostics for the
+        same ranking job (relevant = <em>investigation_lead + important</em>). Accuracy and F1 are 4-class argmax
+        metrics and read pessimistically for this task — secondary only.
+        Holdout metrics on this page come from the train/test split; the gate itself uses the reserve, not
+        <code>entries.fetched_at</code>. Older models (or degenerate folds) show <em>—</em>.
     </p>
     {% if models %}
         <table class="history-table">
             <thead>
                 <tr>
                     <th>Version</th>
+                    <th>UTIL@30</th>
                     <th>AUC</th>
                     <th>P@30</th>
                     <th>Lead rec@30</th>
@@ -195,6 +203,7 @@
                 {% for m in models %}
                     <tr class="{% if m.is_active %}active-model{% endif %}">
                         <td>v{{ m.version }}</td>
+                        <td>{% if (m.util_at_30 or 0) > 0 %}{{ "%.3f" | format(m.util_at_30) }}{% else %}—{% endif %}</td>
                         <td>{% if (m.ranking_auc or 0) > 0 %}{{ "%.3f" | format(m.ranking_auc) }}{% else %}—{% endif %}</td>
                         <td>{% if (m.precision_at_30 or 0) > 0 %}{{ (m.precision_at_30 * 100) | round(0) }}%{% else %}—{% endif %}</td>
                         <td>{% if (m.lead_recall_at_30 or 0) > 0 %}{{ (m.lead_recall_at_30 * 100) | round(0) }}%{% else %}—{% endif %}</td>
