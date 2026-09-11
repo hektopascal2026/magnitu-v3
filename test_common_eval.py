@@ -262,15 +262,17 @@ def test_replay_skips_missing_joblib(tmp_path, capsys):
     conn.close()
 
     try:
-        replay.replay_common_eval(db_path)
+        status = replay.replay_util_reserve(db_path)
     finally:
         _restore_db_paths(prev_db, prev_cfg)
     out = capsys.readouterr().out
     assert "old artifact missing" in out
-    assert "stored_vs_rematch_diff=0" in out
+    assert "skipped=1" in out
+    assert status == 1  # no scored pairs
 
 
-def test_replay_common_eval_rematches_both_artifacts(tmp_path, capsys, monkeypatch):
+def test_replay_util_reserve_evaluates_both_artifacts(tmp_path, capsys, monkeypatch):
+    """Live gate rematches both .joblib files via evaluate_on_recent."""
     replay = _load_replay_module()
     prev_db, prev_cfg = db.DB_PATH, config.DB_PATH
     old_p = tmp_path / "old.joblib"
@@ -301,29 +303,35 @@ def test_replay_common_eval_rematches_both_artifacts(tmp_path, capsys, monkeypat
 
     calls = []
 
-    def _fake_eval(info, profile_id=1, apply_prior=True):
+    def _fake_eval(info, profile_id=1):
         ver = int(info["version"])
         calls.append(ver)
         if ver == 1:
             return {
                 "success": True,
+                "n_recent": 40,
+                "n_leads": 4,
+                "util_at_30": 0.40,
                 "precision_at_30": 0.167,
-                "f1_score": 0.415,
                 "lead_recall_at_30": 0.8,
             }
+        # Clear UTIL win → promote (no composites → one-item slack)
         return {
             "success": True,
+            "n_recent": 40,
+            "n_leads": 4,
+            "util_at_30": 0.55,
             "precision_at_30": 0.300,
-            "f1_score": 0.335,
             "lead_recall_at_30": 0.8,
         }
 
-    monkeypatch.setattr(pipeline, "evaluate_stored_model", _fake_eval)
+    monkeypatch.setattr(pipeline, "evaluate_on_recent", _fake_eval)
     try:
-        replay.replay_common_eval(db_path)
+        status = replay.replay_util_reserve(db_path)
     finally:
         _restore_db_paths(prev_db, prev_cfg)
     out = capsys.readouterr().out
     assert calls == [1, 2]
-    assert "DIFF" in out
-    assert "stored_vs_rematch_diff=1" in out
+    assert "\tpromote\t" in out
+    assert "promote=1" in out
+    assert status == 0
