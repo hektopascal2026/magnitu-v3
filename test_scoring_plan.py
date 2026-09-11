@@ -187,6 +187,122 @@ def test_evaluate_recent_gate_util_promote_or_tie():
     assert ml_window.evaluate_recent_gate(old, new) is True
 
 
+def test_gate_4a_twin_models_tie_then_promote():
+    """Test 4a: identical rankings → bootstrap tie; gate still promotes."""
+    rng = np.random.RandomState(0)
+    n = 60
+    tw = np.array([1.0] * 8 + [0.8] * 8 + [0.2] * 20 + [0.0] * (n - 36))
+    composites = rng.rand(n)
+    arm = {
+        "success": True,
+        "n_recent": n,
+        "n_leads": 8,
+        "util_at_30": 0.5,
+        "precision_at_30": 0.5,
+        "lead_recall_at_30": 0.5,
+        "_composites": composites,
+        "_true_weights": tw,
+    }
+    twin = dict(arm)
+    twin["_composites"] = composites.copy()
+    boot = pipeline.bootstrap_util_delta(composites, composites.copy(), tw, k=30)
+    assert boot["tie"] is True
+    assert boot["reject_new_worse"] is False
+    assert ml_window.evaluate_recent_gate(arm, twin, has_incumbent=True) is True
+
+
+def test_gate_4b_degraded_challenger_rejects():
+    """Test 4b: challenger ranks leads last → CI entirely below 0 → reject."""
+    tw = np.array([1.0] * 10 + [0.0] * 50)
+    old_c = np.linspace(1.0, 0.0, 60)
+    new_c = np.linspace(0.0, 1.0, 60)
+    old = {
+        "success": True,
+        "n_recent": 60,
+        "n_leads": 10,
+        "util_at_30": 0.9,
+        "precision_at_30": 0.9,
+        "lead_recall_at_30": 0.9,
+        "_composites": old_c,
+        "_true_weights": tw,
+    }
+    new = {
+        "success": True,
+        "n_recent": 60,
+        "n_leads": 10,
+        "util_at_30": 0.1,
+        "precision_at_30": 0.1,
+        "lead_recall_at_30": 0.1,
+        "_composites": new_c,
+        "_true_weights": tw,
+    }
+    boot = pipeline.bootstrap_util_delta(old_c, new_c, tw, k=10, n_boot=300)
+    assert boot["reject_new_worse"] is True
+    assert ml_window.evaluate_recent_gate(old, new, has_incumbent=True) is False
+
+
+def test_bug3_apply_prior_false_ignores_sidecar_prior_fit():
+    """Bug 3: with apply_prior=False, prior_fit in the sidecar must not move probs."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.RandomState(3)
+    X = rng.randn(60, 6)
+    y = np.array(
+        ["investigation_lead"] * 15
+        + ["important"] * 15
+        + ["background"] * 15
+        + ["noise"] * 15
+    )
+    pipe = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("classifier", LogisticRegression(max_iter=300, multi_class="multinomial")),
+        ]
+    )
+    pipe.fit(X, y)
+    cn = list(pipe.classes_)
+    prior_fit = {
+        "target_priors": {c: 0.25 for c in cn},
+        "empirical_priors": {c: 0.25 for c in cn},
+        "prior_log_offsets": {c: (2.0 if c == "investigation_lead" else -2.0) for c in cn},
+        "base_rate_composite": 0.5,
+    }
+    cal_with = {
+        "method": "temperature",
+        "temperature": 1.5,
+        "class_names": cn,
+        "prior_fit": prior_fit,
+    }
+    cal_without = {
+        "method": "temperature",
+        "temperature": 1.5,
+        "class_names": cn,
+    }
+    p_with, _ = pipeline.classifier_probabilities(
+        pipe, X, "", cal=cal_with, apply_prior=False
+    )
+    p_without, _ = pipeline.classifier_probabilities(
+        pipe, X, "", cal=cal_without, apply_prior=False
+    )
+    assert np.allclose(p_with, p_without, atol=1e-10)
+    # Sanity: turning prior on *does* move mass when offsets are large.
+    p_on, _ = pipeline.classifier_probabilities(
+        pipe, X, "", cal=cal_with, apply_prior=True
+    )
+    assert not np.allclose(p_on, p_without, atol=1e-3)
+
+
+def test_bug4_separable_temperature_hits_grid_endpoint():
+    """Bug 4: separable logits land on a grid endpoint (callers set clamped)."""
+    logits = np.tile(np.array([40.0, -40.0, -40.0, -40.0]), (40, 1))
+    y = np.array(["investigation_lead"] * 40)
+    T = pipeline._fit_temperature_scalar(logits, y, list(pipeline.CLASSES))
+    clamped = float(T) <= 0.25 + 1e-9 or float(T) >= 12.0 - 1e-9
+    assert clamped, "expected endpoint T, got {}".format(T)
+
+
 def _seed_labels(dbmod, n):
     conn = dbmod.get_db()
     for i in range(1, n + 1):

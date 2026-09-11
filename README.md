@@ -39,8 +39,7 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - **Enriched embeddings**: `source_type`, `source_name`, and `source_category` are prepended to each entry's text fingerprint; long bodies use **chunk pooling** (several E5 windows, length-weighted mean) so lex/Leg statutory text beyond the first ~512 tokens still influences the vector
   - **Mean_norm pooling**: cached mean-pooled embeddings are L2-normalized at training and scoring time. The normalization flag travels with each model record (`embedding_l2_normalize` column in the `models` table), so gate comparisons and shadow capture always score old and new models with the feature representation they were trained on — never the current global config
   - **HuggingFace revision pinning**: the E5 tokenizer and model are loaded with a pinned commit SHA to prevent silent embedding drift. Both `AutoTokenizer.from_pretrained` and `AutoModel.from_pretrained` pass `revision=` from config
-  - **Lead discovery blend** (optional, 0–0.25): gently emphasises `investigation_lead` probability in the relevance score pushed to Seismo
-  - **Absolute calibrated push scores**: on Push, relevance scores sent to Seismo are absolute class-weighted composites (`1.0·P(lead)+0.8·P(important)+0.2·P(background)+0.0·P(noise)`), temperature-calibrated and prior-corrected. A genuinely uncertain item scores at the desk's base-rate composite (~0.2–0.3), not 0.50. (Rank normalization was removed 2026-09-01; local Top/Mismatch views also use the raw composite.)
+  - **Absolute push scores**: on Push, relevance scores sent to Seismo are absolute class-weighted composites (`1.0·P(lead)+0.8·P(important)+0.2·P(background)+0.0·P(noise)`), **temperature-calibrated**. Prior correction is off by default (`classifier_apply_prior: false`); when enabled, a genuinely uncertain item lands near the desk's base-rate composite (~0.2–0.3), not 0.50. (Rank normalization was removed 2026-09-01; local Top/Mismatch views also use the raw composite. Display-only isotonic may remap the number on Magnitu Top only.)
   - **Synthetic label down-weight** (default `synthetic_label_weight: 0.5`): confirmed Gemini labels count half as much as human labels during training and recipe distillation; set `1.0` to disable
 - **Advanced training knobs** (Settings → Advanced training, all opt-in)
   - **Label time-decay** and **reasoning-weight boost** — stored **per profile** (each workspace can use different values)
@@ -284,7 +283,7 @@ Phrases (literal or regex) that, when matched in an entry's text, are:
 - **Example set for Swiss KMU/Export**: `Drittland`, `Binnenmarkt`, `EWR`, `CE-Kennzeichnung`, `Ursprungserzeugnis`, `Konformitätsbewertung`, `Marktüberwachung`, `Gleichwertigkeit`, `Zollkodex`, `Ursprungsregel`.
 
 ### When to retrain
-Training is manual — click **Train** on the Label page (background job with progress bar). As a rule of thumb: retrain after every **10–20 new labels** during active labeling, or after any large labeling session. Training is cheap with cached embeddings (seconds to a few minutes; first E5 load or many missing embeddings takes longer).
+On the VPS, the Magnitu ML window trains autonomously when a desk has enough new labels (`auto_train_after_n_labels`, default 10) and promotes only through the UTIL@30 gate. On the desktop app, click **Train** on the Label page (same gate; background job with progress bar). As a rule of thumb during active labeling: expect a retrain after every **10–20 new labels**, or after any large labeling session. Training is cheap with cached embeddings (seconds to a few minutes; first E5 load or many missing embeddings takes longer).
 
 ## Scoring pipeline reference
 
@@ -294,7 +293,7 @@ Design notes and implementation plans live in `docs/scoring-fix-plan.md` and `do
 |------|-----------|
 | **Class weights** | Single source in `pipeline.CLASS_WEIGHT_MAP` (1.0 / 0.80 / 0.20 / 0.0); exported in recipe JSON |
 | **Ranking metrics** | Every train records **AUC + precision@30 + lead recall@30 + UTIL@30 + NDCG@30** on the holdout (relevant = `investigation_lead` + `important`; UTIL = mean true `CLASS_WEIGHT_MAP` of top-30) in the `models` table and on the model page. **Promote gate** uses UTIL@30 on the persistent `eval_reserve` (not the random train holdout, not `entries.fetched_at`). `recipe_quality` is the **Spearman** rank correlation of recipe vs model composites. Distill cap search maximises Spearman with top-30 overlap as tie-break. `recipe_quality_floor` (default 0.30, 0 disables) skips the Seismo recipe push on a below-floor distill — the promoted model still scores. |
-| **Push to Seismo** | Absolute composite scores (prior-corrected, temperature-calibrated) |
+| **Push to Seismo** | Absolute composite scores (temperature-calibrated; prior correction off by default) |
 | **Recipe** | Distilled TF-IDF student → keyword JSON; PHP scorer parity for tuning; legal-template floors |
 | **Multi-profile** | Separate `model_p*_*` / `recipe_p*_*` files per profile |
 | **Long documents** | Chunk pooling at embed time (4 chunks news, 6 lex/Leg); re-embed after upgrade for full benefit |

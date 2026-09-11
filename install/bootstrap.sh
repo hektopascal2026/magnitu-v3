@@ -177,8 +177,7 @@ if [ -z "$SKIP_CONFIG" ]; then
   "model_architecture": "transformer",
   "transformer_model_name": "intfloat/multilingual-e5-base",
   "embedding_dim": 768,
-  "embedding_stack_generation": "e5-v1",
-  "discovery_lead_blend": 0.0
+  "embedding_stack_generation": "e5-v1"
 }
 CONF
     echo "         Config saved."
