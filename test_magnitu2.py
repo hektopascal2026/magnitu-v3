@@ -488,18 +488,52 @@ except Exception as e:
 
 t = test("Reasoning boost in recipe")
 try:
-    db.set_label("feed_item", 1, "investigation_lead", reasoning="procurement fraud bribery")
+    # After discriminative gating (51daf2e), NEW reasoning unigrams are not
+    # seeded — only multi-word phrases that recur across entries *and* appear
+    # discriminatively in entry text. Set that up explicitly.
+    phrase = "procurement fraud"
+    lead_entries = [
+        {"entry_type": "feed_item", "entry_id": 1,
+         "title": "Investigation reveals corruption in government contracts",
+         "description": "Major scandal uncovered",
+         "content": "Deep investigation into public procurement fraud and bribery",
+         "link": "", "author": "", "published_date": "2024-01-01",
+         "source_name": "Investigative News", "source_category": "politics",
+         "source_type": "rss"},
+        {"entry_type": "feed_item", "entry_id": 5,
+         "title": "Secret documents reveal systematic cover-up",
+         "description": "Leaked classified files",
+         "content": "Documents obtained show years of procurement fraud in defense",
+         "link": "", "author": "", "published_date": "2024-01-05",
+         "source_name": "Investigative News", "source_category": "politics",
+         "source_type": "rss"},
+        {"entry_type": "feed_item", "entry_id": 7,
+         "title": "Watchdog probes ministry tenders",
+         "description": "Audit finds irregularities",
+         "content": "Inspectors found procurement fraud across several agencies",
+         "link": "", "author": "", "published_date": "2024-01-07",
+         "source_name": "Investigative News", "source_category": "politics",
+         "source_type": "rss"},
+    ]
+    db.upsert_entries(lead_entries)
+    for e in lead_entries:
+        db.set_label(
+            "feed_item", e["entry_id"], "investigation_lead",
+            reasoning="clear case of {}".format(phrase),
+        )
     recipe = distiller.distill_recipe()
     assert recipe is not None
-    # Check that reasoning keywords got incorporated
     kw = recipe.get("keywords", {})
-    has_reasoning_term = any(
-        term in kw for term in ["procurement", "fraud", "bribery"]
+    has_reasoning_term = (
+        phrase in kw
+        or any(phrase in k for k in kw)
+        or any(term in kw for term in phrase.split())
     )
+    # Prefer the seeded bigram; fall back to a boosted existing unigram if the
+    # TF-IDF student already exported one of the tokens.
     assert has_reasoning_term, \
-        "Reasoning terms should appear in recipe keywords. Got: {}".format(
-            [k for k in list(kw.keys())[:20]]
-        )
+        "Reasoning phrase {!r} (or a token from it) should appear in recipe " \
+        "keywords. Got: {}".format(phrase, [k for k in list(kw.keys())[:30]])
     ok()
 except Exception as e:
     fail(str(e))
