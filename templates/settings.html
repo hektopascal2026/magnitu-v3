@@ -279,11 +279,6 @@
                     <input type="number" id="alertThreshold" value="{{ config.alert_threshold or 0.75 }}" min="0" max="1" step="0.05">
                     <div class="form-help">Score above which entries are highlighted as alerts in Seismo</div>
                 </div>
-                <div class="form-group">
-                    <label>Lead discovery blend (0.0 – 0.25)</label>
-                    <input type="number" id="discoveryLeadBlend" value="{{ config.discovery_lead_blend or 0 }}" min="0" max="0.25" step="0.05">
-                    <div class="form-help">Optional weight on <em>investigation_lead</em> probability in the pushed relevance score. Use a small value (e.g. 0.1) to surface more leads.</div>
-                </div>
             </div>
             <div class="form-actions">
                 <button class="btn btn-primary" id="saveTrainingBtn">Save Settings</button>
@@ -706,7 +701,6 @@
             min_labels_to_train: parseInt(document.getElementById('minLabels').value),
             recipe_top_keywords: parseInt(document.getElementById('recipeKeywords').value),
             alert_threshold: parseFloat(document.getElementById('alertThreshold').value),
-            discovery_lead_blend: parseFloat(document.getElementById('discoveryLeadBlend').value),
         };
         if (trainingProfileId !== null) {
             data.profile_id = trainingProfileId;
