@@ -846,6 +846,70 @@ except Exception as e:
 
 
 # ═══════════════════════════════════════════
+#  Revised-content re-pull (hydration rescore)
+# ═══════════════════════════════════════════
+print("\n=== Revised feed_item re-pull ===")
+
+t = test("_revised_feed_item_ids parses hint and tolerates junk")
+try:
+    assert sync._revised_feed_item_ids({}) == []
+    assert sync._revised_feed_item_ids({"revised_feed_item_ids": "notalist"}) == []
+    assert sync._revised_feed_item_ids(
+        {"revised_feed_item_ids": [12, "34", 0, -5, "abc", None]}
+    ) == [12, 34]
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("pull_all_entry_types re-pulls revised feed_item ids via ids=")
+try:
+    pulled = []
+
+    def fake_status(_seismo_target=None):
+        return {
+            "status": "ok",
+            "revised_feed_item_ids": [42, 7],
+        }
+
+    def fake_pull_entries(**kwargs):
+        return 0
+
+    def fake_ids_pull(entry_type, ids):
+        pulled.append((entry_type, list(ids)))
+        return len(ids)
+
+    with patch.object(sync, "get_status", side_effect=fake_status), \
+         patch.object(sync, "pull_entries", side_effect=fake_pull_entries), \
+         patch.object(sync, "pull_entries_by_ids", side_effect=fake_ids_pull):
+        sync.pull_all_entry_types(compute_embeddings=False)
+
+    assert pulled == [("feed_item", [42, 7])], pulled
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("pull_all_entry_types without the hint skips the ids= re-pull")
+try:
+    pulled = []
+
+    def fake_status_old(_seismo_target=None):
+        return {"status": "ok"}  # older Seismo — no revised_feed_item_ids
+
+    with patch.object(sync, "get_status", side_effect=fake_status_old), \
+         patch.object(sync, "pull_entries", side_effect=lambda **kw: 0), \
+         patch.object(sync, "pull_entries_by_ids",
+                      side_effect=lambda et, ids: pulled.append((et, ids))):
+        sync.pull_all_entry_types(compute_embeddings=False)
+
+    assert pulled == [], pulled
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+# ═══════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════
 print("\n" + "=" * 50)

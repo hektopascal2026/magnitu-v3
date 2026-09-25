@@ -320,6 +320,30 @@ def pull_entries(
     return total
 
 
+def _revised_feed_item_ids(status: Dict) -> List[int]:
+    """Parse the additive ``revised_feed_item_ids`` hint from magnitu_status.
+
+    Seismo reports feed_items whose stored body was revised recently
+    (hydration, Documents re-offer — the ``content_updated_at`` stamp). The
+    id-ascending entry cursor never revisits old ids, so these rows are
+    re-fetched through ``magnitu_entries&ids=``; ``upsert_entries`` drops the
+    stale embedding only when the content actually changed, making repeat
+    re-pulls cheap no-ops. Absent on older Seismo versions → empty list.
+    """
+    raw = status.get("revised_feed_item_ids") or []
+    if not isinstance(raw, list):
+        return []
+    out: List[int] = []
+    for v in raw:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            out.append(n)
+    return out
+
+
 def pull_all_entry_types(
     since: str = None,
     compute_embeddings: bool = True,
@@ -337,6 +361,7 @@ def pull_all_entry_types(
     if drain is None:
         drain = bool(since) or bool(per_type_since)
 
+    revised_ids: List[int] = []
     try:
         status = get_status()
         pruning_days = status.get("entry_pruning_days") or status.get("pruning_days")
@@ -344,6 +369,7 @@ def pull_all_entry_types(
             cfg = get_config()
             cfg["seismo_pruning_days"] = int(pruning_days)
             save_config(cfg)
+        revised_ids = _revised_feed_item_ids(status)
     except Exception as exc:
         logger.warning("Could not read magnitu_status for pull: %s", exc)
 
@@ -364,6 +390,17 @@ def pull_all_entry_types(
             drain=drain,
             since_column=type_since_column,
         )
+
+    if revised_ids:
+        try:
+            n = pull_entries_by_ids("feed_item", revised_ids)
+            if n:
+                logger.info(
+                    "Re-pulled %d content-revised feed_item row(s) "
+                    "(revised_feed_item_ids hint)", n
+                )
+        except Exception as exc:
+            logger.warning("Revised feed_item re-pull failed: %s", exc)
 
     cfg = get_config()
     if compute_embeddings and cfg.get("model_architecture") == "transformer":
