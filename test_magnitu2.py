@@ -1240,6 +1240,45 @@ except Exception as e:
     fail(str(e))
 
 
+t = test("get_recent_entries falls back to fetched_at for dateless items")
+try:
+    base = {
+        "entry_type": "feed_item", "title": "T", "description": "",
+        "content": "", "link": "", "author": "",
+        "source_name": "", "source_category": "", "source_type": "rss",
+    }
+    db.upsert_entry(dict(base, entry_id=9001, published_date=""))
+    db.upsert_entry(dict(base, entry_id=9002, published_date="2000-01-01"))
+    db.upsert_entry(dict(base, entry_id=9003,
+                         published_date="2099-01-01"))
+    # Manually age entry 9002's fetched_at so the fallback cannot rescue it
+    # via ingestion recency: its published_date is old, fetched_at old too.
+    conn = db.get_db()
+    conn.execute(
+        "UPDATE entries SET fetched_at='2000-01-02 00:00:00' "
+        "WHERE entry_type='feed_item' AND entry_id=9002")
+    conn.commit()
+    conn.close()
+    recent_ids = {
+        (r["entry_type"], r["entry_id"])
+        for r in db.get_recent_entries(days=7, include_embedding=False)
+    }
+    assert ("feed_item", 9001) in recent_ids, \
+        "dateless item must be reachable via fetched_at fallback"
+    assert ("feed_item", 9002) not in recent_ids, \
+        "old item with old fetched_at must stay excluded"
+    assert ("feed_item", 9003) in recent_ids
+    conn = db.get_db()
+    conn.execute(
+        "DELETE FROM entries WHERE entry_type='feed_item' "
+        "AND entry_id IN (9001, 9002, 9003)")
+    conn.commit()
+    conn.close()
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
 print("\n" + "=" * 50)
 print("Results: {} passed, {} failed".format(PASS, FAIL))
 if ERRORS:

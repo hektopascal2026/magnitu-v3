@@ -889,13 +889,18 @@ def get_entries_text_by_keys(keys: Sequence[Tuple[str, Any]]) -> List[dict]:
 
 
 def get_recent_entries(days: int = 7, *, include_embedding: bool = True) -> List[dict]:
-    """Get entries published within the last N days."""
+    """Get entries published within the last N days.
+
+    Entries whose ``published_date`` is NULL/empty (feeds that ship no date)
+    fall back to ``fetched_at`` — otherwise they would never pass the
+    recency filter and could never be re-scored after hydration.
+    """
     conn = get_db()
     cols = "*" if include_embedding else _ENTRY_TEXT_COLUMNS
     rows = conn.execute(f"""
         SELECT {cols} FROM entries
-        WHERE published_date >= date('now', ?)
-        ORDER BY published_date DESC
+        WHERE COALESCE(NULLIF(published_date, ''), fetched_at) >= date('now', ?)
+        ORDER BY COALESCE(NULLIF(published_date, ''), fetched_at) DESC
     """, (f"-{days} days",)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
