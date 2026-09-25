@@ -84,11 +84,14 @@ def _request(method: str, params: dict,
     cfg = get_config()
     if seismo_target:
         url = seismo_target.get("seismo_url") or cfg["seismo_url"]
-        params["api_key"] = seismo_target.get("api_key") or cfg["api_key"]
+        api_key = seismo_target.get("api_key") or cfg["api_key"]
     else:
         url = cfg["seismo_url"]
-        params["api_key"] = cfg["api_key"]
+        api_key = cfg["api_key"]
     headers = dict(kwargs.pop("headers", None) or {})
+    # Bearer header, not ?api_key= — query-param keys land in nginx access logs.
+    if api_key:
+        headers["Authorization"] = "Bearer {}".format(api_key)
     worker_token = (os.environ.get("MAGNITU_ML_WORKER_TOKEN") or "").strip()
     if worker_token:
         headers["X-Magnitu-Ml-Worker"] = worker_token
@@ -196,6 +199,7 @@ def _pull_entry_type_drain(
     since: Optional[str] = None,
     page_size: int = SEISMO_ENTRIES_PAGE_SIZE,
     since_column: Optional[str] = None,
+    cursor_mode: Optional[str] = "id",
 ) -> int:
     """Drain one family with ``order=asc`` until Seismo reports ``drain_complete``.
 
@@ -217,9 +221,11 @@ def _pull_entry_type_drain(
             "limit": str(page_size),
             "order": "asc",
         }
+        if cursor_mode:
+            params["cursor_mode"] = cursor_mode
         if cursor:
             params["since"] = cursor
-        if since_column:
+        if since_column and not cursor_mode:
             params["since_column"] = since_column
         if after_id:
             params["after_id"] = str(after_id)
@@ -243,25 +249,38 @@ def _pull_entry_type_drain(
         if next_after is not None and next_after <= 0:
             next_after = None
 
-        if not next_since:
-            logger.warning(
-                "Entry drain for %s stopped after page %d: no recommended_next_since",
-                entry_type,
-                pages + 1,
-            )
-            break
-        if cursor == next_since and next_after == after_id:
-            logger.warning(
-                "Entry drain for %s stopped: cursor stuck at %s after_id=%s page %d",
-                entry_type,
-                cursor,
-                after_id,
-                pages + 1,
-            )
-            break
-
-        cursor = next_since
-        after_id = next_after
+        if cursor_mode == "id":
+            # Id-ascending mode: recommended_next_since is intentionally null.
+            # Stop only on drain_complete or when after_id stops advancing.
+            if next_after is None or next_after == after_id:
+                if not hints.get("drain_complete", True):
+                    logger.warning(
+                        "Entry drain for %s stopped: after_id stuck at %s page %d",
+                        entry_type,
+                        after_id,
+                        pages + 1,
+                    )
+                break
+            after_id = next_after
+        else:
+            if not next_since:
+                logger.warning(
+                    "Entry drain for %s stopped after page %d: no recommended_next_since",
+                    entry_type,
+                    pages + 1,
+                )
+                break
+            if cursor == next_since and next_after == after_id:
+                logger.warning(
+                    "Entry drain for %s stopped: cursor stuck at %s after_id=%s page %d",
+                    entry_type,
+                    cursor,
+                    after_id,
+                    pages + 1,
+                )
+                break
+            cursor = next_since
+            after_id = next_after
         pages += 1
 
     if total:
@@ -282,6 +301,7 @@ def pull_entries(
     compute_embeddings: bool = True,
     drain: bool = False,
     since_column: Optional[str] = None,
+    cursor_mode: Optional[str] = "id",
 ) -> int:
     """Fetch entries from mothership Seismo and store locally.
 
@@ -300,7 +320,7 @@ def pull_entries(
     page_size = max(1, min(int(limit), SEISMO_ENTRIES_PAGE_SIZE))
 
     if drain or since:
-        total = _pull_entry_type_drain(entry_type, since=since, page_size=page_size, since_column=since_column)
+        total = _pull_entry_type_drain(entry_type, since=since, page_size=page_size, since_column=since_column, cursor_mode=cursor_mode)
     else:
         params = {
             "action": "magnitu_entries",
@@ -349,6 +369,7 @@ def pull_all_entry_types(
     compute_embeddings: bool = True,
     drain: bool = None,
     per_type_since: Optional[Dict[str, Optional[str]]] = None,
+    cursor_mode: Optional[str] = "id",
 ) -> int:
     """Pull every Seismo entry type (feed, email, lex, leg calendar).
 
@@ -389,6 +410,7 @@ def pull_all_entry_types(
             compute_embeddings=False,
             drain=drain,
             since_column=type_since_column,
+            cursor_mode=cursor_mode,
         )
 
     if revised_ids:

@@ -520,7 +520,48 @@ def _score_push_days(cfg: Optional[dict] = None) -> int:
     return max(1, days)
 
 
+def _load_worker_secrets_file() -> None:
+    """Fill env vars from the orchestrator-written secrets file.
+
+    seismo-magnitu-ml-window.sh writes ``$MAGNITU_DATA_DIR/ml_window.env``
+    (or the path in ``SEISMO_ML_SECRETS_FILE``) as KEY=value lines, mode 0600,
+    owned by the worker user — so SEISMO_DESKS_JSON / MAGNITU_VAULT_PASSWORD /
+    MAGNITU_ML_WORKER_TOKEN no longer travel on the sudo command line (sudo
+    logs the full command to the journal, leaking the keys). Existing
+    non-empty env vars always win.
+    """
+    path = os.environ.get("SEISMO_ML_SECRETS_FILE") or ""
+    if not path:
+        data_dir = os.environ.get("MAGNITU_DATA_DIR") or ""
+        if data_dir:
+            path = os.path.join(data_dir, "ml_window.env")
+    explicit = bool(os.environ.get("SEISMO_ML_SECRETS_FILE"))
+    if not path or not os.path.isfile(path):
+        if explicit:
+            logger.error("SEISMO_ML_SECRETS_FILE set but unreadable: %s", path)
+            raise OSError("secrets file unreadable: %s" % path)
+        return
+    try:
+        with open(path, "r") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if not line or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                if key and not (os.environ.get(key) or "").strip():
+                    os.environ[key] = val
+    except OSError as e:
+        logger.warning("Could not read ML secrets file %s: %s", path, e)
+        if explicit:
+            raise
+
+
 def main():
+    try:
+        _load_worker_secrets_file()
+    except OSError:
+        return 1
     cfg = get_config()
     mothership_url = cfg.get("seismo_url")
     mothership_key = cfg.get("api_key")

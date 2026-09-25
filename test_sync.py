@@ -134,10 +134,13 @@ except Exception as e:
     fail(str(e))
 
 
-t = test("push_labels sends api_key in params")
+t = test("push_labels sends api_key as Bearer header, not query param")
 try:
-    assert captured_kwargs["params"]["api_key"] == "test_key_123", \
-        "API key not sent or wrong"
+    headers = captured_kwargs["kwargs"].get("headers") or {}
+    assert headers.get("Authorization") == "Bearer test_key_123", \
+        "API key must travel as Bearer header, got: {}".format(headers)
+    assert "api_key" not in captured_kwargs["params"], \
+        "api_key must not leak into query params (access logs)"
     assert captured_kwargs["params"]["action"] == "magnitu_labels", \
         "Action should be magnitu_labels"
     ok()
@@ -717,7 +720,8 @@ try:
         mock_client.__exit__ = lambda s, *a: None
         mock_client_cls.return_value = mock_client
 
-        total = sync.pull_entries(entry_type="feed_item", drain=True, compute_embeddings=False)
+        total = sync.pull_entries(entry_type="feed_item", drain=True,
+                                  compute_embeddings=False, cursor_mode=None)
 
     assert total == 3, "Expected 3 entries across drain pages, got {}".format(total)
     assert len(calls) == 2, "Expected 2 HTTP pages, got {}".format(len(calls))
@@ -725,6 +729,67 @@ try:
     assert calls[0]["type"] == "feed_item"
     assert calls[1]["order"] == "asc"
     assert calls[1].get("since") == "2026-06-02 12:00:00"
+    ok()
+except Exception as e:
+    fail(str(e))
+
+
+t = test("pull_entries drain in cursor_mode=id advances via after_id")
+try:
+    calls = []
+
+    def id_pages(method, url, params=None, **kwargs):
+        calls.append(dict(params or {}))
+        page = len(calls)
+        if page == 1:
+            return make_mock_response(200, {
+                "entries": [
+                    _mock_seismo_entry("feed_item", 11, "A", "2026-06-01 10:00:00"),
+                    _mock_seismo_entry("feed_item", 12, "B", "2026-06-02 12:00:00"),
+                ],
+                "order": "asc",
+                "sync": {
+                    "limit_per_family": 200,
+                    "by_type": {
+                        "feed_item": {
+                            "drain_complete": False,
+                            "recommended_next_since": None,
+                            "recommended_after_id": 12,
+                        }
+                    },
+                },
+            })
+        return make_mock_response(200, {
+            "entries": [
+                _mock_seismo_entry("feed_item", 13, "C", "2026-06-03 08:00:00"),
+            ],
+            "order": "asc",
+            "sync": {
+                "limit_per_family": 200,
+                "by_type": {
+                    "feed_item": {
+                        "drain_complete": True,
+                        "recommended_after_id": 13,
+                    }
+                },
+            },
+        })
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.side_effect = id_pages
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = lambda s, *a: None
+        mock_client_cls.return_value = mock_client
+
+        total = sync.pull_entries(entry_type="feed_item", drain=True,
+                                  compute_embeddings=False)
+
+    assert total == 3, "Expected 3 entries across id-cursor pages, got {}".format(total)
+    assert len(calls) == 2, "Expected 2 HTTP pages, got {}".format(len(calls))
+    assert calls[0]["cursor_mode"] == "id"
+    assert calls[1].get("after_id") == "12", \
+        "second page must continue from recommended_after_id"
     ok()
 except Exception as e:
     fail(str(e))
