@@ -1,0 +1,258 @@
+# Recipe distillation update
+
+Audit date: 2026-09-10.
+
+## Summary
+
+The recipe architecture is directionally correct: TF-IDF recipes export
+logistic-regression coefficients, while transformer recipes train a TF-IDF
+student from transformer predictions and export the student's coefficients.
+The available `models/recipe_v12.json`, however, is stale and is not a reliable
+representation of the active model or the current distiller.
+
+The next update should produce a fresh, profile-scoped baseline, remove
+low-value artifacts, preserve meaningful coefficient ordering, measure
+held-out model fidelity, and prevent weak recipes from reaching Seismo through
+any push path.
+
+## Constraints
+
+- Keep the existing recipe JSON contract and Seismo scoring contract.
+- Keep all Seismo HTTP communication in `sync.py`.
+- Keep Python 3.9 compatibility.
+- Preserve the four classes:
+  `investigation_lead`, `important`, `background`, and `noise`.
+- Keep the established 1.5× boost for terms sourced from reasoning, through one
+  shared recipe-weighting path.
+- Preserve the legal-template safeguards for Swiss third-country and market
+  access signals.
+- Scope all training data, evaluation samples, normalization, artifacts, and
+  model lookups to the selected profile.
+
+## Audit findings
+
+### What works
+
+- Recipe keywords originate from trained model coefficients rather than an
+  unrelated keyword-counting pass.
+- Transformer recipes use teacher predictions to train a lightweight TF-IDF
+  student.
+- Unigrams, bigrams, and trigrams are supported.
+- The current distiller contains a Seismo-oriented tokenizer, source weights,
+  legal-template floors, reasoning recurrence checks, and score-correlation
+  metrics.
+- Useful concepts are represented, including `drittstaaten`,
+  `member states only`, `market access`, `equivalence decision`, `FINMA`, and
+  `SNB`.
+
+### Problems in the available recipe
+
+The repository's `recipe_v12.json` has 689 keyword terms and 909
+keyword/class assignments.
+
+- About 64% of assignments are clipped at their configured maximum magnitude.
+  This creates large ties and discards much of the model's feature ordering.
+- It contains dates, legal case IDs, press-release boilerplate, rationale
+  wording, typos, generic phrases, and transient names.
+- Some phrase variants reverse meaning without a credible editorial reason.
+  For example, `die schweiz` promotes a lead while `in der schweiz` suppresses
+  it.
+- Event and entity overfitting can create harmful shortcuts. In the audited
+  artifact, `crans montana` promotes `noise` and suppresses `important`.
+- Source weights are saturated and can dominate content with broad publishing
+  channel assumptions.
+- The artifact uses obsolete class weights `[1.0, 0.66, 0.33, 0.0]`; current
+  code uses `[1.0, 0.80, 0.20, 0.0]`.
+- It has no recipe Spearman, Pearson, or top-30 overlap metadata and does not
+  correspond to the active model.
+
+### Remaining code-level gaps
+
+- Recipe quality currently measures composite-score correlation, but not
+  recipe/model label agreement or per-class recipe F1.
+- An entry with no keyword or source match receives uniform class
+  probabilities and a composite score of approximately 0.50.
+- `sampler.py` uses a legacy recipe tokenizer and text construction instead of
+  the shared Seismo-parity scorer.
+- Python evaluation does not model Seismo's Swiss dictionary expansion.
+- The manual sync-push path can upload a recipe without applying the configured
+  recipe-quality floor.
+- Training text and the text available to Seismo are not identical, allowing
+  features to be learned from context that cannot match at runtime.
+- Normalization must be verified as profile-scoped; unrelated profiles must
+  not influence recipe scale.
+
+## Implementation plan
+
+### WP1 — Establish a fresh baseline
+
+1. Repair the local evaluation environment so the active model and NumPy stack
+   load on the same architecture.
+2. Distill the active model into a new profile-scoped artifact.
+3. Evaluate on a deterministic, profile-scoped sample.
+4. Record:
+   - keyword and assignment counts;
+   - unigram, bigram, and trigram counts;
+   - clipped-weight ratio;
+   - zero-match rate;
+   - Spearman, Pearson, and top-30 overlap;
+   - recipe/model label agreement;
+   - per-class precision, recall, and F1 against the held-out confirmed labels.
+
+Do not use the stale `recipe_v12.json` as the before/after production baseline.
+
+### WP2 — Use one runtime text and token contract
+
+Create or retain one shared set of helpers for:
+
+- entry-type-aware score text;
+- Seismo-compatible tokenization;
+- one-through-three-gram generation;
+- normalized keyword lookup;
+- once-per-document keyword matching;
+- source-weight accumulation;
+- softmax and composite score calculation.
+
+Use these helpers in:
+
+- recipe normalization and cap optimization;
+- recipe quality evaluation;
+- the explainer;
+- conflict sampling in `sampler.py`;
+- tests.
+
+Add golden scoring fixtures generated by Seismo's PHP scorer. Include accents,
+hyphens, repeated terms, lex/calendar synopsis behavior, source weights, empty
+matches, and Swiss dictionary expansion.
+
+### WP3 — Remove low-value and leaked features
+
+Before export, reject:
+
+- standalone years, dates, timestamps, and numeric IDs;
+- legal case-number fragments and internal database identifiers;
+- HTML entities, URL fragments, and host debris;
+- press-release boilerplate;
+- annotation phrases such as “integration test” or label explanations;
+- tokens below the configured document-frequency requirement;
+- n-grams composed only of stopwords, numbers, or denied tokens.
+
+Reasoning may increase an existing model feature by 1.5×. A new
+reasoning-derived phrase may be added only when it:
+
+1. appears in reasoning from multiple confirmed entries of the class;
+2. appears in the actual Seismo-visible text of multiple entries;
+3. is discriminative against the other classes;
+4. passes the same denylist and normalization used for model features.
+
+Do not export a phrase solely because it appears in annotation prose.
+
+### WP4 — Preserve useful model ordering
+
+Replace broad cap saturation with a transform that preserves coefficient rank.
+Evaluate at least:
+
+- percentile-based scaling followed by a safety cap;
+- robust scaling using median and upper quantiles;
+- a monotonic nonlinear compression such as `tanh`.
+
+Select the transform on held-out fidelity, not training entries. Report the
+clipped or tied assignment ratio. Legal-template floors should remain explicit
+and should be applied after ordinary feature scaling without flattening all
+learned phrases to the same value.
+
+### WP5 — Control source priors
+
+- Calculate and normalize source weights per profile.
+- Require minimum support before exporting a source/class coefficient.
+- Shrink source weights more aggressively than content features.
+- Report recipe fidelity both with and without source weights.
+- Reject a source prior when removing it improves held-out fidelity or reduces
+  a material class error without a compensating gain.
+
+Publishing channel should remain a weak prior, not a substitute for content.
+
+### WP6 — Expand recipe quality evaluation
+
+Keep composite-score Spearman as the primary ranking metric, but add:
+
+- Pearson correlation;
+- top-30 overlap;
+- recipe/model predicted-label agreement;
+- confusion matrix;
+- per-class precision, recall, and F1;
+- macro-F1;
+- zero-match rate;
+- score distribution and no-signal concentration;
+- metrics with and without source weights.
+
+Use the existing stable train/test isolation. Do not tune keyword selection,
+caps, floors, or source priors on the held-out test set.
+
+Persist enough metadata to identify the profile, model version, evaluation
+sample, configuration, and recipe hash without changing the recipe JSON schema.
+Store additional diagnostics in the model record or logs if the recipe
+contract has no compatible location.
+
+### WP7 — Gate every recipe push
+
+Move the quality decision into one shared pre-push validation helper and call
+it from every path that can invoke `sync.push_recipe`, including manual sync.
+
+Validation should reject:
+
+- a profile/model mismatch;
+- missing or non-finite metrics;
+- quality below `recipe_quality_floor`;
+- an empty keyword map;
+- unsupported classes or malformed weights;
+- an excessive zero-match rate;
+- a regression against the currently deployed recipe beyond a configured
+  tolerance.
+
+Surface the rejection reason to the UI and sync log. Never silently upload the
+previous artifact under the new model version.
+
+### WP8 — Regenerate and review
+
+After implementation:
+
+1. train or load the intended active model;
+2. distill a new profile-scoped recipe;
+3. run held-out fidelity evaluation;
+4. produce a short semantic report of the highest positive and negative terms
+   per class;
+5. flag generic terms, entities, contradictory weights, and saturated values;
+6. compare against the currently deployed recipe;
+7. push only if all configured gates pass.
+
+## Acceptance criteria
+
+- The artifact references the active model and correct stable profile ID.
+- Runtime scoring fixtures match Seismo PHP results.
+- `sampler.py`, evaluation, normalization, and explanation use the shared
+  scorer.
+- No standalone years, case IDs, URL debris, or rationale-only phrases are
+  exported.
+- Reasoning-derived weights receive the 1.5× boost at most once.
+- Normal learned feature ordering is not dominated by cap ties.
+- Evaluation includes held-out macro-F1, per-class F1, label agreement,
+  Spearman, top-30 overlap, and zero-match rate.
+- Every recipe push path enforces the same validation and quality floor.
+- Low `investigation_lead` F1 is surfaced explicitly even when overall
+  accuracy or Spearman appears acceptable.
+- Existing recipe and Seismo JSON contracts remain unchanged.
+
+## Suggested tests
+
+- Extend `test_recipe_parity.py` with PHP golden fixtures and dictionary cases.
+- Extend `test_recipe_quality.py` with label agreement, per-class F1,
+  zero-match rate, and source-ablation metrics.
+- Add filtering tests for years, dates, case IDs, HTML debris, boilerplate,
+  rationale leakage, and accented multilingual terms.
+- Add profile-isolation tests for sampling, normalization, artifacts, and
+  source weights.
+- Add push-path tests proving that both automated and manual pushes reject a
+  recipe below the configured floor.
+- Add a regression fixture for phrase-boundary contradictions and cap
+  saturation.
