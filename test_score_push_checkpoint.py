@@ -38,3 +38,17 @@ def test_bounded_batches_drain_without_repeating_successful_prefix():
         acknowledge(conn, 1, batch, rev)
     assert seen == list(range(501))
     assert pending_batch(conn, 1, entries, 'model1')[0] == []
+
+
+def test_failed_prefix_does_not_starve_later_rows_and_wraps():
+    conn = sqlite3.connect(':memory:')
+    entries = [entry(i) for i in range(5)]
+    first, _ = pending_batch(conn, 1, entries, 'model1', limit=2)
+    assert [e['entry_id'] for e in first] == [0, 1]
+    second, rev = pending_batch(conn, 1, entries, 'model1', limit=2)
+    assert [e['entry_id'] for e in second] == [2, 3]
+    acknowledge(conn, 1, second, rev)
+    third, _ = pending_batch(conn, 1, entries, 'model1', limit=2)
+    assert [e['entry_id'] for e in third] == [4, 0]
+    # Independent profile cursor starts at its own head.
+    assert pending_batch(conn, 2, entries, 'model1', limit=2)[0] == first

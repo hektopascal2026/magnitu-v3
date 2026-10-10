@@ -333,3 +333,8 @@ embeddings and failed pushes remain pending. The wire payload is unchanged.
 Deleting this bookkeeping table forces a safe re-score/re-push. The first
 window after rollout drains progressively rather than scoring the whole horizon.
 Recent text selection and shared embedding work are still separate costs.
+
+A per-profile attempt cursor rotates changed-score admission even after failed
+pushes or missing-embedding omissions, preventing a bad prefix from blocking older
+rows. Only acknowledged score fingerprints mark work complete. The cursor is
+rebuildable: dropping `worker_score_push_cursor` resets rotation without deleting scores.
