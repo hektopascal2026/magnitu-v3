@@ -69,6 +69,51 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - Fork: export current model as a new identity for redistribution
 - **Gemini synthetic labeling** (optional): background batch jobs from the Smart Queue; labels stored with reasoning for training (`GEMINI_API_KEY` in `.env`)
 
+## Restored destination: explicit score reconciliation
+
+If a Seismo database is restored at the same URL, local successful-delivery
+checkpoints cannot detect the lost scores. `score_restore_reset.py` provides an
+operator-triggered reset for one existing profile. It does not push immediately
+or automatically replay on every window. Preview uses an existing SQLite file
+in read-only mode without importing startup/migration code; absent worker state
+tables are reported as `null` and remain absent.
+
+On the VPS, first take a consistent SQLite backup on disk and arrange an exclusive
+maintenance interval: no deploy, manual worker start, desktop scoring, or timer
+restart until the reset finishes. Stop both schedulers and wait for both workers:
+
+```sh
+systemctl stop seismo-magnitu-ml.timer seismo-magnitu-ml-score.timer
+systemctl stop seismo-magnitu-ml.service seismo-magnitu-ml-score.service
+```
+
+From the deployed worker directory, preview with the actual worker database path,
+exact profile slug, and exact configured destination URL:
+
+```sh
+python score_restore_reset.py --db /path/to/magnitu.db --profile desk --expected-url 'https://seismo.example/desk/index.php'
+```
+
+Review the profile, destination, and row counts. Repeat the command with
+`--apply --confirm-profile desk` to confirm that scope. Both ML timers and services
+must be loaded and inactive; inaccessible systemd, unknown units, failed units,
+or a live worker PID block apply. These checks run before opening for writes and
+again after acquiring the SQLite writer lock. They do not prevent a concurrent
+operator from restarting a worker afterward; keep maintenance exclusive.
+Profiles with blank URL/key resolve the global destination from the neighboring
+`magnitu_config.json` (override using `--config`); incomplete profile credentials
+or a destination mismatch block the operation. Credentials are not printed.
+
+The atomic transaction deletes only that profile's `worker_score_push_state`,
+`worker_score_push_cursor`, and `worker_score_text_scan` rows. Models, recipes,
+labels, embeddings, shared entries, profiles, and the global desk admission cursor
+are preserved. Unexpected bookkeeping schemas fail closed. Restart the two timers
+afterward; normal windows replay eligible current-lookback scores in bounded pages,
+with the existing 200-changed-output cap and failed-delivery retries. Entries
+outside the lookback and restored recipes are not reconciled by this command.
+A reset itself cannot be undone by restarting the old code: restore the consistent
+worker SQLite backup while both workers/timers remain stopped if necessary.
+
 ## Typical Workflow
 
 1. **Sync** (or **Full Sync** on first run / after gaps)
