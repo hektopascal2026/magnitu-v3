@@ -61,6 +61,7 @@ RECIPE_PUSH_TIMEOUT_SEC = 300.0
 # timeout. Previously the whole batch was embedded then stored at the end —
 # a timeout during encoding lost all work and the backlog never drained.
 EMBED_SUB_BATCH_SIZE = 50
+DEADLINE_EMBED_SUB_BATCH_SIZE = 10
 RECIPE_PUSH_MAX_ATTEMPTS = 3
 RECIPE_PUSH_RETRY_SLEEP_SEC = 5.0
 
@@ -629,7 +630,7 @@ def post_ml_window_report(report: Dict) -> None:
         resp.raise_for_status()
 
 
-def _compute_pending_embeddings(progress_cb=None, limit=1000) -> int:
+def _compute_pending_embeddings(progress_cb=None, limit=1000, *, deadline=None) -> int:
     """
     Compute and store embeddings for entries that lack them (up to ``limit`` per call).
 
@@ -639,43 +640,63 @@ def _compute_pending_embeddings(progress_cb=None, limit=1000) -> int:
     work, leaving the backlog unchanged and re-embedded every run.
 
     Optional ``progress_cb(done, total, message)`` for UI updates during long runs.
+    ``deadline`` is an absolute monotonic time for admitting 10-entry sub-batches;
+    an already-running inference is allowed to finish and persist its updates.
     Returns the number of entries embedded (0 on failure or none pending).
     """
-    unembedded = db.get_entries_without_embeddings(limit=limit)
-    total = len(unembedded)
-    if not total:
-        return 0
-    logger.info("Computing embeddings for %d entries (sub-batches of %d)...", total, EMBED_SUB_BATCH_SIZE)
     stored = 0
+    release_embedder = None
     try:
-        from pipeline import embed_entries, release_embedder
+        try:
+            from pipeline import embed_entries, release_embedder
+        except Exception as e:
+            logger.exception("Failed to import embedding pipeline: %s", e)
+            return 0
 
-        if progress_cb:
-            progress_cb(
-                0, total,
-                "Loading E5 model (first run may download ~1 GB; can take several minutes)",
-            )
+        if deadline is not None and time.monotonic() >= deadline:
+            return 0
+        unembedded = db.get_entries_without_embeddings(limit=limit)
+        total = len(unembedded)
+        if not total:
+            return 0
+        batch_size = DEADLINE_EMBED_SUB_BATCH_SIZE if deadline is not None else EMBED_SUB_BATCH_SIZE
+        logger.info("Computing embeddings for %d entries (sub-batches of %d)...", total, batch_size)
 
-        for start in range(0, total, EMBED_SUB_BATCH_SIZE):
-            sub = unembedded[start:start + EMBED_SUB_BATCH_SIZE]
+        try:
+            if progress_cb:
+                progress_cb(
+                    0, total,
+                    "Loading E5 model (first run may download ~1 GB; can take several minutes)",
+                )
+
+            for start in range(0, total, batch_size):
+                if deadline is not None and time.monotonic() >= deadline:
+                    logger.info("Embedding admission budget exhausted after %d stored entries.", stored)
+                    break
+                sub = unembedded[start:start + batch_size]
+                try:
+                    def on_batch(done, batch_total):
+                        if progress_cb:
+                            progress_cb(stored + done, total, "Encoding entries")
+
+                    emb_bytes_list = embed_entries(sub, progress_cb=on_batch)
+                    updates = []
+                    for entry, emb_bytes in zip(sub, emb_bytes_list):
+                        updates.append((emb_bytes, entry["entry_type"], entry["entry_id"]))
+                    db.store_embeddings_batch(updates)
+                    stored += len(updates)
+                    logger.info("Stored %d / %d embeddings.", stored, total)
+                except Exception as e:
+                    logger.exception("Sub-batch embed failed at offset %d: %s", start, e)
+                    break
+        except Exception as e:
+            logger.exception("Failed to compute embeddings: %s", e)
+    finally:
+        if release_embedder is not None:
             try:
-                def on_batch(done, batch_total):
-                    if progress_cb:
-                        progress_cb(stored + done, total, "Encoding entries")
-
-                emb_bytes_list = embed_entries(sub, progress_cb=on_batch)
-                updates = []
-                for entry, emb_bytes in zip(sub, emb_bytes_list):
-                    updates.append((emb_bytes, entry["entry_type"], entry["entry_id"]))
-                db.store_embeddings_batch(updates)
-                stored += len(updates)
-                logger.info("Stored %d / %d embeddings.", stored, total)
-            except Exception as e:
-                logger.exception("Sub-batch embed failed at offset %d: %s", start, e)
-                break
-        release_embedder()
-    except Exception as e:
-        logger.exception("Failed to compute embeddings: %s", e)
+                release_embedder()
+            except Exception:
+                logger.exception("Failed to release embedder after pending computation")
     return stored
 
 
