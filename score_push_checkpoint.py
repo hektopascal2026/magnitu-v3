@@ -2,10 +2,28 @@
 import hashlib
 import json
 
+CHECKPOINT_LOOKUP_PAGE = 100
+MAX_PENDING_BATCH = 200
+
 
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str,
                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def _known_for_page(conn, profile_id, entries):
+    # Explicit full-primary-key probes avoid loading a profile's historic state.
+    # 100 keys use 300 parameters, below SQLite's legacy 999-variable floor.
+    predicates = []
+    params = []
+    for entry in entries:
+        predicates.append('(profile_id=? AND entry_type=? AND entry_id=?)')
+        params.extend((profile_id, entry['entry_type'], entry['entry_id']))
+    rows = conn.execute(
+        'SELECT entry_type,entry_id,fingerprint FROM worker_score_push_state WHERE '
+        + ' OR '.join(predicates), params,
+    )
+    return {(row[0], row[1]): row[2] for row in rows}
 
 
 def pending_batch(conn, profile_id, entries, context, limit=200):
@@ -25,21 +43,25 @@ def pending_batch(conn, profile_id, entries, context, limit=200):
             if (entry['entry_type'], entry['entry_id']) == tuple(cursor):
                 start = i + 1
                 break
-    known = {(r[0], r[1]): r[2] for r in conn.execute(
-        'SELECT entry_type,entry_id,fingerprint FROM worker_score_push_state WHERE profile_id=?',
-        (profile_id,))}
+    limit = max(1, min(limit, MAX_PENDING_BATCH))
+    context_revision = fingerprint(context)
     pending = []
     revisions = {}
-    for index in range(len(entries)):
-        entry = entries[(start + index) % len(entries)]
-        key = (entry['entry_type'], entry['entry_id'])
-        text = {k: v for k, v in entry.items() if k not in ('id', 'fetched_at', 'embedding')}
-        revision = fingerprint([context, text])
-        if known.get(key) != revision:
-            pending.append(entry)
-            revisions[key] = revision
-            if len(pending) >= limit:
-                break
+    for offset in range(0, len(entries), CHECKPOINT_LOOKUP_PAGE):
+        page = [entries[(start + index) % len(entries)]
+                for index in range(offset, min(offset + CHECKPOINT_LOOKUP_PAGE, len(entries)))]
+        known = _known_for_page(conn, profile_id, page)
+        for entry in page:
+            key = (entry['entry_type'], entry['entry_id'])
+            text = {k: v for k, v in entry.items() if k not in ('id', 'fetched_at', 'embedding')}
+            revision = fingerprint(['score-input-v2', context_revision, text])
+            if known.get(key) != revision:
+                pending.append(entry)
+                revisions[key] = revision
+                if len(pending) >= limit:
+                    break
+        if len(pending) >= limit:
+            break
     # Advance the attempt cursor independently of successful delivery. Failed or
     # unscorable rows remain pending, but cannot monopolize every bounded batch.
     if pending:
