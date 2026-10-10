@@ -24,7 +24,7 @@ def test_worker_skips_unchanged_and_retries_failed_push(tmp_path, monkeypatch):
     monkeypatch.setattr(ml_window.sync, 'push_scores', push)
     entry = {'entry_type': 'feed_item', 'entry_id': 1, 'content': 'body'}
     model = {'version': 1}
-    profile = {'seismo_url': 'https://example.test'}
+    profile = {'seismo_url': 'https://example.test', 'api_key': 'test'}
     run = lambda: ml_window._score_and_push_changed_entries(1, profile, model, [entry])
     run()
     run()
