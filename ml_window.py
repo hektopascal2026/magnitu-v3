@@ -794,6 +794,9 @@ def main():
         ) or "(none)",
     )
 
+    # All entry sync/backfill is complete. Reuse one text snapshot across desks;
+    # an empty snapshot is cached too. Failed reads can retry on the next desk.
+    recent_score_entries = None
     # 2) Train / score-push / distill in priority order
     for item in prepared:
         url = item["url"]
@@ -932,11 +935,11 @@ def main():
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
-                push_days = _score_push_days()
-                recent_entries = db.get_recent_entries(
-                    days=push_days, include_embedding=False
-                )
-                _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries)
+                if recent_score_entries is None:
+                    recent_score_entries = db.get_recent_entries(
+                        days=_score_push_days(), include_embedding=False
+                    )
+                _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)
             except Exception as e:
                 logger.error("Error during score push: %s", e)
                 has_errors = True

@@ -324,7 +324,8 @@ Magnitu migrates existing installations automatically on startup:
 
 ### Incremental VPS score pushes
 
-The headless ML worker scores at most 200 changed recent entries per desk per
+The headless ML worker reads the recent text corpus once per window for all desks,
+then scores at most 200 changed recent entries per desk per
 window. SQLite bookkeeping (`worker_score_push_state`) advances only after a
 successful score POST. Content, model, calibration, prior mode or target changes
 invalidate the fingerprint; repeated sync timestamps alone do not. Missing
