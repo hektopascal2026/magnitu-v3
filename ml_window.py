@@ -26,6 +26,7 @@ import sync
 import pipeline
 import score_push_checkpoint
 import desk_admission
+import score_text_scan
 from config import get_config
 from magnitu.time_display import format_utc_sql_timestamp
 from model_manager import export_model
@@ -618,6 +619,14 @@ def _record_score_only_desk_attempt(slug):
         conn.close()
 
 
+def _recent_score_text_page(profile_id):
+    conn = db.get_db()
+    try:
+        return score_text_scan.next_page(conn, profile_id, days=_score_push_days())
+    finally:
+        conn.close()
+
+
 def main():
     try:
         _load_worker_secrets_file()
@@ -827,9 +836,6 @@ def main():
         ) or "(none)",
     )
 
-    # All entry sync/backfill is complete. Reuse one text snapshot across desks;
-    # an empty snapshot is cached too. Failed reads can retry on the next desk.
-    recent_score_entries = None
     # 2) Train / score-push / distill in priority order
     for item in prepared:
         url = item["url"]
@@ -971,10 +977,7 @@ def main():
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
-                if recent_score_entries is None:
-                    recent_score_entries = db.get_recent_entries(
-                        days=_score_push_days(), include_embedding=False
-                    )
+                recent_score_entries = _recent_score_text_page(profile_id)
                 _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)
             except Exception as e:
                 logger.error("Error during score push: %s", e)

@@ -51,7 +51,7 @@ def test_each_http_batch_must_acknowledge_without_errors(monkeypatch):
 
 
 @pytest.mark.parametrize('entries', [[], [{'entry_type': 'feed_item', 'entry_id': 1}]])
-def test_score_only_window_reuses_one_recent_text_snapshot(entries, monkeypatch, tmp_path):
+def test_score_only_window_reads_each_profiles_own_text_page(entries, monkeypatch, tmp_path):
     from unittest.mock import MagicMock
     database = MagicMock()
     database.get_db.side_effect = lambda: worker_connection(tmp_path / 'worker.sqlite')
@@ -59,7 +59,8 @@ def test_score_only_window_reuses_one_recent_text_snapshot(entries, monkeypatch,
     database.derive_profile_identity_from_push_url.side_effect = lambda url: (url, url)
     database.get_profile_by_slug.side_effect = lambda slug: {'id': 1 if slug == 'a' else 2}
     database.get_active_model.return_value = {'version': 1, 'trained_at': None}
-    database.get_recent_entries.return_value = entries
+    text_page = Mock(side_effect=lambda profile_id: list(entries))
+    monkeypatch.setattr(ml_window, '_recent_score_text_page', text_page)
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
     monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
@@ -74,9 +75,11 @@ def test_score_only_window_reuses_one_recent_text_snapshot(entries, monkeypatch,
     monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY', '1')
     monkeypatch.setenv('SEISMO_DESKS_JSON', '[{"seismo_url":"a","api_key":"test"},{"seismo_url":"b","api_key":"test"}]')
     assert ml_window.main() == 0
-    database.get_recent_entries.assert_called_once_with(days=14, include_embedding=False)
+    assert [call.args[0] for call in text_page.call_args_list] == [1, 2]
+    database.get_recent_entries.assert_not_called()
     assert score.call_count == 2
-    assert all(call.args[-1] is entries for call in score.call_args_list)
+    assert all(call.args[-1] == entries for call in score.call_args_list)
+    assert score.call_args_list[0].args[-1] is not score.call_args_list[1].args[-1]
 
 
 def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypatch, tmp_path):
@@ -91,7 +94,7 @@ def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypa
     database.derive_profile_identity_from_push_url.side_effect = lambda url: (url, url)
     database.get_profile_by_slug.side_effect = lambda slug: {'id': {'a': 1, 'b': 2, 'c': 3}[slug]}
     database.get_active_model.return_value = {'version': 1, 'trained_at': None}
-    database.get_recent_entries.return_value = [{'entry_type': 'feed_item', 'entry_id': 1}]
+    monkeypatch.setattr(ml_window, '_recent_score_text_page', lambda _: [{'entry_type': 'feed_item', 'entry_id': 1}])
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
     monkeypatch.setattr(ml_window, 'pipeline', MagicMock())

@@ -240,8 +240,9 @@ def test_ml_window_main_promotes(
     mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
     mock_sync.entry_store_watermarks.return_value = {}
 
-    # Mock get_recent_entries
-    mock_db.get_recent_entries.return_value = [{"entry_type": "feed_item", "entry_id": 1, "content": "body"}]
+    # Training behavior is unchanged; its score-push stage reads one bounded page.
+    text_page = MagicMock(return_value=[{"entry_type": "feed_item", "entry_id": 1, "content": "body"}])
+    monkeypatch.setattr(ml_window, '_recent_score_text_page', text_page)
     mock_pipeline.score_entries.return_value = [{"entry_type": "feed_item", "entry_id": 1, "relevance_score": 0.5}]
     
     mock_exists.return_value = True
@@ -274,7 +275,8 @@ def test_ml_window_main_promotes(
         profile_id=1, version=2, origin="window", ungated=False,
     )
     mock_sync.vault_upload.assert_called_once_with(vault_password="vault-secret", package_path=mock_export.return_value, overwrite=True)
-    mock_db.get_recent_entries.assert_called_with(days=14, include_embedding=False)
+    text_page.assert_called_once_with(1)
+    mock_db.get_recent_entries.assert_not_called()
 
 @patch("ml_window.db")
 @patch("ml_window.sync")
@@ -329,8 +331,7 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
     mock_sync.entry_store_watermarks.return_value = {}
 
-    # Mock get_recent_entries
-    mock_db.get_recent_entries.return_value = []
+    monkeypatch.setattr(ml_window, '_recent_score_text_page', MagicMock(return_value=[]))
     
     # Run
     res = ml_window.main()
