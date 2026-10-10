@@ -815,6 +815,12 @@ def _post_json_batched_with_size(
                 json=build_payload(chunk),
                 seismo_target=seismo_target,
             ).json()
+            if action == "magnitu_scores" and (
+                not isinstance(last_result, dict)
+                or last_result.get("success") is not True
+                or last_result.get("errors", 0)
+            ):
+                raise RuntimeError("Score batch not fully acknowledged; retry without checkpoint")
             i += len(chunk)
             batch_count += 1
         except httpx.HTTPStatusError as exc:

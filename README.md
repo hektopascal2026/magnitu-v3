@@ -321,3 +321,14 @@ Magnitu migrates existing installations automatically on startup:
 - If you see recipe/model mismatch, run **Full Sync → Train → Push**.
 - See `SEISMO_MULTIPROFILE.md` for Seismo 0.6 path-satellite setup and Magnitu wiring.
 - See `docs/magnitu-entry-pills.md` for Seismo timeline source-pill styling (entry cards in Magnitu UI).
+
+### Incremental VPS score pushes
+
+The headless ML worker scores at most 200 changed recent entries per desk per
+window. SQLite bookkeeping (`worker_score_push_state`) advances only after a
+successful score POST. Content, model, calibration, prior mode or target changes
+invalidate the fingerprint; repeated sync timestamps alone do not. Missing
+embeddings and failed pushes remain pending. The wire payload is unchanged.
+Deleting this bookkeeping table forces a safe re-score/re-push. The first
+window after rollout drains progressively rather than scoring the whole horizon.
+Recent text selection and shared embedding work are still separate costs.
