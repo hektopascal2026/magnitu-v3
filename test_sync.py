@@ -282,7 +282,9 @@ try:
         sync.push_recipe(recipe)
 
     payload = captured_recipe["kwargs"]["json"]
-    for field in ("version", "classes", "class_weights", "keywords"):
+    assert "version" not in payload, "Seismo owns its recipe version"
+    assert recipe["version"] == 7, "Local recipe export must remain unchanged"
+    for field in ("classes", "class_weights", "keywords"):
         assert field in payload, "Recipe missing required field: {}".format(field)
     assert payload["classes"] == ["investigation_lead", "important", "background", "noise"], \
         "Recipe classes must be the 4 standard labels in order"
