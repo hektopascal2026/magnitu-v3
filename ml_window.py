@@ -27,6 +27,7 @@ import pipeline
 import score_push_checkpoint
 import desk_admission
 import score_text_scan
+import score_delivery
 from config import get_config
 from magnitu.time_display import format_utc_sql_timestamp
 from model_manager import export_model
@@ -608,6 +609,7 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
             conn, profile_id, recent_entries, context,
         )
         logger.info("Score push pending batch: %d of %d recent entries", len(pending), len(recent_entries))
+        scores = []
         if pending:
             scores = pipeline.score_entries(pending, profile_id=profile_id)
             if scores:
@@ -620,6 +622,8 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
                     raise RuntimeError("Score push was not acknowledged; batch remains pending")
                 score_push_checkpoint.acknowledge(conn, profile_id, scores, revisions)
                 logger.info("Pushed %d changed absolute scores.", len(scores))
+        return {"admitted": len(recent_entries), "pending": len(pending),
+                "scored": len(scores), "acknowledged": len(scores)}
     finally:
         conn.close()
 
@@ -648,7 +652,44 @@ def _recent_score_text_page(profile_id):
         conn.close()
 
 
+def _fresh_score_text_page(before_id):
+    conn = db.get_db()
+    try:
+        return score_text_scan.fresh_page(conn, before_id)
+    finally:
+        conn.close()
+
+
+def _attempt_fresh_scores(item):
+    """Advance only this window's attempt; delivery still requires acknowledgement."""
+    if item.get("fresh_done"):
+        return False
+    try:
+        if item.get("score_only"):
+            _record_score_only_desk_attempt(item["slug"])
+        rows, cursor = _fresh_score_text_page(item.get("fresh_cursor"))
+        item["fresh_cursor"] = cursor
+        item["fresh_pages"] = item.get("fresh_pages", 0) + 1
+        if not rows:
+            item["fresh_done"] = True
+            return False
+        stats = _score_and_push_changed_entries(item["profile_id"], item["prof"],
+                                                item["current_model"], rows)
+        if isinstance(stats, dict):
+            for key, value in stats.items():
+                item.setdefault("fresh_totals", {})[key] = item.get("fresh_totals", {}).get(key, 0) + value
+        return True
+    except Exception:
+        # A failed push remains unacknowledged. Stop this desk's extra work,
+        # leaving budget for others; next window revisits the newest prefix.
+        item["fresh_failed"] = True
+        item["fresh_done"] = True
+        logger.exception("Fresh score delivery failed for slug=%s", item["slug"])
+        return False
+
+
 def main():
+    window_started = time.monotonic()
     try:
         _load_worker_secrets_file()
     except OSError:
@@ -688,6 +729,7 @@ def main():
     score_only = os.environ.get("MAGNITU_ML_SCORE_ONLY") == "1"
     has_errors = False
     desk_reports: List[Dict[str, Any]] = []
+    fresh_desks = []
 
     if score_only:
         logger.info("Score-only mode (MAGNITU_ML_SCORE_ONLY=1): skip labels/train/distill")
@@ -998,6 +1040,11 @@ def main():
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
+                item["current_model"] = current_model
+                item["score_only"] = score_only
+                fresh_desks.append(item)
+                _attempt_fresh_scores(item)
+                # Preserve one durable historical page independently of fresh work.
                 recent_score_entries = _recent_score_text_page(profile_id)
                 _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)
             except Exception as e:
@@ -1019,11 +1066,21 @@ def main():
         )
         desk_reports.append(report)
 
+    # Reserve 25 seconds of the nominal score-only window for report/cleanup.
+    # Full training retains its original order and gets a finite 150s score tail.
+    deadline = window_started + 275 if score_only else time.monotonic() + 150
+    score_delivery.drain_fresh(fresh_desks, _attempt_fresh_scores, deadline)
+    for item in fresh_desks:
+        has_errors = has_errors or bool(item.get("fresh_failed"))
+        logger.info("Score freshness summary slug=%s pages=%d exhausted=%d failed=%d counts=%s",
+                    item["slug"], item.get("fresh_pages", 0), bool(item.get("fresh_done")) and not bool(item.get("fresh_failed")),
+                    bool(item.get("fresh_failed")), json.dumps(item.get("fresh_totals", {}), sort_keys=True))
+
     # 5) Window report → Seismo Diagnostics
     try:
         payload = {
             "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "window_status": "ok",
+            "window_status": "worker_error" if has_errors else "ok",
             "desks": desk_reports,
         }
         sync.post_ml_window_report(payload)

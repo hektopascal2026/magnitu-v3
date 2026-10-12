@@ -60,6 +60,7 @@ def test_score_only_window_reads_each_profiles_own_text_page(entries, monkeypatc
     database.get_profile_by_slug.side_effect = lambda slug: {'id': 1 if slug == 'a' else 2}
     database.get_active_model.return_value = {'version': 1, 'trained_at': None}
     text_page = Mock(side_effect=lambda profile_id: list(entries))
+    monkeypatch.setattr(ml_window, '_fresh_score_text_page', lambda _: ([], 0))
     monkeypatch.setattr(ml_window, '_recent_score_text_page', text_page)
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
@@ -94,6 +95,7 @@ def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypa
     database.derive_profile_identity_from_push_url.side_effect = lambda url: (url, url)
     database.get_profile_by_slug.side_effect = lambda slug: {'id': {'a': 1, 'b': 2, 'c': 3}[slug]}
     database.get_active_model.return_value = {'version': 1, 'trained_at': None}
+    monkeypatch.setattr(ml_window, '_fresh_score_text_page', lambda _: ([], 0))
     monkeypatch.setattr(ml_window, '_recent_score_text_page', lambda _: [{'entry_type': 'feed_item', 'entry_id': 1}])
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
@@ -118,3 +120,53 @@ def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypa
         with pytest.raises(InterruptedWindow):
             ml_window.main()
     assert attempted == [1, 2, 3, 1]
+
+
+def test_actual_main_scores_more_than_one_fresh_page_for_each_desk(tmp_path, monkeypatch):
+    import score_text_scan
+    from unittest.mock import MagicMock
+    database_path = tmp_path / 'worker.sqlite'
+    def connection():
+        c = sqlite3.connect(str(database_path)); c.row_factory = sqlite3.Row
+        return c
+    c = connection()
+    c.execute('CREATE TABLE profiles (id INTEGER PRIMARY KEY,seismo_url TEXT,api_key TEXT,display_name TEXT)')
+    fields = ['id INTEGER PRIMARY KEY', 'entry_id INTEGER'] + [f + " TEXT DEFAULT ''" for f in score_text_scan.TEXT_FIELDS if f not in ('id','entry_id')]
+    c.execute('CREATE TABLE entries (' + ','.join(fields) + ')')
+    c.executemany("INSERT INTO entries(id,entry_type,entry_id,published_date) VALUES(?,'feed_item',?,datetime('now','-8 days'))", [(i,i) for i in range(1,552)])
+    c.executemany("INSERT INTO entries(id,entry_type,entry_id,published_date) VALUES(?,'feed_item',?,datetime('now'))", [(i,i) for i in range(552,1302)])
+    c.commit(); c.close()
+    database = MagicMock()
+    database.get_db.side_effect = connection
+    database.get_effective_config.return_value = {}
+    database.slugify.side_effect = lambda s: s
+    database.derive_profile_identity_from_push_url.side_effect = lambda s:(s,s)
+    database.get_profile_by_slug.side_effect = lambda s:{'id':1 if s=='a' else 2}
+    database.get_active_model.return_value = {'version':1,'trained_at':None}
+    monkeypatch.setattr(ml_window,'db',database)
+    monkeypatch.setattr(ml_window,'get_config',lambda:{'seismo_url':'mother','api_key':'test'})
+    monkeypatch.setattr(ml_window,'_load_worker_secrets_file',lambda:None)
+    monkeypatch.setattr(ml_window,'enforce_embedding_store_cap',lambda:None)
+    monkeypatch.setattr(ml_window,'_embed_pending_until_done',lambda **_:None)
+    monkeypatch.setattr(ml_window,'_label_counts',lambda *_:{})
+    monkeypatch.setattr(ml_window,'_model_meta_for_push',lambda *_:{})
+    monkeypatch.setattr(ml_window.pipeline,'load_calibration',lambda _:None)
+    monkeypatch.setattr(ml_window.pipeline,'score_entries',lambda rows,**_:rows)
+    pushed={1:set(),2:set()}
+    def push(rows,profile,**_):
+        pushed[profile['id']].update(r['entry_id'] for r in rows)
+        return {'success':True,'errors':0}
+    monkeypatch.setattr(ml_window.sync,'push_scores',push)
+    monkeypatch.setattr(ml_window.sync,'pull_all_entry_types',lambda **_:None)
+    monkeypatch.setattr(ml_window.sync,'entry_store_watermarks',lambda:{})
+    monkeypatch.setattr(ml_window.sync,'post_ml_window_report',lambda _:None)
+    monkeypatch.setenv('MAGNITU_VAULT_PASSWORD','test')
+    monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY','1')
+    monkeypatch.setenv('SEISMO_DESKS_JSON','[{"slug":"a","seismo_url":"a","api_key":"test"},{"slug":"b","seismo_url":"b","api_key":"test"}]')
+    assert ml_window.main()==0
+    assert all(set(range(552,1302)) <= ids for ids in pushed.values())
+    assert all(set(range(1,201)) <= ids for ids in pushed.values())
+    assert ml_window.main()==0  # Retry/unchanged input does not double-deliver.
+    c=connection()
+    assert c.execute('SELECT COUNT(*) FROM worker_score_push_state').fetchone()[0]==2300
+    c.close()

@@ -65,3 +65,39 @@ def next_page(conn, profile_id, days=14, *, limit=MAX_PAGE_ENTRIES, max_bytes=PA
             ON CONFLICT(profile_id) DO UPDATE SET last_id=excluded.last_id,fence_id=excluded.fence_id''',
                      (profile_id, last_id, fence_id))
     return [dict(row) for row in rows]
+
+
+def fresh_page(conn, before_id=None, *, days=2, limit=MAX_PAGE_ENTRIES, max_bytes=PAGE_TEXT_BYTES):
+    """Newest-first, bounded current-news pass, independent of recovery cursors.
+
+    Each window starts at the current head; subsequent pages descend within
+    that finite snapshot. New arrivals wait only until the next window, not a
+    historic sweep. Checkpoints filter unchanged rows and retain failed work.
+    """
+    limit = max(1, min(limit, MAX_PAGE_ENTRIES))
+    max_bytes = max(1, max_bytes)
+    conn.execute('BEGIN')
+    with conn:
+        if before_id is None:
+            before_id = conn.execute('SELECT COALESCE(MAX(id),0)+1 FROM entries').fetchone()[0]
+        candidates = conn.execute(
+            'SELECT id, ' + TEXT_BYTES_SQL + ' AS text_bytes FROM entries '
+            "WHERE id<? AND COALESCE(NULLIF(published_date, ''), fetched_at) >= datetime('now', ?) "
+            'ORDER BY id DESC LIMIT ?',
+            (before_id, '-{} days'.format(max(1, min(14, days))), limit),
+        ).fetchall()
+        ids = []
+        total_bytes = 0
+        for row in candidates:
+            if ids and total_bytes + row[1] > max_bytes:
+                break
+            ids.append(row[0])
+            total_bytes += row[1]
+        if not ids:
+            return [], before_id
+        placeholders = ','.join('?' for _ in ids)
+        rows = conn.execute(
+            'SELECT ' + db._ENTRY_TEXT_COLUMNS + ' FROM entries WHERE id IN (' + placeholders + ') ORDER BY id DESC',
+            ids,
+        ).fetchall()
+    return [dict(row) for row in rows], ids[-1]
