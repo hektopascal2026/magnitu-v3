@@ -340,3 +340,5 @@ A per-profile attempt cursor rotates changed-score admission even after failed
 pushes or missing-embedding omissions, preventing a bad prefix from blocking older
 rows. Only acknowledged score fingerprints mark work complete. The cursor is
 rebuildable: dropping `worker_score_push_cursor` resets rotation without deleting scores.
+
+Recipe pushes leave `version` out of the request: Seismo assigns its next recipe version independently of the worker model version. The exported local recipe object keeps its model version. This incorporates the previously deployed VPS patch into tracked worker code; score payload model versions are unaffected.

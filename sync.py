@@ -905,6 +905,9 @@ def push_recipe(recipe: dict, profile: Optional[Dict] = None) -> dict:
     exceed RECIPE_PUSH_TIMEOUT_SEC (seen 2026-08 on seismo.live).
     """
     target = _profile_target(profile)
+    # Seismo owns its monotonic recipe version, independently of model versions.
+    payload = dict(recipe)
+    payload.pop("version", None)
     last_exc: Optional[BaseException] = None
     result = None
     for attempt in range(1, RECIPE_PUSH_MAX_ATTEMPTS + 1):
@@ -912,7 +915,7 @@ def push_recipe(recipe: dict, profile: Optional[Dict] = None) -> dict:
             result = _request(
                 "POST",
                 {"action": "magnitu_recipe"},
-                json=recipe,
+                json=payload,
                 seismo_target=target,
                 timeout=RECIPE_PUSH_TIMEOUT_SEC,
             ).json()
@@ -935,7 +938,7 @@ def push_recipe(recipe: dict, profile: Optional[Dict] = None) -> dict:
     if not isinstance(result, dict):
         raise RuntimeError("magnitu_recipe push returned non-object JSON")
     profile_id = profile["id"] if profile else None
-    db.log_sync("push", 1, "recipe v{} pushed".format(recipe.get("version", "?")),
+    db.log_sync("push", 1, "recipe v{} pushed".format(result.get("recipe_version", "?")),
                 profile_id=profile_id)
     return result
 
