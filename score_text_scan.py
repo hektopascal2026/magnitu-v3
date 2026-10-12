@@ -67,9 +67,10 @@ def next_page(conn, profile_id, days=14, *, limit=MAX_PAGE_ENTRIES, max_bytes=PA
     return [dict(row) for row in rows]
 
 
-def fresh_page(conn, before_id=None, *, days=2, limit=MAX_PAGE_ENTRIES, max_bytes=PAGE_TEXT_BYTES):
+def fresh_page(conn, before_id=None, *, days=2, lookback_days=14, limit=MAX_PAGE_ENTRIES, max_bytes=PAGE_TEXT_BYTES):
     """Newest-first, bounded current-news pass, independent of recovery cursors.
 
+    Recent re-fetches qualify even when their original scoring clock is old.
     Each window starts at the current head; subsequent pages descend within
     that finite snapshot. New arrivals wait only until the next window, not a
     historic sweep. Checkpoints filter unchanged rows and retain failed work.
@@ -82,9 +83,13 @@ def fresh_page(conn, before_id=None, *, days=2, limit=MAX_PAGE_ENTRIES, max_byte
             before_id = conn.execute('SELECT COALESCE(MAX(id),0)+1 FROM entries').fetchone()[0]
         candidates = conn.execute(
             'SELECT id, ' + TEXT_BYTES_SQL + ' AS text_bytes FROM entries '
-            "WHERE id<? AND COALESCE(NULLIF(published_date, ''), fetched_at) >= datetime('now', ?) "
+            "WHERE id<? AND COALESCE(NULLIF(published_date, ''), fetched_at) >= date('now', ?) "
+            "AND (COALESCE(NULLIF(published_date, ''), fetched_at) >= datetime('now', ?) "
+            "OR fetched_at >= datetime('now', ?)) "
             'ORDER BY id DESC LIMIT ?',
-            (before_id, '-{} days'.format(max(1, min(14, days))), limit),
+            (before_id, '-{} days'.format(max(1, lookback_days)),
+             '-{} days'.format(max(1, min(lookback_days, days))),
+             '-{} days'.format(max(1, min(lookback_days, days))), limit),
         ).fetchall()
         ids = []
         total_bytes = 0

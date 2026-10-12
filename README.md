@@ -375,7 +375,9 @@ Magnitu migrates existing installations automatically on startup:
 ### Incremental VPS score pushes
 
 The headless ML worker first admits newest imported entries published in the last
-48 hours (missing dates use fetched time), independently of the historical fence.
+48 hours, or re-fetched in that interval, independently of the historical fence.
+The worker scoring clock may be the source export cursor rather than publication;
+recent re-fetches must therefore qualify even for older source clocks.
 Each page remains at most 200 complete entries / an 8 MiB text target, with a
 single oversized row admitted intact. Every desk also advances one historical
 recovery page. Additional fresh pages run one desk per round until the nominal
