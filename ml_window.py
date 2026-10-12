@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 import sync
 import pipeline
+import score_push_checkpoint
 from config import get_config
 from magnitu.time_display import format_utc_sql_timestamp
 from model_manager import export_model
@@ -557,6 +558,37 @@ def _load_worker_secrets_file() -> None:
             raise
 
 
+def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries):
+    """Commit input fingerprints only after all score batches are acknowledged."""
+    conn = db.get_db()
+    try:
+        context = {
+            "model": current_model,
+            "config": get_config(),
+            "effective_config": db.get_effective_config(profile_id),
+            "calibration": pipeline.load_calibration(current_model.get("model_path", "")),
+            "target": prof.get("seismo_url"),
+        }
+        pending, revisions = score_push_checkpoint.pending_batch(
+            conn, profile_id, recent_entries, context,
+        )
+        logger.info("Score push pending batch: %d of %d recent entries", len(pending), len(recent_entries))
+        if pending:
+            scores = pipeline.score_entries(pending, profile_id=profile_id)
+            if scores:
+                model_meta = _model_meta_for_push(profile_id, current_model)
+                result = sync.push_scores(
+                    scores, model_version=current_model["version"],
+                    model_meta=model_meta, profile=prof,
+                )
+                if not isinstance(result, dict) or result.get("success") is not True or result.get("errors", 0):
+                    raise RuntimeError("Score push was not acknowledged; batch remains pending")
+                score_push_checkpoint.acknowledge(conn, profile_id, scores, revisions)
+                logger.info("Pushed %d changed absolute scores.", len(scores))
+    finally:
+        conn.close()
+
+
 def main():
     try:
         _load_worker_secrets_file()
@@ -762,6 +794,9 @@ def main():
         ) or "(none)",
     )
 
+    # All entry sync/backfill is complete. Reuse one text snapshot across desks;
+    # an empty snapshot is cached too. Failed reads can retry on the next desk.
+    recent_score_entries = None
     # 2) Train / score-push / distill in priority order
     for item in prepared:
         url = item["url"]
@@ -900,21 +935,11 @@ def main():
         if current_model:
             logger.info("Scoring and pushing recent entries for %s...", url)
             try:
-                push_days = _score_push_days()
-                recent_entries = db.get_recent_entries(
-                    days=push_days, include_embedding=False
-                )
-                if recent_entries:
-                    scores = pipeline.score_entries(recent_entries, profile_id=profile_id)
-                    if scores:
-                        model_meta = _model_meta_for_push(profile_id, current_model)
-                        sync.push_scores(
-                            scores,
-                            model_version=current_model["version"],
-                            model_meta=model_meta,
-                            profile=prof,
-                        )
-                        logger.info("Pushed %d absolute scores.", len(scores))
+                if recent_score_entries is None:
+                    recent_score_entries = db.get_recent_entries(
+                        days=_score_push_days(), include_embedding=False
+                    )
+                _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)
             except Exception as e:
                 logger.error("Error during score push: %s", e)
                 has_errors = True

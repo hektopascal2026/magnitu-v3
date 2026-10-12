@@ -238,12 +238,12 @@ def test_ml_window_main_promotes(
     mock_sync.entry_store_watermarks.return_value = {}
 
     # Mock get_recent_entries
-    mock_db.get_recent_entries.return_value = [{"id": 1}]
-    mock_pipeline.score_entries.return_value = [{"id": 1, "relevance_score": 0.5}]
+    mock_db.get_recent_entries.return_value = [{"entry_type": "feed_item", "entry_id": 1, "content": "body"}]
+    mock_pipeline.score_entries.return_value = [{"entry_type": "feed_item", "entry_id": 1, "relevance_score": 0.5}]
     
     mock_exists.return_value = True
     order = []
-    mock_sync.push_scores.side_effect = lambda *a, **k: order.append("push")
+    mock_sync.push_scores.side_effect = lambda *a, **k: order.append("push") or {"success": True}
     mock_distill_sub.side_effect = lambda *a, **k: order.append("distill") or 0
 
     # Run
