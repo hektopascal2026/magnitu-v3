@@ -572,17 +572,38 @@ def _load_worker_secrets_file() -> None:
             raise
 
 
+SCORE_INPUT_CONFIG_KEYS = (
+    'classifier_apply_prior', 'legal_signal_patterns',
+    'embedding_content_cap', 'embedding_legal_content_cap',
+    'embedding_analytical_content_cap', 'embedding_extractive_window',
+    'transformer_model_name', 'transformer_model_revision',
+    'embedding_max_tokens', 'embedding_batch_size', 'use_gpu',
+    'embedding_stack_generation',
+)
+
+
+def _score_input_context(profile_id, prof, current_model):
+    # Keep this list aligned with score_entries -> text/embedding/calibration.
+    # Training/distillation/UI/sync bookkeeping do not change an active score.
+    cfg = get_config()
+    effective = db.get_effective_config(profile_id)
+    target = sync._profile_target(prof)
+    return {
+        'model': current_model,
+        'scoring_config': {key: cfg.get(key) for key in SCORE_INPUT_CONFIG_KEYS},
+        'embedding_dim': effective.get('embedding_dim', 768),
+        'input_generation': pipeline.EMBEDDING_STACK_GENERATION,
+        'class_weights': pipeline.CLASS_WEIGHT_MAP,
+        'calibration': pipeline.load_calibration(current_model.get('model_path', '')),
+        'target': target['seismo_url'] if target else cfg.get('seismo_url'),
+    }
+
+
 def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries):
     """Commit input fingerprints only after all score batches are acknowledged."""
     conn = db.get_db()
     try:
-        context = {
-            "model": current_model,
-            "config": get_config(),
-            "effective_config": db.get_effective_config(profile_id),
-            "calibration": pipeline.load_calibration(current_model.get("model_path", "")),
-            "target": prof.get("seismo_url"),
-        }
+        context = _score_input_context(profile_id, prof, current_model)
         pending, revisions = score_push_checkpoint.pending_batch(
             conn, profile_id, recent_entries, context,
         )
