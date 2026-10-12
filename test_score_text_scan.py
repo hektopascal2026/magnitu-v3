@@ -152,7 +152,7 @@ def test_metadata_and_body_queries_have_fixed_limits_and_no_embedding_blobs(conn
 
 def test_fresh_pass_bypasses_old_fence_without_moving_recovery_cursor(conn):
     add(conn, 1, 552)
-    conn.execute("UPDATE entries SET published_date=datetime('now','-8 days')")
+    conn.execute("UPDATE entries SET published_date=datetime('now','-8 days'),fetched_at=datetime('now','-8 days')")
     conn.commit()
     score_text_scan.next_page(conn, 1)
     state = tuple(conn.execute('SELECT last_id,fence_id FROM worker_score_text_scan').fetchone())
@@ -192,3 +192,25 @@ def test_fresh_pages_use_full_bodies_byte_bound_and_finite_head(conn):
     assert len(second) == 1 and second[0]['id'] == 3
     assert second[0]['content'] == 'ü' * 1000
     assert [r['id'] for r in score_text_scan.fresh_page(conn)[0]][:2] == [7, 6]
+
+
+def test_recent_refetch_of_old_content_enters_fresh_lane_and_is_not_double_delivered(conn):
+    add(conn, 1, 3)
+    conn.execute("UPDATE entries SET published_date=datetime('now','-10 days'),fetched_at=datetime('now','-10 days')")
+    conn.commit()
+    assert score_text_scan.fresh_page(conn)[0] == []
+    conn.execute("UPDATE entries SET fetched_at=datetime('now') WHERE id=1")
+    conn.commit()
+    page, _ = score_text_scan.fresh_page(conn)
+    assert [r['id'] for r in delivered(conn, 1, page)] == [1]
+    conn.execute("UPDATE entries SET fetched_at=datetime('now','+1 second') WHERE id=1")
+    conn.commit()
+    assert delivered(conn, 1, score_text_scan.fresh_page(conn)[0]) == []
+
+
+def test_recent_refetch_does_not_override_configured_score_horizon(conn):
+    add(conn, 1, 3)
+    conn.execute("UPDATE entries SET published_date=datetime('now','-10 days')")
+    conn.commit()
+    assert len(score_text_scan.fresh_page(conn, lookback_days=14)[0]) == 2
+    assert score_text_scan.fresh_page(conn, lookback_days=7)[0] == []

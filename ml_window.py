@@ -655,7 +655,7 @@ def _recent_score_text_page(profile_id):
 def _fresh_score_text_page(before_id):
     conn = db.get_db()
     try:
-        return score_text_scan.fresh_page(conn, before_id)
+        return score_text_scan.fresh_page(conn, before_id, lookback_days=_score_push_days())
     finally:
         conn.close()
 
