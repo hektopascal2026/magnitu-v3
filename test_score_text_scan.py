@@ -148,3 +148,47 @@ def test_metadata_and_body_queries_have_fixed_limits_and_no_embedding_blobs(conn
     assert metadata[0].endswith('LIMIT 200')
     assert 'embedding' not in bodies[0]
     assert bodies[0].split(' IN (')[1].split(')')[0].count(',') == 199
+
+
+def test_fresh_pass_bypasses_old_fence_without_moving_recovery_cursor(conn):
+    add(conn, 1, 552)
+    conn.execute("UPDATE entries SET published_date=datetime('now','-8 days')")
+    conn.commit()
+    score_text_scan.next_page(conn, 1)
+    state = tuple(conn.execute('SELECT last_id,fence_id FROM worker_score_text_scan').fetchone())
+    add(conn, 552, 1302)
+    seen = set()
+    cursor = None
+    for _ in range(5):
+        page, cursor = score_text_scan.fresh_page(conn, cursor)
+        seen.update(r['id'] for r in page)
+    assert seen == set(range(552, 1302))
+    assert tuple(conn.execute('SELECT last_id,fence_id FROM worker_score_text_scan').fetchone()) == state
+    assert score_text_scan.next_page(conn, 1)[0]['id'] == 201
+
+
+def test_new_window_revisits_failed_and_revised_fresh_rows(conn):
+    add(conn, 1, 402)
+    first, cursor = score_text_scan.fresh_page(conn)
+    delivered(conn, 1, first)
+    conn.execute("UPDATE entries SET content='revised' WHERE id=401")
+    conn.commit()
+    again, _ = score_text_scan.fresh_page(conn)
+    assert [r['id'] for r in delivered(conn, 1, again)] == [401]
+    # A delivery failure creates no acknowledgement, so a new window retries it.
+    add(conn, 402, 403)
+    failed, _ = score_text_scan.fresh_page(conn)
+    pending_batch(conn, 1, failed, {'model': 1})
+    retry, _ = score_text_scan.fresh_page(conn)
+    assert [r['id'] for r in delivered(conn, 1, retry)] == [402]
+
+
+def test_fresh_pages_use_full_bodies_byte_bound_and_finite_head(conn):
+    add(conn, 1, 6, content='ü' * 1000)
+    first, cursor = score_text_scan.fresh_page(conn, max_bytes=4500)
+    assert [r['id'] for r in first] == [5, 4]
+    add(conn, 6, 8)
+    second, cursor = score_text_scan.fresh_page(conn, cursor, max_bytes=256)
+    assert len(second) == 1 and second[0]['id'] == 3
+    assert second[0]['content'] == 'ü' * 1000
+    assert [r['id'] for r in score_text_scan.fresh_page(conn)[0]][:2] == [7, 6]

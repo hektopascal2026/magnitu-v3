@@ -242,6 +242,7 @@ def test_ml_window_main_promotes(
 
     # Training behavior is unchanged; its score-push stage reads one bounded page.
     text_page = MagicMock(return_value=[{"entry_type": "feed_item", "entry_id": 1, "content": "body"}])
+    monkeypatch.setattr(ml_window, '_fresh_score_text_page', lambda _: ([], 0))
     monkeypatch.setattr(ml_window, '_recent_score_text_page', text_page)
     mock_pipeline.score_entries.return_value = [{"entry_type": "feed_item", "entry_id": 1, "relevance_score": 0.5}]
     
@@ -331,6 +332,7 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
     mock_sync.entry_store_watermarks.return_value = {}
 
+    monkeypatch.setattr(ml_window, '_fresh_score_text_page', lambda _: ([], 0))
     monkeypatch.setattr(ml_window, '_recent_score_text_page', MagicMock(return_value=[]))
     
     # Run

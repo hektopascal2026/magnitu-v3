@@ -55,7 +55,7 @@ Release **3.5** (see `VERSION` in `config.py`). This tree adds **Gemini** synthe
   - Score-only VPS windows resume after the last admitted desk using a persistent SQLite cursor. Admission is recorded before desk work, so a timeout advances the next window to another desk; failed score rows remain pending. Full training windows retain their label-backlog priority. Deploy `desk_admission.py` alongside `ml_window.py`; the cursor table is created automatically in the worker database. This prevents repeated first-desk admission but does not bound shared embedding work before desks are admitted.
   - Score checkpoint comparison probes at most 100 current entry keys per database lookup and hashes the scoring context once per desk invocation. Changed output remains capped at 200 entries. The v2 fingerprint format causes one bounded replay of previously acknowledged entries in the active lookback after upgrading (and again if rolling back to v1); historical checkpoint retention is unchanged.
   - Score-only shared sync/embedding uses a monotonic 150-second admission allowance, reserving half the nominal 300-second worker budget for desks. Embedding checks the remaining allowance before each 10-document sub-batch, persists completed batches, and releases the embedder on exit. Slow shared sync consumes the same allowance. Existing per-document chunk limits and full-training batches remain unchanged. This is cooperative admission, not a strict wall-time bound: one model load/inference or source pull can still overrun; on-the-fly desk embeddings use their existing separate cap.
-  - Recent score text is read in independent per-profile sweeps, up to 200 complete entries and an 8 MiB text target per admission. One oversized entry is admitted alone without truncation; memory therefore still depends on the largest individual document. A frozen upper-id fence ensures new arrivals cannot indefinitely extend a sweep. Attempt cursors advance before scoring; failed rows, revisions behind a cursor, and arrivals beyond the fence are reconsidered next sweep while still inside the configured lookback. Desk rotation never controls text-page rotation. Full training retains its priority and training behavior, while its score-push stage uses the same bounded pages. Deploy `score_text_scan.py` with the worker; its SQLite table is created automatically. This bounds returned text and checkpoint lookup batches, not every database row examined by the recency filter, and completing a sweep before entries leave the lookback still requires adequate throughput.
+  - Recent score text is read in independent per-profile sweeps, up to 200 complete entries and an 8 MiB text target per admission. One oversized entry is admitted alone without truncation; memory therefore still depends on the largest individual document. A frozen upper-id fence ensures new arrivals cannot indefinitely extend a sweep. Attempt cursors advance before scoring; failed rows, revisions behind a cursor, and arrivals beyond the fence are reconsidered next sweep while still inside the configured lookback. Desk rotation never controls text-page rotation. Full training retains its priority and training behavior, while its score-push stage uses the same bounded pages. Deploy `score_text_scan.py` with the worker; its SQLite table is created automatically. This is the background recovery lane; fresh current-news admission and additional bounded pages bypass the historical fence. It bounds returned text and checkpoint lookup batches, not every database row examined by the recency filter.
   - Score checkpoints include the active model, calibration, class weights, actual destination URL, text/embedding generation settings, prior correction, and effective embedding dimension. UI, training-only, distillation, retention, credentials, and HTTP batching settings no longer dirty unchanged predictions. Narrowing this context causes one bounded replay on upgrade (and rollback). Embedding-setting changes still require the existing cache-generation/invalidation discipline; this checkpoint change does not regenerate cached vectors or reconcile a restored destination database.
   - **Promote gate (UTIL@30):** old vs new are scored on a persistent **eval reserve** (labels aged ≥7 days by `labels.created_at`, target ~100, capped so training is never starved). Primary metric is **UTIL@30** (mean true class weight of the top-30). Bootstrap CI: **reject only when the new model is clearly worse**; on a statistical tie / not proven worse the **new model wins** (more labels should help). p@30 and lead-recall stay as diagnostics. UI Train uses the same gate (`activate=False` until it passes).
   - Recipe export tuned against a **PHP-parity scorer** (once-per-keyword hit, synopsis-only lex/Leg text, accent-preserving tokens) so normalization and cap optimization match what Seismo actually runs
@@ -374,15 +374,25 @@ Magnitu migrates existing installations automatically on startup:
 
 ### Incremental VPS score pushes
 
-The headless ML worker reads the recent text corpus once per window for all desks,
-then scores at most 200 changed recent entries per desk per
-window. SQLite bookkeeping (`worker_score_push_state`) advances only after a
-successful score POST. Content, model, calibration, prior mode or target changes
-invalidate the fingerprint; repeated sync timestamps alone do not. Missing
-embeddings and failed pushes remain pending. The wire payload is unchanged.
-Deleting this bookkeeping table forces a safe re-score/re-push. The first
-window after rollout drains progressively rather than scoring the whole horizon.
-Recent text selection and shared embedding work are still separate costs.
+The headless ML worker first admits newest imported entries published in the last
+48 hours (missing dates use fetched time), independently of the historical fence.
+Each page remains at most 200 complete entries / an 8 MiB text target, with a
+single oversized row admitted intact. Every desk also advances one historical
+recovery page. Additional fresh pages run one desk per round until the nominal
+300-second score-only window reaches its 275-second admission deadline or each
+desk reaches 100 pages. Full training retains its existing order and promotion
+rules, scores before distillation, then admits a finite 150-second fresh-score tail.
+An in-flight operation may overrun admission; the existing supervisor remains the
+hard limit. No timer, memory limit or concurrency increase is required.
+
+Every window restarts fresh admission at the current head so arrivals/revisions
+and failed or unscorable rows need not wait for a historical sweep. Within a
+window the descending cursor is finite; existing per-profile recovery cursors
+remain independent. Changed-input checkpoints skip unchanged predictions and
+advance only after acknowledged score POSTs. Numeric `Score freshness summary`
+journal lines distinguish attempted, pending, scored and acknowledged rows,
+scan exhaustion and failures. A partial/failed push remains retryable. Deploy
+`score_delivery.py` with `ml_window.py` and `score_text_scan.py`.
 
 A per-profile attempt cursor rotates changed-score admission even after failed
 pushes or missing-embedding omissions, preventing a bad prefix from blocking older
