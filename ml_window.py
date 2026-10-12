@@ -14,6 +14,7 @@ import logging
 import math
 import subprocess
 import gc
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -459,15 +460,23 @@ def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
     return "Model rejected. Keeping older model."
 
 
-def _embed_pending_until_done(max_entries: int = 0) -> None:
+SCORE_ONLY_EMBED_BUDGET_SEC = 150
+
+
+def _embed_pending_until_done(max_entries: int = 0, *, deadline: Optional[float] = None) -> None:
     """Embed pending entries in batches until done or ``max_entries`` reached.
 
     ``max_entries=0`` means no cap (full window behaviour). Score-only windows
     pass a cap so a large backlog cannot eat the entire 300s budget before
     scoring + pushing. Remaining entries are picked up by the next tick.
+    ``deadline`` stops admitting shared work at an absolute monotonic time;
+    already-running inference may finish after it.
     """
     embedded = 0
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.info("Shared embedding admission budget exhausted; continuing to desks.")
+            break
         if max_entries > 0 and embedded >= max_entries:
             logger.info(
                 "Embedding cap reached (%d entries); remaining deferred to next tick.",
@@ -477,7 +486,10 @@ def _embed_pending_until_done(max_entries: int = 0) -> None:
         batch_limit = 1000
         if max_entries > 0:
             batch_limit = min(1000, max_entries - embedded)
-        processed = sync._compute_pending_embeddings(limit=batch_limit)
+        if deadline is None:
+            processed = sync._compute_pending_embeddings(limit=batch_limit)
+        else:
+            processed = sync._compute_pending_embeddings(limit=batch_limit, deadline=deadline)
         if not processed:
             break
         embedded += processed
@@ -650,12 +662,12 @@ def main():
     if score_only:
         logger.info("Score-only mode (MAGNITU_ML_SCORE_ONLY=1): skip labels/train/distill")
 
-    # Score-only windows have a 300s budget. E5 on CPU does ~2.5 chunks/s,
-    # so 400 entries (≈723 chunks) still eats ~290s — the entire budget.
-    # Cap to 200 entries per score-only tick so embedding takes ~145s,
-    # leaving ~155s for scoring + pushing. The backlog drains across
-    # multiple 15-min cycles. Full windows pass max_entries=0 (no cap).
+    # Stop admitting shared embedding work after half the nominal 300s score
+    # budget, reserving time for desks. Sync consumes this same allowance.
+    # Individual model loads/inference are not preempted by this deadline.
+    # Full windows retain their existing count-only behavior.
     embed_cap = 200 if score_only else 0
+    embed_deadline = time.monotonic() + SCORE_ONLY_EMBED_BUDGET_SEC if score_only else None
 
     # 0) Entry sync once per window (mothership), then embed.
     try:
@@ -670,7 +682,10 @@ def main():
                 compute_embeddings=False,
                 per_type_since=watermarks,
             )
-        _embed_pending_until_done(max_entries=embed_cap)
+        if score_only:
+            _embed_pending_until_done(max_entries=embed_cap, deadline=embed_deadline)
+        else:
+            _embed_pending_until_done(max_entries=embed_cap)
     except Exception as e:
         logger.error("Failed shared entry pull/embed: %s", e)
         has_errors = True
