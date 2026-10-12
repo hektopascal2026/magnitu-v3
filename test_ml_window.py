@@ -174,6 +174,9 @@ def test_ml_window_main_promotes(
     mock_exists,
     monkeypatch,
 ):
+    monkeypatch.delenv("MAGNITU_ML_SCORE_ONLY", raising=False)
+    monkeypatch.setattr(ml_window, "_score_only_desk_order", MagicMock(side_effect=AssertionError("full training must retain its priority order")))
+    monkeypatch.setattr(ml_window, "_record_score_only_desk_attempt", MagicMock(side_effect=AssertionError("full training must not advance score-only admission")))
     monkeypatch.setenv("SEISMO_DESKS_JSON", '[{"seismo_url": "foo", "api_key": "bar"}]')
     monkeypatch.setenv("MAGNITU_VAULT_PASSWORD", "vault-secret")
     
@@ -277,6 +280,9 @@ def test_ml_window_main_promotes(
 @patch("ml_window.sync")
 @patch("ml_window.pipeline")
 def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
+    monkeypatch.delenv("MAGNITU_ML_SCORE_ONLY", raising=False)
+    monkeypatch.setattr(ml_window, "_score_only_desk_order", MagicMock(side_effect=AssertionError("full training must retain its priority order")))
+    monkeypatch.setattr(ml_window, "_record_score_only_desk_attempt", MagicMock(side_effect=AssertionError("full training must not advance score-only admission")))
     monkeypatch.setenv("SEISMO_DESKS_JSON", '[{"seismo_url": "foo", "api_key": "bar"}]')
     monkeypatch.setenv("MAGNITU_VAULT_PASSWORD", "vault-secret")
     

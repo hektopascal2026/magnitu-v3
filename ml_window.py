@@ -24,6 +24,7 @@ import db
 import sync
 import pipeline
 import score_push_checkpoint
+import desk_admission
 from config import get_config
 from magnitu.time_display import format_utc_sql_timestamp
 from model_manager import export_model
@@ -589,6 +590,22 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
         conn.close()
 
 
+def _score_only_desk_order(prepared):
+    conn = db.get_db()
+    try:
+        return desk_admission.ordered_desks(conn, prepared)
+    finally:
+        conn.close()
+
+
+def _record_score_only_desk_attempt(slug):
+    conn = db.get_db()
+    try:
+        desk_admission.record_attempt(conn, slug)
+    finally:
+        conn.close()
+
+
 def main():
     try:
         _load_worker_secrets_file()
@@ -784,9 +801,10 @@ def main():
             "do_train": do_train,
         })
 
-    prepared = _sort_prepared_desks(prepared)
+    prepared = _score_only_desk_order(prepared) if score_only else _sort_prepared_desks(prepared)
     logger.info(
-        "Desk train order (unbaked labels first): %s",
+        "Desk processing order (%s): %s",
+        "round-robin attempts" if score_only else "unbaked labels first",
         ", ".join(
             f"{item['slug']}(since={item['report'].get('labels_since_train', 0)},"
             f"train={item['do_train']})"
@@ -806,6 +824,9 @@ def main():
         report = item["report"]
         current_model = item["current_model"]
         do_train = item["do_train"]
+
+        if score_only:
+            _record_score_only_desk_attempt(slug)
 
         logger.info(
             "Processing desk: %s (labels_since_train=%s, do_train=%s)",

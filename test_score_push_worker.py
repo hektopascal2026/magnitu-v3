@@ -4,6 +4,13 @@ import pytest
 import ml_window
 
 
+def worker_connection(path):
+    conn = sqlite3.connect(str(path))
+    conn.execute('CREATE TABLE IF NOT EXISTS profiles (id INTEGER PRIMARY KEY, seismo_url TEXT, api_key TEXT, display_name TEXT)')
+    conn.commit()
+    return conn
+
+
 def test_worker_skips_unchanged_and_retries_failed_push(tmp_path, monkeypatch):
     database = tmp_path / 'worker.sqlite'
     monkeypatch.setattr(ml_window.db, 'get_db', lambda: sqlite3.connect(str(database)))
@@ -44,9 +51,10 @@ def test_each_http_batch_must_acknowledge_without_errors(monkeypatch):
 
 
 @pytest.mark.parametrize('entries', [[], [{'entry_type': 'feed_item', 'entry_id': 1}]])
-def test_score_only_window_reuses_one_recent_text_snapshot(entries, monkeypatch):
+def test_score_only_window_reuses_one_recent_text_snapshot(entries, monkeypatch, tmp_path):
     from unittest.mock import MagicMock
     database = MagicMock()
+    database.get_db.side_effect = lambda: worker_connection(tmp_path / 'worker.sqlite')
     database.slugify.side_effect = lambda slug: slug
     database.derive_profile_identity_from_push_url.side_effect = lambda url: (url, url)
     database.get_profile_by_slug.side_effect = lambda slug: {'id': 1 if slug == 'a' else 2}
@@ -69,3 +77,41 @@ def test_score_only_window_reuses_one_recent_text_snapshot(entries, monkeypatch)
     database.get_recent_entries.assert_called_once_with(days=14, include_embedding=False)
     assert score.call_count == 2
     assert all(call.args[-1] is entries for call in score.call_args_list)
+
+
+def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+    class InterruptedWindow(BaseException):
+        pass
+
+    path = tmp_path / 'worker.sqlite'
+    database = MagicMock()
+    database.get_db.side_effect = lambda: worker_connection(path)
+    database.slugify.side_effect = lambda slug: slug
+    database.derive_profile_identity_from_push_url.side_effect = lambda url: (url, url)
+    database.get_profile_by_slug.side_effect = lambda slug: {'id': {'a': 1, 'b': 2, 'c': 3}[slug]}
+    database.get_active_model.return_value = {'version': 1, 'trained_at': None}
+    database.get_recent_entries.return_value = [{'entry_type': 'feed_item', 'entry_id': 1}]
+    monkeypatch.setattr(ml_window, 'db', database)
+    monkeypatch.setattr(ml_window, 'sync', MagicMock())
+    monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
+    monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
+    monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
+    monkeypatch.setattr(ml_window, 'enforce_embedding_store_cap', lambda: None)
+    monkeypatch.setattr(ml_window, '_embed_pending_until_done', lambda **_: None)
+    monkeypatch.setattr(ml_window, '_label_counts', lambda *_: {})
+    monkeypatch.setenv('MAGNITU_VAULT_PASSWORD', 'test-vault')
+    monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY', '1')
+    monkeypatch.setenv('SEISMO_DESKS_JSON', '[{"slug":"c","seismo_url":"c","api_key":"test"},{"slug":"a","seismo_url":"a","api_key":"test"},{"slug":"b","seismo_url":"b","api_key":"test"}]')
+    attempted = []
+    def interrupt(profile_id, *_):
+        with sqlite3.connect(str(path)) as conn:
+            persisted_slug = conn.execute('SELECT last_slug FROM worker_score_desk_cursor').fetchone()[0]
+        assert {'a': 1, 'b': 2, 'c': 3}[persisted_slug] == profile_id
+        attempted.append(profile_id)
+        raise InterruptedWindow()
+    monkeypatch.setattr(ml_window, '_score_and_push_changed_entries', interrupt)
+    for _ in range(4):
+        with pytest.raises(InterruptedWindow):
+            ml_window.main()
+    assert attempted == [1, 2, 3, 1]
