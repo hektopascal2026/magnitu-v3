@@ -407,14 +407,33 @@ Recipe pushes leave `version` out of the request: Seismo assigns its next recipe
 
 Each normal window checks the separate Bearer-authenticated
 `ml_score_repair_candidates` channel once per admitted desk, using its active
-model version and own push credentials. At most 50 remotely overdue keys are
-refetched from the shared mothership through the unchanged `magnitu_entries`
-API and rescored. Confirmed remote repairs bypass matching local fingerprints;
-acknowledgements still advance only after successful score POSTs. No training
-or corpus-wide checkpoint reset is required. Missing/invalid endpoint responses,
-incomplete refetches and partial scoring are logged and mark the window report
-`worker_error`; normal fresh and recovery delivery continue. Numeric `Score repair
-summary` lines show candidates and acknowledgements. Window admission and the
-existing supervisor limit still apply. Deploy the Seismo endpoint before this
-worker commit; rolling back either side preserves local checkpoints and scores.
-The remote evidence is a bounded sample, not a claim of whole-corpus coverage.
+model version and own push credentials. The opt-in `sweep_cursor` resumes a fenced
+14-day scan, rotating independent feed/cache revision, mail, lex and calendar
+positions. Current 24-hour observations keep priority. At most 50 keys are
+refetched through the unchanged shared mothership `magnitu_entries` API and
+scored with the desk's active model. Matching fingerprints do not suppress
+confirmed remote repairs. Deploy the Seismo cursor extension first.
+
+`worker_score_repair_scan` is rebuildable local SQLite bookkeeping: one row per
+profile with its model version, bounded opaque cursor and at most 200 pending
+exact keys. Admit returned keys and the next cursor atomically before refetch or
+scoring; retry up to ten prior keys fairly per window. Successful score POSTs
+remove only acknowledged keys. A changed active model resets this repair state,
+not the shared corpus, embeddings or existing score checkpoints. A successful
+exact-ID response that no longer exports a key retires it with a warning; HTTP
+or malformed-response failures retain it.
+
+Read exact-key byte sizes before loading bodies; admit at most 8 MiB of text,
+with one oversized row processed alone. Use cached embeddings and at most the
+existing ten on-the-fly embedding slots. Text/embedding deferrals remain durable
+and log warnings without failing an otherwise healthy window. Scoring omissions
+within admitted work, failed pushes, invalid responses and deadlines remain
+errors, while normal fresh/recovery delivery continues. Numeric `Score repair
+summary` lines include candidates, acknowledgements, deferrals, source removals,
+pending retries, sweep metadata rows and completed cycles. A full pending queue
+pauses new sweep admission until retry progress creates room; keys are never
+silently dropped. Existing timer, supervisor and resource limits remain.
+
+The cursor makes coverage resumable; complete-sweep duration and a maximum delay
+are not certified. Roll back to the prior worker commit while ML units are idle;
+the new SQLite row remains inert and the read-only endpoint may remain deployed.
