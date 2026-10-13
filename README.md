@@ -437,3 +437,23 @@ silently dropped. Existing timer, supervisor and resource limits remain.
 The cursor makes coverage resumable; complete-sweep duration and a maximum delay
 are not certified. Roll back to the prior worker commit while ML units are idle;
 the new SQLite row remains inert and the read-only endpoint may remain deployed.
+
+
+Repair retries also retain bounded local metadata in `worker_score_repair_retry`:
+UTC epoch first-observed time, last attempt, attempt count and a classified cause
+(interrupted, refetch/local-source/scoring-delivery failure, scoring omission,
+deadline, text budget or embedding budget). Admission stamps an interrupted attempt
+before external work; acknowledged/unexportable keys remove their telemetry in the
+same transaction as queue removal. Existing pending keys start their age at first
+telemetry observation; their earlier age is unknown. Model changes reset this
+bookkeeping with the repair queue. No item text, exception bodies or credentials
+are stored. Tables are created idempotently and remain inert on rollback.
+
+Every attempted repair emits a `Score repair queue` journal line even after an
+ordinary exception, with pending count, oldest age, maximum attempts, cause counts
+and cursor age. Local warnings flag 200 pending keys, retries at least 24 hours old,
+or a cursor unchanged for six hours. Cursor progress has a separate bounded
+`worker_score_repair_progress` row per profile; admission records changes, while
+acknowledgements alone do not reset its clock. SIGKILL cannot emit a final line;
+its persisted interrupted attempt is visible on the next window. No off-host
+alert delivery or cadence/resource change is enabled.
