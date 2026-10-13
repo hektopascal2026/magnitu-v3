@@ -632,6 +632,48 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
 
 
 def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
+    attempt = {'keys': [], 'cause': 'refetch_failure'}
+    failure = False
+    try:
+        return _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt)
+    except BaseException as error:
+        failure = True
+        if not isinstance(error, Exception):
+            attempt['cause'] = 'interrupted'
+        connection = None
+        try:
+            connection = db.get_db()
+            score_repair_scan.outcome(connection, profile_id, current_model['version'],
+                                      attempt['keys'], attempt['cause'])
+        except Exception:
+            logger.exception('Score repair failure-cause persistence failed profile=%d', profile_id)
+        finally:
+            if connection is not None:
+                connection.close()
+        raise
+    finally:
+        connection = None
+        try:
+            connection = db.get_db()
+            health = score_repair_scan.health(connection, profile_id, current_model['version'])
+            logger.info('Score repair queue profile=%d pending=%d oldest_seconds=%d max_attempts=%d cursor_stale_seconds=%d causes=%s',
+                        profile_id, health['pending'], health['oldest_seconds'], health['max_attempts'],
+                        health['cursor_stale_seconds'], json.dumps(health['causes'], sort_keys=True))
+            if (health['pending'] >= score_repair_scan.MAX_PENDING or health['oldest_seconds'] >= 86400
+                    or health['cursor_stale_seconds'] >= 21600):
+                logger.warning('Score repair queue needs attention profile=%d saturated=%d old_retry=%d stalled_cursor=%d',
+                               profile_id, health['pending'] >= score_repair_scan.MAX_PENDING,
+                               health['oldest_seconds'] >= 86400, health['cursor_stale_seconds'] >= 21600)
+        except Exception:
+            logger.exception('Score repair queue telemetry failed profile=%d', profile_id)
+            if not failure:
+                raise
+        finally:
+            if connection is not None:
+                connection.close()
+
+
+def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt):
     """One fenced sweep page plus fair durable retries; normal limits still apply."""
     version = current_model['version']
     conn = db.get_db()
@@ -647,6 +689,16 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
     finally:
         conn.close()
 
+    attempt['keys'] = keys
+    attempt['cause'] = 'refetch_failure'
+
+    def record(keys, cause):
+        connection = db.get_db()
+        try:
+            score_repair_scan.outcome(connection, profile_id, version, keys, cause)
+        finally:
+            connection.close()
+
     def complete(done):
         connection = db.get_db()
         try:
@@ -660,6 +712,7 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
         by_type.setdefault(entry_type, []).append(entry_id)
     for entry_type, ids in by_type.items():
         if deadline is not None and time.monotonic() >= deadline:
+            attempt['cause'] = 'deadline_exhausted'
             raise RuntimeError('Score repair deadline exhausted before refetch; durable keys retained')
         available.update(sync.pull_entries_by_ids(entry_type, ids, timeout=10.0, return_keys=True))
     missing = set(keys) - available
@@ -667,6 +720,8 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
         complete(missing)  # A successful exact-ID response confirms removal/ineligibility.
         logger.warning('Score repair source unavailable profile=%d count=%d', profile_id, len(missing))
     admitted_keys = [key for key in keys if key in available]
+    attempt['keys'] = admitted_keys
+    attempt['cause'] = 'local_source_failure'
     conn = db.get_db()
     try:
         text_keys, text_deferred = score_text_scan.admit_repair_text_keys(conn, admitted_keys)
@@ -676,6 +731,7 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
         conn.close()
     if len(rows) != len(text_keys):
         raise RuntimeError('Score repair local source rows incomplete')
+    record(set(admitted_keys) - set(text_keys), 'text_budget')
     eligible = []
     missing_embeddings = 0
     for row in rows:
@@ -686,8 +742,13 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
                 continue
         eligible.append(row)
     embedding_deferred = len(rows) - len(eligible)
+    eligible_keys = [(row['entry_type'], row['entry_id']) for row in eligible]
+    record(set(text_keys) - set(eligible_keys), 'embedding_budget')
+    attempt['keys'] = eligible_keys
+    attempt['cause'] = 'scoring_delivery_failure'
     deferred = text_deferred + embedding_deferred
     if deadline is not None and time.monotonic() >= deadline and eligible:
+        attempt['cause'] = 'deadline_exhausted'
         raise RuntimeError('Score repair deadline exhausted before scoring; durable keys retained')
     counts = (_score_and_push_changed_entries(profile_id, prof, current_model, eligible,
                                               force_keys=admitted_keys, on_acknowledged=complete)
@@ -703,6 +764,7 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
     if deferred:
         logger.warning('Score repair admission deferred profile=%d count=%d; durable retry retained', profile_id, deferred)
     if counts['acknowledged'] != len(eligible):
+        attempt['cause'] = 'scoring_omission'
         raise RuntimeError('Score repair scoring omitted admitted rows; durable retry retained')
 
 

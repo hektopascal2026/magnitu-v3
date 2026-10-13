@@ -143,3 +143,133 @@ def test_byte_admission_is_metadata_only_and_preserves_one_oversized_row():
     assert score_text_scan.admit_repair_text_keys(c,[('email',1),('email',2)],max_bytes=1)==([('email',1)],1)
     with pytest.raises(RuntimeError,match='metadata incomplete'):
         score_text_scan.admit_repair_text_keys(c,[('email',3)])
+
+
+def test_retry_age_attempts_and_causes_survive_restart(tmp_path):
+    path = tmp_path/'repair.sqlite'
+    c = sqlite3.connect(path)
+    keys = [('email', 7), ('email', 8)]
+    scan.admit(c, 1, 3, 'next', keys, now=100)
+    scan.outcome(c, 1, 3, [keys[1]], 'embedding_budget')
+    c.close()
+    c = sqlite3.connect(path)
+    h = scan.health(c, 1, 3, now=200)
+    assert h == {'pending': 2, 'oldest_seconds': 100, 'max_attempts': 1,
+                 'cursor_stale_seconds': 100, 'causes': {'interrupted': 1, 'embedding_budget': 1}}
+    scan.admit(c, 1, 3, 'next', [], now=300)
+    assert scan.health(c, 1, 3, now=400)['oldest_seconds'] == 300
+    assert scan.health(c, 1, 3, now=400)['max_attempts'] == 2
+    assert scan.health(c, 1, 3, now=400)['cursor_stale_seconds'] == 300
+    scan.complete(c, 1, 3, keys)
+    assert scan.health(c, 1, 3, now=400)['causes'] == {}
+    assert c.execute('SELECT COUNT(*) FROM worker_score_repair_retry').fetchone()[0] == 0
+
+
+def test_legacy_queue_migration_is_idempotent_and_age_is_observation_time(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    c.execute('CREATE TABLE worker_score_repair_scan(profile_id INTEGER PRIMARY KEY,model_version INTEGER,cursor TEXT,pending TEXT)')
+    c.execute('INSERT INTO worker_score_repair_scan VALUES(1,3,?,?)', ('prior', json.dumps([['email',7]])))
+    c.commit()
+    scan.admit(c, 1, 3, 'next', [], now=100)
+    scan.load(c, 1, 3)
+    assert scan.health(c, 1, 3, now=200)['oldest_seconds'] == 100
+    scan.admit(c, 1, 4, 'fresh', [('email',8)], now=300)
+    assert scan.health(c, 1, 4, now=400)['oldest_seconds'] == 100
+    assert c.execute('SELECT COUNT(*) FROM worker_score_repair_retry').fetchone()[0] == 1
+    assert scan.health(c, 1, 3, now=400)['causes'] == {}
+
+
+@pytest.mark.parametrize('failure,cause', [('refetch','refetch_failure'), ('push','scoring_delivery_failure'),
+                                          ('omission','scoring_omission'), ('deadline','deadline_exhausted')])
+def test_failure_cause_is_durable(repair_env, failure, cause):
+    connect,page,pull,scorer,push = repair_env
+    page.return_value['keys'] = [('email',7)]
+    if failure == 'refetch':
+        pull.side_effect = RuntimeError('transport failed')
+    elif failure == 'push':
+        push.return_value = {'success':False}
+    elif failure == 'omission':
+        scorer.side_effect = lambda *_args, **_kwargs: []
+    with pytest.raises(RuntimeError):
+        ml_window._repair_remote_scores(1, {}, {'version':3}, deadline=0 if failure == 'deadline' else None)
+    c = connect()
+    assert scan.health(c, 1, 3)['causes'] == {cause:1}
+
+
+def test_budget_deferral_causes_are_not_overwritten_by_scoring_failure(repair_env, monkeypatch):
+    connect,page,pull,scorer,push = repair_env
+    page.return_value['keys'] = [('email',i) for i in range(1,14)]
+    monkeypatch.setattr(score_text_scan, 'admit_repair_text_keys', lambda _,keys:(keys[:-1],1))
+    monkeypatch.setattr(score_text_scan, 'embedding_ready_keys', lambda *_:set())
+    push.return_value = {'success':False}
+    with pytest.raises(RuntimeError):
+        run()
+    c = connect()
+    assert scan.health(c, 1, 3)['causes'] == {'scoring_delivery_failure':10, 'embedding_budget':2, 'text_budget':1}
+
+
+def test_health_warns_on_old_retry_and_stalled_cursor(repair_env, caplog):
+    connect,page,*_ = repair_env
+    c = connect()
+    scan.admit(c, 1, 3, 'next', [('email',7)], now=1)
+    c.close()
+    run()
+    assert 'old_retry=0' in caplog.text  # Successful removal eliminates the old retry condition.
+    assert 'stalled_cursor=1' in caplog.text
+
+
+def test_failure_logging_does_not_mask_original_exception(repair_env, monkeypatch):
+    connect,page,pull,scorer,push = repair_env
+    page.return_value['keys'] = [('email',7)]
+    pull.side_effect = RuntimeError('original transport failure')
+    monkeypatch.setattr(scan, 'outcome', Mock(side_effect=RuntimeError('telemetry broke')))
+    with pytest.raises(RuntimeError, match='original transport failure'):
+        run()
+
+
+def test_failed_old_retry_warns_even_on_exception(repair_env, caplog):
+    connect,page,pull,*_ = repair_env
+    c = connect()
+    scan.admit(c, 1, 3, 'next', [('email',7)], now=1)
+    c.close()
+    pull.side_effect = RuntimeError('transport failure')
+    with pytest.raises(RuntimeError):
+        run()
+    assert 'old_retry=1' in caplog.text
+    assert 'stalled_cursor=1' in caplog.text
+
+
+def test_telemetry_and_cursor_admission_roll_back_together(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    scan.admit(c, 1, 3, 'prior', [('email',7)], now=100)
+    c.execute("CREATE TRIGGER fail_telemetry BEFORE INSERT ON worker_score_repair_retry BEGIN SELECT RAISE(ABORT,'synthetic telemetry failure'); END")
+    c.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        scan.admit(c, 1, 3, 'next', [('email',8)], now=200)
+    assert scan.load(c, 1, 3) == {'cursor':'prior', 'pending':[('email',7)]}
+    assert scan.health(c, 1, 3, now=300)['max_attempts'] == 1
+
+
+def test_saturated_queue_warns_and_retains_full_queue(repair_env, caplog):
+    connect,page,pull,*_ = repair_env
+    c = connect()
+    scan.load(c,1,3)
+    keys = [('email',i) for i in range(1,201)]
+    c.execute('INSERT INTO worker_score_repair_scan VALUES(1,3,?,?)', ('prior',json.dumps(keys)))
+    c.commit();c.close()
+    pull.side_effect = RuntimeError('transport failure')
+    with pytest.raises(RuntimeError):
+        run()
+    page.assert_not_called()
+    assert len(pending(connect)) == 200
+    assert 'saturated=1' in caplog.text
+
+
+def test_explicit_interruption_is_persisted_and_reraised(repair_env):
+    connect,page,pull,*_ = repair_env
+    page.return_value['keys'] = [('email',7)]
+    pull.side_effect = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt):
+        run()
+    c = connect()
+    assert scan.health(c, 1, 3)['causes'] == {'interrupted':1}
