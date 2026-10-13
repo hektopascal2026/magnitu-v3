@@ -1,6 +1,9 @@
-"""Durable bounded repair admission, independent per profile/model."""
+"""Durable bounded repair traversal per profile, adopted by the active model."""
 import json
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 MAX_PENDING = 200
 RETRY_BATCH = 10
@@ -22,7 +25,7 @@ def load(conn, profile_id, model_version):
     conn.commit()
     row = conn.execute('SELECT model_version,cursor,pending FROM worker_score_repair_scan WHERE profile_id=?',
                        (profile_id,)).fetchone()
-    if row is None or row[0] != model_version:
+    if row is None:
         return {'cursor': '', 'pending': []}
     keys = json.loads(row[2])
     if (not isinstance(keys, list) or len(keys) > MAX_PENDING or not isinstance(row[1], str)
@@ -48,8 +51,8 @@ def _save(conn, profile_id, model_version, state, attempted=(), now=None):
             cursor=excluded.cursor,pending=excluded.pending''',
                      (profile_id, model_version, state['cursor'], json.dumps(state['pending'])))
         # Side tables share the cursor/queue transaction and never grow beyond pending keys.
-        conn.execute('DELETE FROM worker_score_repair_retry WHERE profile_id=? AND model_version<>?',
-                     (profile_id, model_version))
+        conn.execute('UPDATE worker_score_repair_retry SET model_version=? WHERE profile_id=?',
+                     (model_version, profile_id))
         kept = set(state['pending'])
         for entry_type, entry_id in conn.execute(
                 'SELECT entry_type,entry_id FROM worker_score_repair_retry WHERE profile_id=?', (profile_id,)).fetchall():
@@ -66,8 +69,7 @@ def _save(conn, profile_id, model_version, state, attempted=(), now=None):
         conn.execute('''INSERT INTO worker_score_repair_progress VALUES(?,?,?,?)
             ON CONFLICT(profile_id) DO UPDATE SET model_version=excluded.model_version,
             cursor=excluded.cursor,last_progress=CASE
-                WHEN worker_score_repair_progress.model_version<>excluded.model_version
-                  OR worker_score_repair_progress.cursor<>excluded.cursor THEN excluded.last_progress
+                WHEN worker_score_repair_progress.cursor<>excluded.cursor THEN excluded.last_progress
                 ELSE worker_score_repair_progress.last_progress END''',
                      (profile_id, model_version, state['cursor'], now))
 
@@ -83,6 +85,8 @@ def admit(conn, profile_id, model_version, cursor, new_keys, now=None):
         normalized.append(tuple(key))
     new_keys = normalized
     state = load(conn, profile_id, model_version)
+    previous = conn.execute('SELECT model_version FROM worker_score_repair_scan WHERE profile_id=?',
+                            (profile_id,)).fetchone()
     retry = state['pending'][:RETRY_BATCH]
     batch = list(retry)
     pending = state['pending'][len(retry):]
@@ -95,11 +99,18 @@ def admit(conn, profile_id, model_version, cursor, new_keys, now=None):
     if len(batch) > 50 or len(pending) > MAX_PENDING or not isinstance(cursor, str) or len(cursor) > 512:
         raise ValueError('Repair admission exceeds durable bounds')
     _save(conn, profile_id, model_version, {'cursor': cursor, 'pending': pending}, batch, now)
+    if previous is not None and previous[0] != model_version:
+        logger.info('Score repair model transition profile=%d from_model=%d to_model=%d pending_preserved=%d cursor_preserved=1',
+                    profile_id, previous[0], model_version, len(state['pending']))
     return batch
 
 
 def complete(conn, profile_id, model_version, keys):
     state = load(conn, profile_id, model_version)
+    owner = conn.execute('SELECT model_version FROM worker_score_repair_scan WHERE profile_id=?',
+                         (profile_id,)).fetchone()
+    if owner is not None and owner[0] != model_version:
+        raise RuntimeError('Stale model cannot acknowledge current repair queue')
     done = set(keys)
     state['pending'] = [key for key in state['pending'] if key not in done]
     _save(conn, profile_id, model_version, state)
@@ -124,9 +135,9 @@ def health(conn, profile_id, model_version, now=None):
     now = int(time.time()) if now is None else now
     state = load(conn, profile_id, model_version)
     rows = conn.execute('''SELECT first_seen,last_attempt,attempts,cause FROM worker_score_repair_retry
-        WHERE profile_id=? AND model_version=?''', (profile_id, model_version)).fetchall()
-    progress = conn.execute('SELECT last_progress FROM worker_score_repair_progress WHERE profile_id=? AND model_version=?',
-                            (profile_id, model_version)).fetchone()
+        WHERE profile_id=?''', (profile_id,)).fetchall()
+    progress = conn.execute('SELECT last_progress FROM worker_score_repair_progress WHERE profile_id=?',
+                            (profile_id,)).fetchone()
     causes = {}
     for row in rows:
         causes[row[3]] = causes.get(row[3], 0) + 1

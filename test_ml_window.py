@@ -252,10 +252,16 @@ def test_ml_window_main_promotes(
     mock_sync.push_scores.side_effect = lambda *a, **k: order.append("push") or {"success": True}
     mock_distill_sub.side_effect = lambda *a, **k: order.append("distill") or 0
 
+    # Count-only SQL mocks are not repair-state rows; SQLite repair integration
+    # tests exercise state adoption, while this test checks training-stage wiring.
+    repair = MagicMock()
+    monkeypatch.setattr(ml_window, '_repair_remote_scores', repair)
     # Run
     res = ml_window.main()
     
     assert res == 0
+    repair.assert_called_once()
+    assert repair.call_args.args[2]['version'] == 2
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False, recent_holdout_n=ml_window.GATE_N_RECENT)
     # Recent-items gate: evaluate_on_recent called for both new and old models
     assert mock_pipeline.evaluate_on_recent.call_count == 2
@@ -337,10 +343,16 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     monkeypatch.setattr(ml_window, '_fresh_score_text_page', lambda _: ([], 0))
     monkeypatch.setattr(ml_window, '_recent_score_text_page', MagicMock(return_value=[]))
     
+    # Count-only SQL mocks are not repair-state rows; SQLite repair integration
+    # tests exercise state adoption, while this test checks training-stage wiring.
+    repair = MagicMock()
+    monkeypatch.setattr(ml_window, '_repair_remote_scores', repair)
     # Run
     res = ml_window.main()
     
     assert res == 0
+    repair.assert_called_once()
+    assert repair.call_args.args[2]['version'] == 1
     mock_pipeline.train.assert_called_once_with(profile_id=1, activate=False, recent_holdout_n=ml_window.GATE_N_RECENT)
     # Recent-items gate: evaluate_on_recent called for both new and old models
     assert mock_pipeline.evaluate_on_recent.call_count == 2

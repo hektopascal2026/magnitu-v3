@@ -22,7 +22,7 @@ def test_durable_admission_survives_restart_and_rotates_failed_keys(tmp_path):
     scan.complete(c,1,3,keys[:5])
     assert set(scan.load(c,1,3)['pending']) == set(keys[5:]+[('lex_item',99)])
     assert scan.load(c,2,3) == {'cursor':'','pending':[]}
-    assert scan.load(c,1,4) == {'cursor':'','pending':[]}
+    assert scan.load(c,1,4) == scan.load(c,1,3)
 
 
 def test_pending_capacity_is_explicit_and_cannot_advance_cursor(tmp_path):
@@ -161,7 +161,7 @@ def test_retry_age_attempts_and_causes_survive_restart(tmp_path):
     assert scan.health(c, 1, 3, now=400)['max_attempts'] == 2
     assert scan.health(c, 1, 3, now=400)['cursor_stale_seconds'] == 300
     scan.complete(c, 1, 3, keys)
-    assert scan.health(c, 1, 3, now=400)['causes'] == {}
+    assert scan.health(c, 1, 3, now=400)['causes'] == scan.health(c, 1, 4, now=400)['causes']
     assert c.execute('SELECT COUNT(*) FROM worker_score_repair_retry').fetchone()[0] == 0
 
 
@@ -174,9 +174,9 @@ def test_legacy_queue_migration_is_idempotent_and_age_is_observation_time(tmp_pa
     scan.load(c, 1, 3)
     assert scan.health(c, 1, 3, now=200)['oldest_seconds'] == 100
     scan.admit(c, 1, 4, 'fresh', [('email',8)], now=300)
-    assert scan.health(c, 1, 4, now=400)['oldest_seconds'] == 100
-    assert c.execute('SELECT COUNT(*) FROM worker_score_repair_retry').fetchone()[0] == 1
-    assert scan.health(c, 1, 3, now=400)['causes'] == {}
+    assert scan.health(c, 1, 4, now=400)['oldest_seconds'] == 300
+    assert c.execute('SELECT COUNT(*) FROM worker_score_repair_retry').fetchone()[0] == 2
+    assert scan.health(c, 1, 3, now=400)['causes'] == scan.health(c, 1, 4, now=400)['causes']
 
 
 @pytest.mark.parametrize('failure,cause', [('refetch','refetch_failure'), ('push','scoring_delivery_failure'),
@@ -273,3 +273,69 @@ def test_explicit_interruption_is_persisted_and_reraised(repair_env):
         run()
     c = connect()
     assert scan.health(c, 1, 3)['causes'] == {'interrupted':1}
+
+
+def test_promotions_do_not_reset_cursor_or_discard_pending_work(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    scan.admit(c, 1, 3, 'interior-page', [('email',7)], now=100)
+    scan.outcome(c, 1, 3, [('email',7)], 'embedding_budget')
+    for model in range(4, 10):
+        assert scan.load(c, 1, model) == {'cursor':'interior-page', 'pending':[('email',7)]}
+        scan.admit(c, 1, model, 'interior-page', [], now=100+model)
+    h = scan.health(c, 1, 9, now=200)
+    assert h['oldest_seconds'] == 100
+    assert h['max_attempts'] == 7
+    assert h['cursor_stale_seconds'] == 100
+
+
+def test_stale_model_acknowledgement_cannot_remove_new_model_retry(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    scan.admit(c,1,3,'prior',[('email',7)],now=100)
+    scan.admit(c,1,4,'next',[],now=200)
+    with pytest.raises(RuntimeError, match='Stale model'):
+        scan.complete(c,1,3,[('email',7)])
+    assert scan.load(c,1,4) == {'cursor':'next','pending':[('email',7)]}
+    scan.outcome(c,1,3,[('email',7)],'refetch_failure')
+    assert scan.health(c,1,4,now=300)['causes'] == {'interrupted':1}
+    scan.complete(c,1,4,[('email',7)])
+    assert scan.load(c,1,4)['pending'] == []
+
+
+def test_promotion_adoption_and_age_preservation_are_atomic(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    scan.admit(c,1,3,'prior',[('email',7)],now=100)
+    c.execute("CREATE TRIGGER fail_adoption BEFORE UPDATE ON worker_score_repair_retry BEGIN SELECT RAISE(ABORT,'synthetic adoption failure'); END")
+    c.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        scan.admit(c,1,4,'next',[],now=200)
+    assert c.execute('SELECT model_version,cursor FROM worker_score_repair_scan').fetchone() == (3,'prior')
+    assert scan.health(c,1,3,now=300)['oldest_seconds'] == 200
+
+
+def test_pending_work_is_scored_with_new_model_after_promotion(repair_env, monkeypatch):
+    connect,page,pull,scorer,push = repair_env
+    c = connect()
+    scan.admit(c,1,2,'interior-page',[('email',7)],now=100)
+    c.close()
+    observed = []
+    def score_and_ack(profile, prof, model, rows, **kwargs):
+        observed.append(model['version'])
+        kwargs['on_acknowledged']([(r['entry_type'],r['entry_id']) for r in rows])
+        return {'acknowledged':len(rows)}
+    monkeypatch.setattr(ml_window,'_score_and_push_changed_entries',score_and_ack)
+    run()
+    assert page.call_args.kwargs['cursor'] == 'interior-page'
+    assert observed == [3]
+    assert pending(connect) == []
+
+
+def test_new_model_sees_retry_age_before_successful_adoption(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    scan.admit(c,1,3,'interior',[('email',7)],now=100)
+    scan.outcome(c,1,3,[('email',7)],'embedding_budget')
+    h = scan.health(c,1,4,now=200)
+    assert h['pending'] == 1
+    assert h['oldest_seconds'] == 100
+    assert h['cursor_stale_seconds'] == 100
+    assert h['causes'] == {'embedding_budget':1}
+    assert c.execute('SELECT model_version FROM worker_score_repair_scan').fetchone()[0] == 3

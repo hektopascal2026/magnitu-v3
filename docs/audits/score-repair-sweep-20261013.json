@@ -1,0 +1,860 @@
+{
+  "observed_at": "2026-10-13 18:06 UTC",
+  "worker_revision": "65216d8a6ba0f96b8073623d413702c8261712f8",
+  "source_revision": "46cdadae6710af01849c8b9638adbc6935ad1d49",
+  "original_eu_batch": [
+    {
+      "entry_type": "email",
+      "entry_id": 148693
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148694
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148695
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148696
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148697
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148698
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148710
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148711
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148712
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148713
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148714
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148715
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148716
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148717
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148718
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148719
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148720
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148721
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148722
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148723
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148724
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148725
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148726
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148727
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148728
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148729
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148730
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148731
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148732
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148733
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148735
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148737
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148738
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148739
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148740
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148741
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148742
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148743
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148744
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148745
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148746
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148747
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148748
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148749
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148752
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148753
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148754
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148755
+    },
+    {
+      "entry_type": "feed_item",
+      "entry_id": 1100991
+    },
+    {
+      "entry_type": "feed_item",
+      "entry_id": 1101564
+    }
+  ],
+  "recovered_eu_retry_keys": [
+    {
+      "entry_type": "email",
+      "entry_id": 148740
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148741
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148742
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148743
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148744
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148745
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148746
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148747
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148748
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148749
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148752
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148753
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148754
+    },
+    {
+      "entry_type": "email",
+      "entry_id": 148755
+    }
+  ],
+  "eu_scores_readback": {
+    "email:148693": {
+      "entry_id": 148693,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148694": {
+      "entry_id": 148694,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148695": {
+      "entry_id": 148695,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148696": {
+      "entry_id": 148696,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148697": {
+      "entry_id": 148697,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148698": {
+      "entry_id": 148698,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148710": {
+      "entry_id": 148710,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148711": {
+      "entry_id": 148711,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148712": {
+      "entry_id": 148712,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148713": {
+      "entry_id": 148713,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148714": {
+      "entry_id": 148714,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148715": {
+      "entry_id": 148715,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148716": {
+      "entry_id": 148716,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148717": {
+      "entry_id": 148717,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148718": {
+      "entry_id": 148718,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148719": {
+      "entry_id": 148719,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148720": {
+      "entry_id": 148720,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148721": {
+      "entry_id": 148721,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148722": {
+      "entry_id": 148722,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148723": {
+      "entry_id": 148723,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148724": {
+      "entry_id": 148724,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148725": {
+      "entry_id": 148725,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148726": {
+      "entry_id": 148726,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148727": {
+      "entry_id": 148727,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148728": {
+      "entry_id": 148728,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148729": {
+      "entry_id": 148729,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148730": {
+      "entry_id": 148730,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148731": {
+      "entry_id": 148731,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148732": {
+      "entry_id": 148732,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148733": {
+      "entry_id": 148733,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148735": {
+      "entry_id": 148735,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148737": {
+      "entry_id": 148737,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148738": {
+      "entry_id": 148738,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148739": {
+      "entry_id": 148739,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "email:148740": {
+      "entry_id": 148740,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148741": {
+      "entry_id": 148741,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148742": {
+      "entry_id": 148742,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148743": {
+      "entry_id": 148743,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148744": {
+      "entry_id": 148744,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148745": {
+      "entry_id": 148745,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148746": {
+      "entry_id": 148746,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148747": {
+      "entry_id": 148747,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148748": {
+      "entry_id": 148748,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148749": {
+      "entry_id": 148749,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:23:43"
+    },
+    "email:148752": {
+      "entry_id": 148752,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:42:46"
+    },
+    "email:148753": {
+      "entry_id": 148753,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:42:46"
+    },
+    "email:148754": {
+      "entry_id": 148754,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:42:46"
+    },
+    "email:148755": {
+      "entry_id": 148755,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:42:46"
+    },
+    "feed_item:1100991": {
+      "entry_id": 1100991,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    },
+    "feed_item:1101564": {
+      "entry_id": 1101564,
+      "score_source": "magnitu",
+      "model_version": 49,
+      "scored_at": "2026-10-13 17:08:46"
+    }
+  },
+  "sweep_baseline": [
+    {
+      "profile": 1,
+      "model": 1019,
+      "cursor": {
+        "v": 1,
+        "lane": 1,
+        "fence": "2026-10-13 12:39:01",
+        "after": [
+          "2026-10-01 08:39:22",
+          "2026-10-06 07:42:40",
+          "2026-10-13 12:36:05",
+          "2026-10-13 10:43:13",
+          "2026-10-13 10:43:19"
+        ],
+        "ids": [
+          1112918,
+          1123621,
+          162708,
+          417017,
+          217934
+        ],
+        "done": [
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "pending": []
+    },
+    {
+      "profile": 2,
+      "model": 47,
+      "cursor": {
+        "v": 1,
+        "lane": 1,
+        "fence": "2026-10-13 12:39:10",
+        "after": [
+          "2026-10-01 08:39:25",
+          "2026-10-06 07:42:40",
+          "2026-10-13 12:36:05",
+          "2026-10-13 10:43:13",
+          "2026-10-13 10:43:19"
+        ],
+        "ids": [
+          1112935,
+          1123621,
+          162708,
+          417017,
+          217934
+        ],
+        "done": [
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "pending": []
+    },
+    {
+      "profile": 3,
+      "model": 60,
+      "cursor": {
+        "v": 1,
+        "lane": 1,
+        "fence": "2026-10-13 12:39:09",
+        "after": [
+          "2026-10-01 08:39:25",
+          "2026-10-06 07:42:40",
+          "2026-10-13 12:36:05",
+          "2026-10-13 10:43:13",
+          "2026-10-13 10:43:19"
+        ],
+        "ids": [
+          1112935,
+          1123621,
+          162708,
+          417017,
+          217934
+        ],
+        "done": [
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "pending": []
+    },
+    {
+      "profile": 4,
+      "model": 49,
+      "cursor": {
+        "v": 1,
+        "lane": 3,
+        "fence": "2026-10-13 12:38:52",
+        "after": [
+          "2026-09-29 17:41:14",
+          "2026-09-30 16:52:19",
+          "2026-09-30 19:36:04",
+          "2026-10-13 10:43:13",
+          "2026-10-13 10:43:19"
+        ],
+        "ids": [
+          1101850,
+          1108998,
+          148813,
+          417017,
+          217934
+        ],
+        "done": [
+          false,
+          false,
+          false,
+          true,
+          true
+        ]
+      },
+      "pending": [
+        [
+          "email",
+          148766
+        ],
+        [
+          "email",
+          148767
+        ],
+        [
+          "email",
+          148768
+        ],
+        [
+          "email",
+          148769
+        ],
+        [
+          "email",
+          148770
+        ],
+        [
+          "email",
+          148771
+        ],
+        [
+          "email",
+          148772
+        ],
+        [
+          "email",
+          148773
+        ],
+        [
+          "email",
+          148774
+        ],
+        [
+          "email",
+          148775
+        ],
+        [
+          "email",
+          148776
+        ],
+        [
+          "email",
+          148781
+        ],
+        [
+          "email",
+          148784
+        ],
+        [
+          "email",
+          148785
+        ],
+        [
+          "email",
+          148788
+        ],
+        [
+          "email",
+          148792
+        ],
+        [
+          "email",
+          148793
+        ],
+        [
+          "email",
+          148794
+        ],
+        [
+          "email",
+          148795
+        ],
+        [
+          "email",
+          148796
+        ],
+        [
+          "email",
+          148797
+        ],
+        [
+          "email",
+          148798
+        ],
+        [
+          "email",
+          148799
+        ],
+        [
+          "email",
+          148803
+        ],
+        [
+          "email",
+          148810
+        ],
+        [
+          "email",
+          148813
+        ]
+      ]
+    },
+    {
+      "profile": 5,
+      "model": 3,
+      "cursor": {
+        "v": 1,
+        "lane": 1,
+        "fence": "2026-10-13 12:39:11",
+        "after": [
+          "2026-09-29 18:21:10",
+          "2026-10-03 21:07:12",
+          "2026-10-06 13:13:28",
+          "2026-10-13 10:43:13",
+          "2026-10-13 10:43:19"
+        ],
+        "ids": [
+          1102098,
+          1131912,
+          151220,
+          417017,
+          217934
+        ],
+        "done": [
+          false,
+          false,
+          false,
+          true,
+          true
+        ]
+      },
+      "pending": []
+    },
+    {
+      "profile": 7,
+      "model": 1,
+      "cursor": {
+        "v": 1,
+        "lane": 1,
+        "fence": "2026-10-13 12:38:57",
+        "after": [
+          "2026-10-01 08:39:22",
+          "2026-10-06 07:42:40",
+          "2026-10-13 12:36:05",
+          "2026-10-13 10:43:13",
+          "2026-10-13 10:43:19"
+        ],
+        "ids": [
+          1112918,
+          1123621,
+          162708,
+          417017,
+          217934
+        ],
+        "done": [
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "pending": []
+    }
+  ]
+}
