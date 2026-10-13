@@ -64,6 +64,7 @@ def test_score_only_window_reads_each_profiles_own_text_page(entries, monkeypatc
     monkeypatch.setattr(ml_window, '_recent_score_text_page', text_page)
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
+    ml_window.sync.pull_score_repair_candidates.return_value = []
     monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
     monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
     monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
@@ -99,6 +100,7 @@ def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypa
     monkeypatch.setattr(ml_window, '_recent_score_text_page', lambda _: [{'entry_type': 'feed_item', 'entry_id': 1}])
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
+    ml_window.sync.pull_score_repair_candidates.return_value = []
     monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
     monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
     monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
@@ -157,6 +159,7 @@ def test_actual_main_scores_more_than_one_fresh_page_for_each_desk(tmp_path, mon
         pushed[profile['id']].update(r['entry_id'] for r in rows)
         return {'success':True,'errors':0}
     monkeypatch.setattr(ml_window.sync,'push_scores',push)
+    monkeypatch.setattr(ml_window.sync,'pull_score_repair_candidates',lambda *_,**__:[])
     monkeypatch.setattr(ml_window.sync,'pull_all_entry_types',lambda **_:None)
     monkeypatch.setattr(ml_window.sync,'entry_store_watermarks',lambda:{})
     monkeypatch.setattr(ml_window.sync,'post_ml_window_report',lambda _:None)

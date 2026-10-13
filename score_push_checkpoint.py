@@ -26,7 +26,7 @@ def _known_for_page(conn, profile_id, entries):
     return {(row[0], row[1]): row[2] for row in rows}
 
 
-def pending_batch(conn, profile_id, entries, context, limit=200):
+def pending_batch(conn, profile_id, entries, context, limit=200, force_keys=()):
     """Select a bounded batch; fetched_at changes alone do not invalidate text."""
     conn.execute("""CREATE TABLE IF NOT EXISTS worker_score_push_state (
         profile_id INTEGER NOT NULL, entry_type TEXT NOT NULL, entry_id INTEGER NOT NULL,
@@ -44,6 +44,7 @@ def pending_batch(conn, profile_id, entries, context, limit=200):
                 start = i + 1
                 break
     limit = max(1, min(limit, MAX_PENDING_BATCH))
+    force_keys = set(force_keys)
     context_revision = fingerprint(context)
     pending = []
     revisions = {}
@@ -55,7 +56,7 @@ def pending_batch(conn, profile_id, entries, context, limit=200):
             key = (entry['entry_type'], entry['entry_id'])
             text = {k: v for k, v in entry.items() if k not in ('id', 'fetched_at', 'embedding')}
             revision = fingerprint(['score-input-v2', context_revision, text])
-            if known.get(key) != revision:
+            if key in force_keys or known.get(key) != revision:
                 pending.append(entry)
                 revisions[key] = revision
                 if len(pending) >= limit:

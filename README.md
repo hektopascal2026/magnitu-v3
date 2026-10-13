@@ -402,3 +402,19 @@ rows. Only acknowledged score fingerprints mark work complete. The cursor is
 rebuildable: dropping `worker_score_push_cursor` resets rotation without deleting scores.
 
 Recipe pushes leave `version` out of the request: Seismo assigns its next recipe version independently of the worker model version. The exported local recipe object keeps its model version. This incorporates the previously deployed VPS patch into tracked worker code; score payload model versions are unaffected.
+
+### Remote score reconciliation
+
+Each normal window checks the separate Bearer-authenticated
+`ml_score_repair_candidates` channel once per admitted desk, using its active
+model version and own push credentials. At most 50 remotely overdue keys are
+refetched from the shared mothership through the unchanged `magnitu_entries`
+API and rescored. Confirmed remote repairs bypass matching local fingerprints;
+acknowledgements still advance only after successful score POSTs. No training
+or corpus-wide checkpoint reset is required. Missing/invalid endpoint responses,
+incomplete refetches and partial scoring are logged and mark the window report
+`worker_error`; normal fresh and recovery delivery continue. Numeric `Score repair
+summary` lines show candidates and acknowledgements. Window admission and the
+existing supervisor limit still apply. Deploy the Seismo endpoint before this
+worker commit; rolling back either side preserves local checkpoints and scores.
+The remote evidence is a bounded sample, not a claim of whole-corpus coverage.
