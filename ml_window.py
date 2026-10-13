@@ -600,13 +600,13 @@ def _score_input_context(profile_id, prof, current_model):
     }
 
 
-def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries):
+def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries, force_keys=()):
     """Commit input fingerprints only after all score batches are acknowledged."""
     conn = db.get_db()
     try:
         context = _score_input_context(profile_id, prof, current_model)
         pending, revisions = score_push_checkpoint.pending_batch(
-            conn, profile_id, recent_entries, context,
+            conn, profile_id, recent_entries, context, force_keys=force_keys,
         )
         logger.info("Score push pending batch: %d of %d recent entries", len(pending), len(recent_entries))
         scores = []
@@ -626,6 +626,37 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
                 "scored": len(scores), "acknowledged": len(scores)}
     finally:
         conn.close()
+
+
+def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
+    """One bounded remote check per desk/window; refetch before forced delivery."""
+    keys = sync.pull_score_repair_candidates(current_model["version"], profile=prof)
+    if not keys:
+        logger.info("Score repair summary profile=%d candidates=0 acknowledged=0", profile_id)
+        return
+    by_type = {}
+    for entry_type, entry_id in keys:
+        by_type.setdefault(entry_type, []).append(entry_id)
+    for entry_type, ids in by_type.items():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RuntimeError("Score repair deadline exhausted before refetch")
+        # Entry source is shared mothership; candidate evidence and push are desk-local.
+        if sync.pull_entries_by_ids(entry_type, ids, timeout=10.0) != len(ids):
+            raise RuntimeError("Score repair source refetch incomplete")
+    conn = db.get_db()
+    try:
+        rows = score_text_scan.by_keys(conn, keys)
+    finally:
+        conn.close()
+    if len(rows) != len(keys):
+        raise RuntimeError("Score repair local source rows incomplete")
+    if deadline is not None and time.monotonic() >= deadline:
+        raise RuntimeError("Score repair deadline exhausted before scoring")
+    counts = _score_and_push_changed_entries(profile_id, prof, current_model, rows, force_keys=keys)
+    logger.info("Score repair summary profile=%d candidates=%d acknowledged=%d", profile_id,
+                len(keys), counts["acknowledged"])
+    if counts["acknowledged"] != len(keys):
+        raise RuntimeError("Score repair partially scored; remote candidates remain retryable")
 
 
 def _score_only_desk_order(prepared):
@@ -1044,6 +1075,16 @@ def main():
                 item["score_only"] = score_only
                 fresh_desks.append(item)
                 _attempt_fresh_scores(item)
+                # A failed repair must not block normal fresh/historical delivery.
+                repair_deadline = window_started + 275 if score_only else time.monotonic() + 150
+                if time.monotonic() < repair_deadline:
+                    try:
+                        _repair_remote_scores(profile_id, prof, current_model, deadline=repair_deadline)
+                    except Exception:
+                        logger.exception("Score repair failed profile=%d", profile_id)
+                        has_errors = True
+                else:
+                    logger.warning("Score repair deferred by window deadline profile=%d", profile_id)
                 # Preserve one durable historical page independently of fresh work.
                 recent_score_entries = _recent_score_text_page(profile_id)
                 _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)

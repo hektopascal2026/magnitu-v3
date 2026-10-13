@@ -516,7 +516,31 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
     return out
 
 
-def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
+SCORE_REPAIR_LIMIT = 50
+
+
+def pull_score_repair_candidates(model_version: int, profile: Optional[Dict] = None) -> List[Tuple[str, int]]:
+    """Desk-local remote delivery evidence, independent of local acknowledgements."""
+    data = _request("GET", {"action": "ml_score_repair_candidates", "model_version": model_version},
+                    seismo_target=_profile_target(profile), timeout=10.0).json()
+    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 1 or type(data.get("model_version")) is not int
+            or data["model_version"] != model_version or not isinstance(data.get("keys"), list)
+            or len(data["keys"]) > SCORE_REPAIR_LIMIT):
+        raise ValueError("Invalid score repair response")
+    keys = []
+    allowed = {"feed_item", "email", "lex_item", "calendar_event"}
+    for row in data["keys"]:
+        if (not isinstance(row, dict) or row.get("entry_type") not in allowed
+                or type(row.get("entry_id")) is not int or row["entry_id"] < 1):
+            raise ValueError("Invalid score repair key")
+        key = (row["entry_type"], row["entry_id"])
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def pull_entries_by_ids(entry_type: str, ids: List[int], *, timeout: float = REQUEST_TIMEOUT_SEC) -> int:
     """Fetch exact mothership rows by id (Seismo ``magnitu_entries&ids=``)."""
     ids = sorted({int(i) for i in ids if int(i) > 0})
     if not ids:
@@ -532,7 +556,7 @@ def pull_entries_by_ids(entry_type: str, ids: List[int]) -> int:
             "type": entry_type,
             "ids": ",".join(str(x) for x in chunk),
         }
-        data = _request("GET", params).json()
+        data = _request("GET", params, timeout=timeout).json()
         entries = data.get("entries") or []
         missing = data.get("missing_ids")
         if isinstance(missing, list) and missing:

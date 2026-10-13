@@ -106,3 +106,16 @@ def fresh_page(conn, before_id=None, *, days=2, lookback_days=14, limit=MAX_PAGE
             ids,
         ).fetchall()
     return [dict(row) for row in rows], ids[-1]
+
+
+def by_keys(conn, keys):
+    """At most 50 exact indexed probes; never scan the shared text corpus."""
+    if len(keys) > 50:
+        raise ValueError("Too many repair keys")
+    if not keys:
+        return []
+    predicates = ' OR '.join('(entry_type=? AND entry_id=?)' for _ in keys)
+    params = [value for key in keys for value in key]
+    rows = conn.execute('SELECT ' + db._ENTRY_TEXT_COLUMNS + ' FROM entries WHERE ' + predicates,
+                        params).fetchall()
+    return [dict(row) for row in rows]

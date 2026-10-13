@@ -51,7 +51,8 @@ def test_each_http_batch_must_acknowledge_without_errors(monkeypatch):
 
 
 @pytest.mark.parametrize('entries', [[], [{'entry_type': 'feed_item', 'entry_id': 1}]])
-def test_score_only_window_reads_each_profiles_own_text_page(entries, monkeypatch, tmp_path):
+@pytest.mark.parametrize('repair_failure', [False, True])
+def test_score_only_window_reads_each_profiles_own_text_page(entries, repair_failure, monkeypatch, tmp_path):
     from unittest.mock import MagicMock
     database = MagicMock()
     database.get_db.side_effect = lambda: worker_connection(tmp_path / 'worker.sqlite')
@@ -64,6 +65,9 @@ def test_score_only_window_reads_each_profiles_own_text_page(entries, monkeypatc
     monkeypatch.setattr(ml_window, '_recent_score_text_page', text_page)
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
+    ml_window.sync.pull_score_repair_candidates.return_value = []
+    if repair_failure:
+        ml_window.sync.pull_score_repair_candidates.side_effect = RuntimeError('repair unavailable')
     monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
     monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
     monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
@@ -75,7 +79,8 @@ def test_score_only_window_reads_each_profiles_own_text_page(entries, monkeypatc
     monkeypatch.setenv('MAGNITU_VAULT_PASSWORD', 'test-vault')
     monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY', '1')
     monkeypatch.setenv('SEISMO_DESKS_JSON', '[{"seismo_url":"a","api_key":"test"},{"seismo_url":"b","api_key":"test"}]')
-    assert ml_window.main() == 0
+    assert ml_window.main() == int(repair_failure)
+    assert ml_window.sync.pull_score_repair_candidates.call_count == 2
     assert [call.args[0] for call in text_page.call_args_list] == [1, 2]
     database.get_recent_entries.assert_not_called()
     assert score.call_count == 2
@@ -99,6 +104,7 @@ def test_score_only_main_records_admission_before_interrupted_desk_work(monkeypa
     monkeypatch.setattr(ml_window, '_recent_score_text_page', lambda _: [{'entry_type': 'feed_item', 'entry_id': 1}])
     monkeypatch.setattr(ml_window, 'db', database)
     monkeypatch.setattr(ml_window, 'sync', MagicMock())
+    ml_window.sync.pull_score_repair_candidates.return_value = []
     monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
     monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
     monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
@@ -157,6 +163,7 @@ def test_actual_main_scores_more_than_one_fresh_page_for_each_desk(tmp_path, mon
         pushed[profile['id']].update(r['entry_id'] for r in rows)
         return {'success':True,'errors':0}
     monkeypatch.setattr(ml_window.sync,'push_scores',push)
+    monkeypatch.setattr(ml_window.sync,'pull_score_repair_candidates',lambda *_,**__:[])
     monkeypatch.setattr(ml_window.sync,'pull_all_entry_types',lambda **_:None)
     monkeypatch.setattr(ml_window.sync,'entry_store_watermarks',lambda:{})
     monkeypatch.setattr(ml_window.sync,'post_ml_window_report',lambda _:None)
