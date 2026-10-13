@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 import sync
 import pipeline
+import score_repair_scan
 import score_push_checkpoint
 import desk_admission
 import score_text_scan
@@ -600,7 +601,7 @@ def _score_input_context(profile_id, prof, current_model):
     }
 
 
-def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries, force_keys=()):
+def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entries, force_keys=(), on_acknowledged=None):
     """Commit input fingerprints only after all score batches are acknowledged."""
     conn = db.get_db()
     try:
@@ -621,6 +622,8 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
                 if not isinstance(result, dict) or result.get("success") is not True or result.get("errors", 0):
                     raise RuntimeError("Score push was not acknowledged; batch remains pending")
                 score_push_checkpoint.acknowledge(conn, profile_id, scores, revisions)
+                if on_acknowledged is not None:
+                    on_acknowledged([(score['entry_type'], score['entry_id']) for score in scores])
                 logger.info("Pushed %d changed absolute scores.", len(scores))
         return {"admitted": len(recent_entries), "pending": len(pending),
                 "scored": len(scores), "acknowledged": len(scores)}
@@ -629,34 +632,78 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
 
 
 def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
-    """One bounded remote check per desk/window; refetch before forced delivery."""
-    keys = sync.pull_score_repair_candidates(current_model["version"], profile=prof)
-    if not keys:
-        logger.info("Score repair summary profile=%d candidates=0 acknowledged=0", profile_id)
-        return
+    """One fenced sweep page plus fair durable retries; normal limits still apply."""
+    version = current_model['version']
+    conn = db.get_db()
+    try:
+        state = score_repair_scan.load(conn, profile_id, version)
+        limit = min(50 - min(score_repair_scan.RETRY_BATCH, len(state['pending'])),
+                    score_repair_scan.MAX_PENDING - len(state['pending']))
+        if limit > 0:
+            page = sync.pull_score_repair_page(version, prof, cursor=state['cursor'], limit=limit)
+        else:
+            page = {'keys': [], 'sweep_cursor': state['cursor'], 'sweep_examined': 0, 'sweep_completed': False}
+        keys = score_repair_scan.admit(conn, profile_id, version, page['sweep_cursor'], page['keys'])
+    finally:
+        conn.close()
+
+    def complete(done):
+        connection = db.get_db()
+        try:
+            score_repair_scan.complete(connection, profile_id, version, done)
+        finally:
+            connection.close()
+
+    available = set()
     by_type = {}
     for entry_type, entry_id in keys:
         by_type.setdefault(entry_type, []).append(entry_id)
     for entry_type, ids in by_type.items():
         if deadline is not None and time.monotonic() >= deadline:
-            raise RuntimeError("Score repair deadline exhausted before refetch")
-        # Entry source is shared mothership; candidate evidence and push are desk-local.
-        if sync.pull_entries_by_ids(entry_type, ids, timeout=10.0) != len(ids):
-            raise RuntimeError("Score repair source refetch incomplete")
+            raise RuntimeError('Score repair deadline exhausted before refetch; durable keys retained')
+        available.update(sync.pull_entries_by_ids(entry_type, ids, timeout=10.0, return_keys=True))
+    missing = set(keys) - available
+    if missing:
+        complete(missing)  # A successful exact-ID response confirms removal/ineligibility.
+        logger.warning('Score repair source unavailable profile=%d count=%d', profile_id, len(missing))
+    admitted_keys = [key for key in keys if key in available]
     conn = db.get_db()
     try:
-        rows = score_text_scan.by_keys(conn, keys)
+        text_keys, text_deferred = score_text_scan.admit_repair_text_keys(conn, admitted_keys)
+        rows = score_text_scan.by_keys(conn, text_keys)
+        ready = score_text_scan.embedding_ready_keys(conn, admitted_keys)
     finally:
         conn.close()
-    if len(rows) != len(keys):
-        raise RuntimeError("Score repair local source rows incomplete")
-    if deadline is not None and time.monotonic() >= deadline:
-        raise RuntimeError("Score repair deadline exhausted before scoring")
-    counts = _score_and_push_changed_entries(profile_id, prof, current_model, rows, force_keys=keys)
-    logger.info("Score repair summary profile=%d candidates=%d acknowledged=%d", profile_id,
-                len(keys), counts["acknowledged"])
-    if counts["acknowledged"] != len(keys):
-        raise RuntimeError("Score repair partially scored; remote candidates remain retryable")
+    if len(rows) != len(text_keys):
+        raise RuntimeError('Score repair local source rows incomplete')
+    eligible = []
+    missing_embeddings = 0
+    for row in rows:
+        key = (row['entry_type'], row['entry_id'])
+        if key not in ready:
+            missing_embeddings += 1
+            if missing_embeddings > pipeline.MAX_ONTHEFLY_EMBEDDINGS:
+                continue
+        eligible.append(row)
+    embedding_deferred = len(rows) - len(eligible)
+    deferred = text_deferred + embedding_deferred
+    if deadline is not None and time.monotonic() >= deadline and eligible:
+        raise RuntimeError('Score repair deadline exhausted before scoring; durable keys retained')
+    counts = (_score_and_push_changed_entries(profile_id, prof, current_model, eligible,
+                                              force_keys=admitted_keys, on_acknowledged=complete)
+              if eligible else {'acknowledged': 0})
+    conn = db.get_db()
+    try:
+        pending = len(score_repair_scan.load(conn, profile_id, version)['pending'])
+    finally:
+        conn.close()
+    logger.info('Score repair summary profile=%d candidates=%d acknowledged=%d deferred=%d unavailable=%d pending=%d sweep_examined=%d completed=%d text_deferred=%d embedding_deferred=%d',
+                profile_id, len(keys), counts['acknowledged'], deferred, len(missing), pending,
+                page['sweep_examined'], page['sweep_completed'], text_deferred, embedding_deferred)
+    if deferred:
+        logger.warning('Score repair admission deferred profile=%d count=%d; durable retry retained', profile_id, deferred)
+    if counts['acknowledged'] != len(eligible):
+        raise RuntimeError('Score repair scoring omitted admitted rows; durable retry retained')
 
 
 def _score_only_desk_order(prepared):

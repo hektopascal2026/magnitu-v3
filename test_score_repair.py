@@ -40,28 +40,6 @@ def test_repair_rejects_invalid_response(data, monkeypatch):
         sync.pull_score_repair_candidates(3)
 
 
-def test_repair_refetches_and_forces_exact_remote_keys(monkeypatch):
-    keys = [('email', 7), ('feed_item', 8)]
-    rows = [{'entry_type': t, 'entry_id': i, 'content': 'current'} for t, i in keys]
-    monkeypatch.setattr(sync, 'pull_score_repair_candidates', Mock(return_value=keys))
-    pull = Mock(return_value=1)
-    monkeypatch.setattr(sync, 'pull_entries_by_ids', pull)
-    conn = Mock()
-    monkeypatch.setattr(ml_window.db, 'get_db', Mock(return_value=conn))
-    monkeypatch.setattr(ml_window.score_text_scan, 'by_keys', Mock(return_value=rows))
-    score = Mock(return_value={'acknowledged': 2})
-    monkeypatch.setattr(ml_window, '_score_and_push_changed_entries', score)
-    ml_window._repair_remote_scores(1, {}, {'version': 3})
-    assert pull.call_count == 2
-    assert score.call_args.args[-1] == rows
-    assert score.call_args.kwargs['force_keys'] == keys
-    score.return_value = {'acknowledged': 1}
-    with pytest.raises(RuntimeError, match='partially scored'):
-        ml_window._repair_remote_scores(1, {}, {'version': 3})
-    pull.return_value = 0
-    with pytest.raises(RuntimeError, match='refetch incomplete'):
-        ml_window._repair_remote_scores(1, {}, {'version': 3})
-
 
 def test_failed_repair_does_not_suppress_next_attempt(tmp_path, monkeypatch):
     path = tmp_path / 'checkpoint.sqlite'
@@ -96,10 +74,30 @@ def test_repair_text_lookup_uses_only_indexed_key_probes():
         score_text_scan.by_keys(conn, [('email', 7)] * 51)
 
 
-def test_repair_respects_refetch_admission_deadline(monkeypatch):
-    monkeypatch.setattr(sync, 'pull_score_repair_candidates', lambda *_, **__: [('email', 7)])
-    pull = Mock()
-    monkeypatch.setattr(sync, 'pull_entries_by_ids', pull)
-    with pytest.raises(RuntimeError, match='deadline'):
-        ml_window._repair_remote_scores(1, {}, {'version': 3}, deadline=0)
-    pull.assert_not_called()
+def test_sweep_decoder_wires_cursor_limit_and_target(monkeypatch):
+    request = Mock()
+    request.return_value.json.return_value = {'schema_version': 1, 'model_version': 3,
+        'keys': [{'entry_type':'email','entry_id':7}], 'sweep_cursor':'opaque-next',
+        'sweep_examined':200,'sweep_completed':False}
+    monkeypatch.setattr(sync, '_request', request)
+    profile = {'seismo_url':'https://example.test/eu','api_key':'test'}
+    page = sync.pull_score_repair_page(3, profile, cursor='opaque-prior', limit=40)
+    assert page['keys'] == [('email',7)]
+    assert request.call_args.args[1]['sweep_cursor'] == 'opaque-prior'
+    assert request.call_args.args[1]['limit'] == 40
+    assert request.call_args.kwargs['seismo_target'] == profile
+    request.return_value.json.return_value['sweep_examined'] = 801
+    with pytest.raises(ValueError):
+        sync.pull_score_repair_page(3, profile)
+
+
+def test_exact_id_detail_reports_only_returned_source_keys(monkeypatch):
+    request = Mock()
+    request.return_value.json.return_value = {'entries':[{'entry_type':'email','entry_id':7}], 'missing_ids':[8]}
+    monkeypatch.setattr(sync, '_request', request)
+    monkeypatch.setattr(sync.db, 'upsert_entries', Mock())
+    monkeypatch.setattr(sync.db, 'log_sync', Mock())
+    assert sync.pull_entries_by_ids('email',[7,8],return_keys=True) == [('email',7)]
+    request.return_value.json.return_value['entries'][0]['entry_id'] = 999
+    with pytest.raises(ValueError):
+        sync.pull_entries_by_ids('email',[7,8],return_keys=True)

@@ -119,3 +119,37 @@ def by_keys(conn, keys):
     rows = conn.execute('SELECT ' + db._ENTRY_TEXT_COLUMNS + ' FROM entries WHERE ' + predicates,
                         params).fetchall()
     return [dict(row) for row in rows]
+
+
+def embedding_ready_keys(conn, keys):
+    """Metadata-only point probes for the bounded repair batch."""
+    if len(keys) > 50:
+        raise ValueError('Too many repair keys')
+    if not keys:
+        return set()
+    predicates = ' OR '.join('(entry_type=? AND entry_id=?)' for _ in keys)
+    rows = conn.execute('SELECT entry_type,entry_id FROM entries WHERE embedding IS NOT NULL AND ('
+                        + predicates + ')', [value for key in keys for value in key]).fetchall()
+    return {(row[0], row[1]) for row in rows}
+
+
+def admit_repair_text_keys(conn, keys, max_bytes=PAGE_TEXT_BYTES):
+    """Inspect byte sizes before loading bodies; one oversized row goes alone."""
+    if len(keys) > 50:
+        raise ValueError('Too many repair keys')
+    if not keys:
+        return [], 0
+    predicates = ' OR '.join('(entry_type=? AND entry_id=?)' for _ in keys)
+    rows = conn.execute('SELECT entry_type,entry_id,' + TEXT_BYTES_SQL + ' AS text_bytes FROM entries WHERE '
+                        + predicates, [value for key in keys for value in key]).fetchall()
+    sizes = {(row[0], row[1]): row[2] for row in rows}
+    if len(sizes) != len(keys):
+        raise RuntimeError('Repair local source metadata incomplete')
+    admitted = []
+    total = 0
+    for key in keys:
+        if admitted and total + sizes[key] > max_bytes:
+            break
+        admitted.append(key)
+        total += sizes[key]
+    return admitted, len(keys) - len(admitted)

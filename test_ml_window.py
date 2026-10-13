@@ -239,6 +239,7 @@ def test_ml_window_main_promotes(
     mock_sync._compute_pending_embeddings.side_effect = [1, 0]
     mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
     mock_sync.entry_store_watermarks.return_value = {}
+    mock_sync.pull_score_repair_page.return_value = {'keys': [], 'sweep_cursor': 'next', 'sweep_examined': 0, 'sweep_completed': False}
 
     # Training behavior is unchanged; its score-push stage reads one bounded page.
     text_page = MagicMock(return_value=[{"entry_type": "feed_item", "entry_id": 1, "content": "body"}])
@@ -331,6 +332,7 @@ def test_ml_window_main_rejects(mock_pipeline, mock_sync, mock_db, monkeypatch):
     mock_sync._compute_pending_embeddings.side_effect = [0]
     mock_sync.backfill_orphan_label_entries.return_value = (0, 0)
     mock_sync.entry_store_watermarks.return_value = {}
+    mock_sync.pull_score_repair_page.return_value = {'keys': [], 'sweep_cursor': 'next', 'sweep_examined': 0, 'sweep_completed': False}
 
     monkeypatch.setattr(ml_window, '_fresh_score_text_page', lambda _: ([], 0))
     monkeypatch.setattr(ml_window, '_recent_score_text_page', MagicMock(return_value=[]))

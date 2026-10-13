@@ -19,7 +19,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Optional, Callable, Tuple
+from typing import List, Dict, Optional, Callable, Tuple, Union
 
 import httpx
 
@@ -519,10 +519,8 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
 SCORE_REPAIR_LIMIT = 50
 
 
-def pull_score_repair_candidates(model_version: int, profile: Optional[Dict] = None) -> List[Tuple[str, int]]:
+def _decode_score_repair_keys(data, model_version):
     """Desk-local remote delivery evidence, independent of local acknowledgements."""
-    data = _request("GET", {"action": "ml_score_repair_candidates", "model_version": model_version},
-                    seismo_target=_profile_target(profile), timeout=10.0).json()
     if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
             or data["schema_version"] != 1 or type(data.get("model_version")) is not int
             or data["model_version"] != model_version or not isinstance(data.get("keys"), list)
@@ -540,11 +538,32 @@ def pull_score_repair_candidates(model_version: int, profile: Optional[Dict] = N
     return keys
 
 
-def pull_entries_by_ids(entry_type: str, ids: List[int], *, timeout: float = REQUEST_TIMEOUT_SEC) -> int:
+def pull_score_repair_candidates(model_version: int, profile: Optional[Dict] = None) -> List[Tuple[str, int]]:
+    data = _request("GET", {"action": "ml_score_repair_candidates", "model_version": model_version},
+                    seismo_target=_profile_target(profile), timeout=10.0).json()
+    return _decode_score_repair_keys(data, model_version)
+
+
+def pull_score_repair_page(model_version, profile, cursor='', limit=50):
+    data = _request("GET", {"action": "ml_score_repair_candidates", "model_version": model_version,
+                           "sweep_cursor": cursor, "limit": limit},
+                    seismo_target=_profile_target(profile), timeout=10.0).json()
+    keys = _decode_score_repair_keys(data, model_version)
+    if (len(keys) > limit or not isinstance(data.get('sweep_cursor'), str)
+            or len(data['sweep_cursor']) > 512 or type(data.get('sweep_examined')) is not int
+            or not 0 <= data['sweep_examined'] <= 800 or type(data.get('sweep_completed')) is not bool):
+        raise ValueError('Invalid repair sweep response')
+    # Cursor internals belong to Seismo; the worker stores its bounded opaque token.
+    return {'keys': keys, 'sweep_cursor': data['sweep_cursor'],
+            'sweep_examined': data['sweep_examined'], 'sweep_completed': data['sweep_completed']}
+
+
+def pull_entries_by_ids(entry_type: str, ids: List[int], *, timeout: float = REQUEST_TIMEOUT_SEC, return_keys: bool = False) -> Union[int, List[Tuple[str, int]]]:
     """Fetch exact mothership rows by id (Seismo ``magnitu_entries&ids=``)."""
     ids = sorted({int(i) for i in ids if int(i) > 0})
     if not ids:
-        return 0
+        return [] if return_keys else 0
+    returned_keys = set()
     # Seismo MagnituExportRepository::MAX_IDS_PER_REQUEST
     chunk_size = 100
     total = 0
@@ -577,6 +596,12 @@ def pull_entries_by_ids(entry_type: str, ids: List[int], *, timeout: float = REQ
                 len(chunk),
             )
         if entries:
+            if return_keys:
+                for entry in entries:
+                    if (entry.get('entry_type') != entry_type or type(entry.get('entry_id')) is not int
+                            or entry['entry_id'] not in chunk):
+                        raise ValueError('Invalid exact-ID source response')
+                    returned_keys.add((entry_type, entry['entry_id']))
             db.upsert_entries(_normalize_entries_for_store(entries))
             total += len(entries)
     if total or missing_total:
@@ -587,7 +612,7 @@ def pull_entries_by_ids(entry_type: str, ids: List[int], *, timeout: float = REQ
                 entry_type, total, missing_total
             ),
         )
-    return total
+    return sorted(returned_keys) if return_keys else total
 
 
 def backfill_orphan_label_entries(profile_id: int) -> Tuple[int, int]:
