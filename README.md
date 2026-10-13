@@ -418,8 +418,14 @@ confirmed remote repairs. Deploy the Seismo cursor extension first.
 profile with its model version, bounded opaque cursor and at most 200 pending
 exact keys. Admit returned keys and the next cursor atomically before refetch or
 scoring; retry up to ten prior keys fairly per window. Successful score POSTs
-remove only acknowledged keys. A changed active model resets this repair state,
-not the shared corpus, embeddings or existing score checkpoints. A successful
+remove only acknowledged keys. A changed active model preserves the sweep cursor and bounded pending keys.
+Admission atomically adopts them under the current model, preserving retry ages
+and cursor-progress time; retries are predicted with that current model. Stale
+model acknowledgements cannot remove current-model work. Completed/expired source
+sweeps still restart at the current horizon, so a later pass revisits the prefix
+under the new model. Promotions cannot continually restart the same prefix;
+whole-corpus current-model coverage is still bounded by repair throughput. The
+shared corpus, embeddings and existing score checkpoints are unchanged. A successful
 exact-ID response that no longer exports a key retires it with a warning; HTTP
 or malformed-response failures retain it.
 
@@ -445,8 +451,9 @@ UTC epoch first-observed time, last attempt, attempt count and a classified caus
 deadline, text budget or embedding budget). Admission stamps an interrupted attempt
 before external work; acknowledged/unexportable keys remove their telemetry in the
 same transaction as queue removal. Existing pending keys start their age at first
-telemetry observation; their earlier age is unknown. Model changes reset this
-bookkeeping with the repair queue. No item text, exception bodies or credentials
+telemetry observation; their earlier age is unknown. Model changes preserve age/attempt metadata while atomically adopting
+the existing repair queue. A numeric `Score repair model transition` line records
+the old/new model and preserved queue count after successful admission. No item text, exception bodies or credentials
 are stored. Tables are created idempotently and remain inert on rollback.
 
 Every attempted repair emits a `Score repair queue` journal line even after an
