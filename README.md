@@ -406,7 +406,7 @@ Recipe pushes leave `version` out of the request: Seismo assigns its next recipe
 ### Remote score reconciliation
 
 Each normal window checks the separate Bearer-authenticated
-`ml_score_repair_candidates` channel once per admitted desk, using its active
+`ml_score_repair_candidates` channel for admitted desks, using the active
 model version and own push credentials. The opt-in `sweep_cursor` resumes a fenced
 14-day scan, rotating independent feed/cache revision, mail, lex and calendar
 positions. Current 24-hour observations keep priority. At most 50 keys are
@@ -464,3 +464,29 @@ or a cursor unchanged for six hours. Cursor progress has a separate bounded
 acknowledgements alone do not reset its clock. SIGKILL cannot emit a final line;
 its persisted interrupted attempt is visible on the next window. No off-host
 alert delivery or cadence/resource change is enabled.
+
+
+### Bounded score-only repair rounds
+
+Score-only windows give every admitted desk an initial fresh-score pass before
+historical repair. Then two fair fresh-scoring rounds precede each repair round,
+with at most four 50-key repair pages per desk (up to 200 unique attempts and
+3,200 historical metadata rows). The normal durable historical checkpoint gets
+one page after the first repair round. Remaining time returns to fresh delivery.
+The same absolute 275-second admission deadline gates all extra work; the
+supervisor, timer, memory limits, 100-page fresh cap and training order remain.
+Full training keeps its existing single repair page and finite score tail.
+
+Repair contexts share the existing ten on-the-fly embedding admissions per desk
+across all four pages. Cached embeddings can serve additional pages; exceeding
+that embedding quota leaves exact keys durably queued. Each repair key is
+attempted at most once within a window, so already-deferred keys do not churn
+through the extra rounds. Queue capacity remains 200; source response limit50,
+per-page 8 MiB text admission and all existing API contracts remain unchanged.
+A completed sweep is not restarted in the same window. A page yielding only
+budget deferrals stops that desk's extra rounds instead of filling its queue
+with more unscorable work. Failures stop that desk's
+extra repair work and remain errors while other desks and fresh delivery continue.
+`Score repair window` journal lines report pages, unique attempts, embedding
+admissions and failure state. Caps are admission maxima, not guaranteed throughput
+or a certified sweep duration. No off-host alert or recurring automation is added.

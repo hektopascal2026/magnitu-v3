@@ -74,7 +74,7 @@ def _save(conn, profile_id, model_version, state, attempted=(), now=None):
                      (profile_id, model_version, state['cursor'], now))
 
 
-def admit(conn, profile_id, model_version, cursor, new_keys, now=None):
+def admit(conn, profile_id, model_version, cursor, new_keys, now=None, exclude=()):
     """Persist cursor and returned keys atomically BEFORE any network/scoring work."""
     normalized = []
     for key in new_keys:
@@ -87,11 +87,12 @@ def admit(conn, profile_id, model_version, cursor, new_keys, now=None):
     state = load(conn, profile_id, model_version)
     previous = conn.execute('SELECT model_version FROM worker_score_repair_scan WHERE profile_id=?',
                             (profile_id,)).fetchone()
-    retry = state['pending'][:RETRY_BATCH]
+    excluded = set(exclude)
+    retry = [key for key in state['pending'] if key not in excluded][:RETRY_BATCH]
     batch = list(retry)
-    pending = state['pending'][len(retry):]
+    pending = [key for key in state['pending'] if key not in retry]
     for key in new_keys:
-        if key not in batch:
+        if key not in batch and key not in excluded:
             batch.append(key)
         if key not in state['pending']:
             pending.append(key)

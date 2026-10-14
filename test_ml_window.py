@@ -466,3 +466,69 @@ def test_model_meta_trained_at_empty_on_garbage():
 
     meta = ml_window._model_meta_for_push(profile_id=1, model_row=model_row)
     assert meta["model_trained_at"] == ""
+
+
+@patch('ml_window.db')
+@patch('ml_window.sync')
+@patch('ml_window.pipeline')
+def test_score_only_main_wires_all_fresh_before_bounded_repairs(mock_pipeline,mock_sync,mock_db,monkeypatch):
+    monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY','1')
+    monkeypatch.setenv('MAGNITU_VAULT_PASSWORD','test-secret')
+    monkeypatch.setenv('SEISMO_DESKS_JSON','[{"slug":"a","seismo_url":"a","api_key":"a"},{"slug":"b","seismo_url":"b","api_key":"b"}]')
+    monkeypatch.setattr(ml_window,'_load_worker_secrets_file',lambda:None)
+    monkeypatch.setattr(ml_window,'get_config',lambda:{'seismo_url':'mother','api_key':'test'})
+    monkeypatch.setattr(ml_window,'enforce_embedding_store_cap',lambda:None)
+    monkeypatch.setattr(ml_window,'_embed_pending_until_done',lambda **_:None)
+    monkeypatch.setattr(ml_window.time,'monotonic',lambda:0)
+    mock_db.slugify.side_effect=lambda value:value
+    mock_db.derive_profile_identity_from_push_url.side_effect=lambda value:(value,value)
+    mock_db.get_profile_by_slug.side_effect=lambda slug:{'id':{'a':1,'b':2}[slug]}
+    mock_db.get_active_model.return_value={'version':3,'trained_at':'2026-10-13 00:00:00'}
+    mock_db.get_model_profile.return_value={}
+    monkeypatch.setattr(ml_window,'_label_counts',lambda *_:{})
+    monkeypatch.setattr(ml_window,'_score_only_desk_order',lambda prepared:prepared)
+    monkeypatch.setattr(ml_window,'_record_score_only_desk_attempt',lambda _:None)
+    events=[]
+    def fresh(item):
+        if item.get('fresh_done'):return False
+        events.append(('fresh',item['profile_id']))
+        item['fresh_pages']=item.get('fresh_pages',0)+1
+        item['fresh_done']=item['fresh_pages']>=2
+        return not item['fresh_done']
+    def repair(profile,*_,**kwargs):
+        events.append(('repair',profile))
+        assert kwargs['deadline']==275
+        assert 'context' in kwargs
+        return {'candidates':50,'acknowledged':50,'deferred':0,'sweep_examined':200,'sweep_completed':False}
+    def historical(profile):
+        events.append(('historical',profile));return []
+    monkeypatch.setattr(ml_window,'_attempt_fresh_scores',fresh)
+    monkeypatch.setattr(ml_window,'_repair_remote_scores',repair)
+    monkeypatch.setattr(ml_window,'_recent_score_text_page',historical)
+    monkeypatch.setattr(ml_window,'_score_and_push_changed_entries',lambda *_:None)
+    assert ml_window.main()==0
+    assert events[:4]==[('fresh',1),('fresh',2),('fresh',1),('fresh',2)]
+    assert events[4:8]==[('repair',1),('repair',2),('historical',1),('historical',2)]
+    assert events.count(('repair',1))==events.count(('repair',2))==4
+    assert events.count(('historical',1))==events.count(('historical',2))==1
+    mock_pipeline.train.assert_not_called()
+    assert mock_sync.post_ml_window_report.call_args.args[0]['window_status']=='ok'
+
+
+
+def test_repair_round_stops_when_only_embedding_deferrals_remain(monkeypatch):
+    monkeypatch.setattr(ml_window,'_repair_remote_scores',lambda *_,**__: {
+        'candidates':50,'acknowledged':0,'deferred':50,'sweep_examined':200,'sweep_completed':False})
+    monkeypatch.setattr(ml_window,'_record_score_only_desk_attempt',lambda _:None)
+    item={'profile_id':1,'slug':'root','prof':{},'current_model':{'version':3}}
+    assert ml_window._attempt_repair_page(item,100) is False
+    assert item['repair_pages']==1
+
+
+def test_fresh_page_cap_is_shared_with_interleaved_rounds(monkeypatch):
+    item={'profile_id':1,'prof':{},'slug':'root','current_model':{'version':3},'fresh_pages':100}
+    reader=MagicMock(side_effect=AssertionError('No body read past the existing cap'))
+    monkeypatch.setattr(ml_window,'_fresh_score_text_page',reader)
+    assert ml_window._attempt_fresh_scores(item) is False
+    assert not item.get('fresh_done',False)  # Admission cap is not source exhaustion.
+    reader.assert_not_called()
