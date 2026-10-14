@@ -339,3 +339,46 @@ def test_new_model_sees_retry_age_before_successful_adoption(tmp_path):
     assert h['cursor_stale_seconds'] == 100
     assert h['causes'] == {'embedding_budget':1}
     assert c.execute('SELECT model_version FROM worker_score_repair_scan').fetchone()[0] == 3
+
+
+def test_repair_rounds_share_embedding_quota_and_attempt_each_key_once(repair_env,monkeypatch):
+    connect,page,pull,scorer,push = repair_env
+    monkeypatch.setattr(score_text_scan,'embedding_ready_keys',lambda *_:set())
+    context = {'attempted':set(),'embedding_used':0}
+    for round_id in range(4):
+        page.return_value = {'keys':[('email',i) for i in range(1+20*round_id,21+20*round_id)],
+                             'sweep_cursor':'page-'+str(round_id),'sweep_examined':200,'sweep_completed':False}
+        ml_window._repair_remote_scores(1,{}, {'version':3},context=context)
+    assert context['embedding_used'] == 10
+    assert len(context['attempted']) == 80
+    assert scorer.call_count == 1
+    assert len(scorer.call_args.args[0]) == 10
+    c = connect()
+    assert len(scan.load(c,1,3)['pending']) == 70
+    assert scan.health(c,1,3)['max_attempts'] == 1
+    assert scan.health(c,1,3)['causes'] == {'embedding_budget':70}
+
+
+def test_cached_embeddings_allow_four_fifty_key_pages_without_repeat_delivery(repair_env):
+    connect,page,pull,scorer,push = repair_env
+    context = {'attempted':set(),'embedding_used':0}
+    for round_id in range(4):
+        page.return_value = {'keys':[('email',i) for i in range(1+50*round_id,51+50*round_id)],
+                             'sweep_cursor':'page-'+str(round_id),'sweep_examined':200,'sweep_completed':False}
+        ml_window._repair_remote_scores(1,{}, {'version':3},context=context)
+    assert len(context['attempted']) == 200
+    assert context['embedding_used'] == 0
+    assert pending(connect) == []
+    assert push.call_count == 4
+    assert len({(r['entry_type'],r['entry_id']) for call in scorer.call_args_list for r in call.args[0]}) == 200
+
+
+def test_excluded_retries_keep_position_age_and_capacity(tmp_path):
+    c = sqlite3.connect(tmp_path/'repair.sqlite')
+    keys=[('email',i) for i in range(1,21)]
+    scan.admit(c,1,3,'prior',keys,now=100)
+    assert scan.admit(c,1,3,'next',[],now=200,exclude=set(keys[:10])) == keys[10:]
+    assert set(scan.load(c,1,3)['pending']) == set(keys)
+    h=scan.health(c,1,3,now=300)
+    assert h['oldest_seconds'] == 200
+    assert h['max_attempts'] == 2

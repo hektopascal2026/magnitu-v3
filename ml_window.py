@@ -631,11 +631,13 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
         conn.close()
 
 
-def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
+def _repair_remote_scores(profile_id, prof, current_model, deadline=None, context=None):
+    if context is None:
+        context = {'attempted': set(), 'embedding_used': 0}
     attempt = {'keys': [], 'cause': 'refetch_failure'}
     failure = False
     try:
-        return _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt)
+        return _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt, context)
     except BaseException as error:
         failure = True
         if not isinstance(error, Exception):
@@ -673,22 +675,25 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None):
                 connection.close()
 
 
-def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt):
+def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt, context):
     """One fenced sweep page plus fair durable retries; normal limits still apply."""
     version = current_model['version']
     conn = db.get_db()
     try:
         state = score_repair_scan.load(conn, profile_id, version)
-        limit = min(50 - min(score_repair_scan.RETRY_BATCH, len(state['pending'])),
+        retries = sum(key not in context['attempted'] for key in state['pending'])
+        limit = min(50 - min(score_repair_scan.RETRY_BATCH, retries),
                     score_repair_scan.MAX_PENDING - len(state['pending']))
         if limit > 0:
             page = sync.pull_score_repair_page(version, prof, cursor=state['cursor'], limit=limit)
         else:
             page = {'keys': [], 'sweep_cursor': state['cursor'], 'sweep_examined': 0, 'sweep_completed': False}
-        keys = score_repair_scan.admit(conn, profile_id, version, page['sweep_cursor'], page['keys'])
+        keys = score_repair_scan.admit(conn, profile_id, version, page['sweep_cursor'], page['keys'],
+                                       exclude=context['attempted'])
     finally:
         conn.close()
 
+    context['attempted'].update(keys)
     attempt['keys'] = keys
     attempt['cause'] = 'refetch_failure'
 
@@ -738,9 +743,12 @@ def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attemp
         key = (row['entry_type'], row['entry_id'])
         if key not in ready:
             missing_embeddings += 1
-            if missing_embeddings > pipeline.MAX_ONTHEFLY_EMBEDDINGS:
+            if context['embedding_used'] + missing_embeddings > pipeline.MAX_ONTHEFLY_EMBEDDINGS:
                 continue
         eligible.append(row)
+    if missing_embeddings:
+        context['embedding_used'] += min(missing_embeddings,
+                                         max(0, pipeline.MAX_ONTHEFLY_EMBEDDINGS - context['embedding_used']))
     embedding_deferred = len(rows) - len(eligible)
     eligible_keys = [(row['entry_type'], row['entry_id']) for row in eligible]
     record(set(text_keys) - set(eligible_keys), 'embedding_budget')
@@ -766,6 +774,9 @@ def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attemp
     if counts['acknowledged'] != len(eligible):
         attempt['cause'] = 'scoring_omission'
         raise RuntimeError('Score repair scoring omitted admitted rows; durable retry retained')
+    return {'candidates': len(keys), 'acknowledged': counts['acknowledged'], 'deferred': deferred,
+            'sweep_examined': page['sweep_examined'],
+            'sweep_completed': page['sweep_completed']}
 
 
 def _score_only_desk_order(prepared):
@@ -802,7 +813,7 @@ def _fresh_score_text_page(before_id):
 
 def _attempt_fresh_scores(item):
     """Advance only this window's attempt; delivery still requires acknowledgement."""
-    if item.get("fresh_done"):
+    if item.get("fresh_done") or item.get("fresh_pages", 0) >= score_delivery.MAX_FRESH_PAGES_PER_DESK:
         return False
     try:
         if item.get("score_only"):
@@ -827,6 +838,36 @@ def _attempt_fresh_scores(item):
         logger.exception("Fresh score delivery failed for slug=%s", item["slug"])
         return False
 
+
+
+def _attempt_repair_page(item, deadline):
+    if item.get('fresh_failed'):
+        return False
+    context = item.setdefault('repair_context', {'attempted': set(), 'embedding_used': 0})
+    try:
+        _record_score_only_desk_attempt(item['slug'])
+        stats = _repair_remote_scores(item['profile_id'], item['prof'], item['current_model'],
+                                     deadline=deadline, context=context)
+        item['repair_pages'] = item.get('repair_pages', 0) + 1
+        if stats['deferred'] and not stats['acknowledged']:
+            return False  # Extra pure deferral only grows the queue, not delivery throughput.
+        return not stats['sweep_completed'] and bool(stats['candidates'] or stats['sweep_examined'])
+    except Exception:
+        item['repair_failed'] = True
+        logger.exception('Score repair failed profile=%d', item['profile_id'])
+        return False
+
+
+def _attempt_historical_page(item):
+    if item.get('fresh_failed'):
+        return
+    try:
+        _record_score_only_desk_attempt(item['slug'])
+        rows = _recent_score_text_page(item['profile_id'])
+        _score_and_push_changed_entries(item['profile_id'], item['prof'], item['current_model'], rows)
+    except Exception:
+        item['historical_failed'] = True
+        logger.exception('Historical score delivery failed profile=%d', item['profile_id'])
 
 def main():
     window_started = time.monotonic()
@@ -1183,20 +1224,24 @@ def main():
                 item["current_model"] = current_model
                 item["score_only"] = score_only
                 fresh_desks.append(item)
-                _attempt_fresh_scores(item)
-                # A failed repair must not block normal fresh/historical delivery.
-                repair_deadline = window_started + 275 if score_only else time.monotonic() + 150
-                if time.monotonic() < repair_deadline:
-                    try:
-                        _repair_remote_scores(profile_id, prof, current_model, deadline=repair_deadline)
-                    except Exception:
-                        logger.exception("Score repair failed profile=%d", profile_id)
-                        has_errors = True
+                if not score_only or time.monotonic() < window_started + 275:
+                    _attempt_fresh_scores(item)
                 else:
-                    logger.warning("Score repair deferred by window deadline profile=%d", profile_id)
-                # Preserve one durable historical page independently of fresh work.
-                recent_score_entries = _recent_score_text_page(profile_id)
-                _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)
+                    logger.warning("Fresh score admission deferred by window deadline profile=%d", profile_id)
+                if not score_only:
+                    # A failed repair must not block normal fresh/historical delivery.
+                    repair_deadline = time.monotonic() + 150
+                    if time.monotonic() < repair_deadline:
+                        try:
+                            _repair_remote_scores(profile_id, prof, current_model, deadline=repair_deadline)
+                        except Exception:
+                            logger.exception("Score repair failed profile=%d", profile_id)
+                            has_errors = True
+                    else:
+                        logger.warning("Score repair deferred by window deadline profile=%d", profile_id)
+                    # Preserve one durable historical page independently of fresh work.
+                    recent_score_entries = _recent_score_text_page(profile_id)
+                    _score_and_push_changed_entries(profile_id, prof, current_model, recent_score_entries)
             except Exception as e:
                 logger.error("Error during score push: %s", e)
                 has_errors = True
@@ -1219,12 +1264,24 @@ def main():
     # Reserve 25 seconds of the nominal score-only window for report/cleanup.
     # Full training retains its original order and gets a finite 150s score tail.
     deadline = window_started + 275 if score_only else time.monotonic() + 150
-    score_delivery.drain_fresh(fresh_desks, _attempt_fresh_scores, deadline)
+    if score_only:
+        score_delivery.drain_score_only(fresh_desks, _attempt_fresh_scores,
+                                        lambda item: _attempt_repair_page(item, deadline),
+                                        _attempt_historical_page, deadline, clock=time.monotonic)
+    score_delivery.drain_fresh(fresh_desks, _attempt_fresh_scores, deadline, clock=time.monotonic)
     for item in fresh_desks:
-        has_errors = has_errors or bool(item.get("fresh_failed"))
+        has_errors = has_errors or any(item.get(key, False) for key in
+                                       ("fresh_failed", "repair_failed", "historical_failed"))
         logger.info("Score freshness summary slug=%s pages=%d exhausted=%d failed=%d counts=%s",
                     item["slug"], item.get("fresh_pages", 0), bool(item.get("fresh_done")) and not bool(item.get("fresh_failed")),
                     bool(item.get("fresh_failed")), json.dumps(item.get("fresh_totals", {}), sort_keys=True))
+
+    if score_only:
+        for item in fresh_desks:
+            context = item.get('repair_context', {})
+            logger.info('Score repair window profile=%d pages=%d unique_attempted=%d embedding_admitted=%d failed=%d',
+                        item['profile_id'], item.get('repair_pages', 0), len(context.get('attempted', ())),
+                        context.get('embedding_used', 0), bool(item.get('repair_failed')))
 
     # 5) Window report → Seismo Diagnostics
     try:
