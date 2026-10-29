@@ -74,12 +74,50 @@ missing and duplicate keys. The remainder fills by the existing newest order.
 Complete entry bodies and metadata are preserved; selection uses narrow id
 probes before loading the selected full rows. No embedding/model arithmetic
 changes. Existing 150-second admission deadline, ten-entry commit sub-batches,
-four repair pages, ten retry keys/page and four-GiB service limit remain.
+four repair pages and ten retry keys/page remain. The effective score-only unit
+retains its 3.5-GiB memory limit; the full-training unit is separate.
 
 The standalone catch-up launcher was paused by exact PID/start-time identity
 before this follow-up; the running scoring service was allowed to finish.
 The original acceptance cohort is retained across both code revisions.
 Tests cover cross-profile fairness, shared-key reuse, cached/missing exclusion,
 invalid durable-state visibility, bounded payloads, body preservation, ordering,
-total-budget forwarding and partial embedding commits. Native gates and full
-cohort/queue acceptance are recorded after execution.
+total-budget forwarding and partial embedding commits.
+
+## Allocation activation and observed drain
+
+PR 33 passed [CI](https://github.com/hektopascal2026/magnitu-v3/actions/runs/40963891409)
+and **196 tests locally and on native Python 3.14**, with existing NumPy/sklearn
+warnings; the 33 local sync-contract checks also passed. Merge
+`69330a6ba40f01c4abcb747dcb896d1b42967748` exactly matched the tested tree of
+`a446f60cbc3ee7e1072abae48f3c7fe0b195f493`. It was activated at **22:15:01 UTC**,
+with both ML units fully idle, under the shared deployment lock, after verifying
+all eight changed files before/after the clean fast-forward. Seismo stayed on
+8.5.8. No paid model or editorial calls, new training or mail sending.
+
+Normal bounded score-only catch-up windows retained the original acceptance
+cohort from first activation: EU/52 195, Energy/5 200, Finance/3 67. No durable
+keys, cursors or checkpoints were reset.
+
+| Allocation-patch window | EU pending | Energy pending | Finance pending |
+| --- | ---: | ---: | ---: |
+| Before | 172 | 174 | 23 |
+| 1 | 162 | 164 | 23 |
+| 2 | 132 | 134 | 0 |
+| 3 | 92 | 94 | 22 |
+
+All three completed successfully, with no reported repair failures. Finance's
+22 in the third window are newly discovered keys: none belongs to its original
+cohort. A strict indexed source-database lookup independently confirmed all
+67 original Finance keys had model 3 Magnitu scores stamped after first
+activation. The first window committed 110 shared vectors before its existing
+admission deadline; the second committed 180; the third committed all 121 then
+missing. EU's complete original cohort had cached vectors by the third window.
+That cache progress alone is not acknowledgement or complete-cohort acceptance.
+
+The continuing original-cohort delivery/queue acceptance is recorded in the
+[Seismo operator receipt](https://github.com/hektopascal2026/seismo_1.0/blob/main/docs/audits/ml-repair-drain-20261029.md).
+Private activation manifests, original key lists, per-window receipts and strict
+source-score counts remain under `/var/lib/seismo/release-receipts/` on the VPS.
+The operator receipt distinguishes current queues from completed original keys
+and does not claim sustained future capacity or complete historical-sweep coverage.
