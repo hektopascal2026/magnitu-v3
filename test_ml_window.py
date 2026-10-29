@@ -468,10 +468,11 @@ def test_model_meta_trained_at_empty_on_garbage():
     assert meta["model_trained_at"] == ""
 
 
+@pytest.mark.parametrize('repair_outcome', ['success', 'deferred', 'error'])
 @patch('ml_window.db')
 @patch('ml_window.sync')
 @patch('ml_window.pipeline')
-def test_score_only_main_wires_all_fresh_before_bounded_repairs(mock_pipeline,mock_sync,mock_db,monkeypatch):
+def test_score_only_main_wires_all_fresh_before_bounded_repairs(mock_pipeline,mock_sync,mock_db,monkeypatch,repair_outcome):
     monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY','1')
     monkeypatch.setenv('MAGNITU_VAULT_PASSWORD','test-secret')
     monkeypatch.setenv('SEISMO_DESKS_JSON','[{"slug":"a","seismo_url":"a","api_key":"a"},{"slug":"b","seismo_url":"b","api_key":"b"}]')
@@ -499,6 +500,9 @@ def test_score_only_main_wires_all_fresh_before_bounded_repairs(mock_pipeline,mo
         events.append(('repair',profile))
         assert kwargs['deadline']==275
         assert 'context' in kwargs
+        if profile == 1 and repair_outcome != 'success':
+            error = ml_window.ScoreRepairDeferred if repair_outcome == 'deferred' else RuntimeError
+            raise error('repair control')
         return {'candidates':50,'acknowledged':50,'deferred':0,'sweep_examined':200,'sweep_completed':False}
     def historical(profile):
         events.append(('historical',profile));return []
@@ -506,13 +510,14 @@ def test_score_only_main_wires_all_fresh_before_bounded_repairs(mock_pipeline,mo
     monkeypatch.setattr(ml_window,'_repair_remote_scores',repair)
     monkeypatch.setattr(ml_window,'_recent_score_text_page',historical)
     monkeypatch.setattr(ml_window,'_score_and_push_changed_entries',lambda *_:None)
-    assert ml_window.main()==0
+    assert ml_window.main()==(1 if repair_outcome == 'error' else 0)
     assert events[:4]==[('fresh',1),('fresh',2),('fresh',1),('fresh',2)]
     assert events[4:8]==[('repair',1),('repair',2),('historical',1),('historical',2)]
-    assert events.count(('repair',1))==events.count(('repair',2))==4
+    assert events.count(('repair',1)) == (4 if repair_outcome == 'success' else 1)
+    assert events.count(('repair',2)) == 4
     assert events.count(('historical',1))==events.count(('historical',2))==1
     mock_pipeline.train.assert_not_called()
-    assert mock_sync.post_ml_window_report.call_args.args[0]['window_status']=='ok'
+    assert mock_sync.post_ml_window_report.call_args.args[0]['window_status']==('worker_error' if repair_outcome == 'error' else 'ok')
 
 
 

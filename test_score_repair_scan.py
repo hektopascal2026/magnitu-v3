@@ -382,3 +382,41 @@ def test_excluded_retries_keep_position_age_and_capacity(tmp_path):
     h=scan.health(c,1,3,now=300)
     assert h['oldest_seconds'] == 200
     assert h['max_attempts'] == 2
+
+
+@pytest.mark.parametrize('after_refetch', [False, True])
+def test_window_deadline_defers_durable_keys_without_a_failed_window(repair_env, monkeypatch, caplog, after_refetch):
+    connect, page, pull, scorer, push = repair_env
+    page.return_value['keys'] = [('email', 7)]
+    clock = [0 if after_refetch else 10]
+    monkeypatch.setattr(ml_window.time, 'monotonic', lambda: clock[0])
+    def refetch(*args, **kwargs):
+        clock[0] = 10
+        return [('email', 7)]
+    pull.side_effect = refetch
+    monkeypatch.setattr(ml_window, '_record_score_only_desk_attempt', lambda _: None)
+    item = {'slug': 'fixture', 'profile_id': 1, 'prof': {}, 'current_model': {'version': 3}}
+    assert ml_window._attempt_repair_page(item, 5) is False
+    assert item['repair_deferred'] is True
+    assert not item.get('repair_failed')
+    assert pending(connect) == [('email', 7)]
+    c = connect()
+    try:
+        assert scan.health(c, 1, 3)['causes'] == {'deadline_exhausted': 1}
+    finally:
+        c.close()
+    scorer.assert_not_called()
+    push.assert_not_called()
+    assert 'deferred by window deadline' in caplog.text
+
+
+def test_deadline_persistence_failure_remains_a_real_worker_error(repair_env, monkeypatch):
+    connect, page, pull, scorer, push = repair_env
+    page.return_value['keys'] = [('email', 7)]
+    monkeypatch.setattr(ml_window, '_record_score_only_desk_attempt', lambda _: None)
+    monkeypatch.setattr(scan, 'outcome', Mock(side_effect=RuntimeError('disk write failed')))
+    item = {'slug': 'fixture', 'profile_id': 1, 'prof': {}, 'current_model': {'version': 3}}
+    assert ml_window._attempt_repair_page(item, 0) is False
+    assert item['repair_failed'] is True
+    assert not item.get('repair_deferred')
+    assert pending(connect) == [('email', 7)]

@@ -631,15 +631,21 @@ def _score_and_push_changed_entries(profile_id, prof, current_model, recent_entr
         conn.close()
 
 
+class ScoreRepairDeferred(RuntimeError):
+    """The finite repair window ended; durable keys remain pending."""
+
+
 def _repair_remote_scores(profile_id, prof, current_model, deadline=None, context=None):
     if context is None:
         context = {'attempted': set(), 'embedding_used': 0}
     attempt = {'keys': [], 'cause': 'refetch_failure'}
     failure = False
+    deferred = False
     try:
         return _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attempt, context)
     except BaseException as error:
         failure = True
+        deferred = isinstance(error, ScoreRepairDeferred)
         if not isinstance(error, Exception):
             attempt['cause'] = 'interrupted'
         connection = None
@@ -647,8 +653,10 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None, contex
             connection = db.get_db()
             score_repair_scan.outcome(connection, profile_id, current_model['version'],
                                       attempt['keys'], attempt['cause'])
-        except Exception:
+        except Exception as persistence_error:
             logger.exception('Score repair failure-cause persistence failed profile=%d', profile_id)
+            if deferred:
+                raise RuntimeError('Score repair deferral could not be recorded') from persistence_error
         finally:
             if connection is not None:
                 connection.close()
@@ -668,7 +676,7 @@ def _repair_remote_scores(profile_id, prof, current_model, deadline=None, contex
                                health['oldest_seconds'] >= 86400, health['cursor_stale_seconds'] >= 21600)
         except Exception:
             logger.exception('Score repair queue telemetry failed profile=%d', profile_id)
-            if not failure:
+            if not failure or deferred:
                 raise
         finally:
             if connection is not None:
@@ -718,7 +726,7 @@ def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attemp
     for entry_type, ids in by_type.items():
         if deadline is not None and time.monotonic() >= deadline:
             attempt['cause'] = 'deadline_exhausted'
-            raise RuntimeError('Score repair deadline exhausted before refetch; durable keys retained')
+            raise ScoreRepairDeferred('Score repair deadline exhausted before refetch; durable keys retained')
         available.update(sync.pull_entries_by_ids(entry_type, ids, timeout=10.0, return_keys=True))
     missing = set(keys) - available
     if missing:
@@ -757,7 +765,7 @@ def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attemp
     deferred = text_deferred + embedding_deferred
     if deadline is not None and time.monotonic() >= deadline and eligible:
         attempt['cause'] = 'deadline_exhausted'
-        raise RuntimeError('Score repair deadline exhausted before scoring; durable keys retained')
+        raise ScoreRepairDeferred('Score repair deadline exhausted before scoring; durable keys retained')
     counts = (_score_and_push_changed_entries(profile_id, prof, current_model, eligible,
                                               force_keys=admitted_keys, on_acknowledged=complete)
               if eligible else {'acknowledged': 0})
@@ -852,6 +860,10 @@ def _attempt_repair_page(item, deadline):
         if stats['deferred'] and not stats['acknowledged']:
             return False  # Extra pure deferral only grows the queue, not delivery throughput.
         return not stats['sweep_completed'] and bool(stats['candidates'] or stats['sweep_examined'])
+    except ScoreRepairDeferred:
+        item['repair_deferred'] = True
+        logger.warning('Score repair deferred by window deadline profile=%d; durable keys retained', item['profile_id'])
+        return False
     except Exception:
         item['repair_failed'] = True
         logger.exception('Score repair failed profile=%d', item['profile_id'])
@@ -1234,6 +1246,9 @@ def main():
                     if time.monotonic() < repair_deadline:
                         try:
                             _repair_remote_scores(profile_id, prof, current_model, deadline=repair_deadline)
+                        except ScoreRepairDeferred:
+                            item['repair_deferred'] = True
+                            logger.warning("Score repair deferred by window deadline profile=%d; durable keys retained", profile_id)
                         except Exception:
                             logger.exception("Score repair failed profile=%d", profile_id)
                             has_errors = True
@@ -1279,9 +1294,9 @@ def main():
     if score_only:
         for item in fresh_desks:
             context = item.get('repair_context', {})
-            logger.info('Score repair window profile=%d pages=%d unique_attempted=%d embedding_admitted=%d failed=%d',
+            logger.info('Score repair window profile=%d pages=%d unique_attempted=%d embedding_admitted=%d failed=%d deferred=%d',
                         item['profile_id'], item.get('repair_pages', 0), len(context.get('attempted', ())),
-                        context.get('embedding_used', 0), bool(item.get('repair_failed')))
+                        context.get('embedding_used', 0), bool(item.get('repair_failed')), bool(item.get('repair_deferred')))
 
     # 5) Window report → Seismo Diagnostics
     try:

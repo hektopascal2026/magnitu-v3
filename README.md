@@ -1,5 +1,11 @@
 # Magnitu
 
+Bounded ML repair deadlines retain durable pending keys and log a deferral;
+they do not mark an otherwise successful window as a worker failure. This does
+not claim that the repair queue is drained. Transport, persistence, telemetry,
+scoring and acknowledgement failures still fail the window. See
+[repair deadline verification](docs/audits/repair-deadline-20261029.md).
+
 Magnitu is a machine-learning relevance engine for Seismo.  
 It learns your labeling decisions (`investigation_lead`, `important`, `background`, `noise`) and pushes scores + a lightweight keyword recipe back to Seismo for live ranking.
 
