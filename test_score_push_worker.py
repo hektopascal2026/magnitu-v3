@@ -68,7 +68,9 @@ def test_score_only_window_reads_each_profiles_own_text_page(entries, repair_fai
     ml_window.sync.pull_score_repair_page.return_value = {'keys': [], 'sweep_cursor': '', 'sweep_examined': 0, 'sweep_completed': False}
     if repair_failure:
         ml_window.sync.pull_score_repair_page.side_effect = RuntimeError('repair unavailable')
-    monkeypatch.setattr(ml_window, 'pipeline', MagicMock())
+    fake_pipeline = MagicMock()
+    fake_pipeline.MAX_ONTHEFLY_EMBEDDINGS = 10
+    monkeypatch.setattr(ml_window, 'pipeline', fake_pipeline)
     monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
     monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
     monkeypatch.setattr(ml_window, 'enforce_embedding_store_cap', lambda: None)

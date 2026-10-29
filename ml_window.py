@@ -689,9 +689,23 @@ def _repair_remote_scores_impl(profile_id, prof, current_model, deadline, attemp
     conn = db.get_db()
     try:
         state = score_repair_scan.load(conn, profile_id, version)
-        retries = sum(key not in context['attempted'] for key in state['pending'])
-        limit = min(50 - min(score_repair_scan.RETRY_BATCH, retries),
+        retry_keys = [key for key in state['pending'] if key not in context['attempted']][:score_repair_scan.RETRY_BATCH]
+        limit = min(50 - len(retry_keys),
                     score_repair_scan.MAX_PENDING - len(state['pending']))
+        row_headroom = limit
+        embedding_remaining = max(0, pipeline.MAX_ONTHEFLY_EMBEDDINGS - context['embedding_used'])
+        if not embedding_remaining:
+            limit = 0
+        elif state['pending']:
+            # Reserve the allowance for uncached durable retries first. New
+            # candidates have unknown embedding needs until exact-ID refetch;
+            # admitting them on row headroom alone refills an undrainable queue.
+            ready = score_text_scan.embedding_ready_keys(conn, retry_keys)
+            retry_missing = len(retry_keys) - len(ready)
+            limit = min(limit, max(0, embedding_remaining - retry_missing))
+        if limit < row_headroom:
+            logger.info('Score repair discovery backpressure profile=%d pending=%d embedding_remaining=%d new_limit=%d',
+                        profile_id, len(state['pending']), embedding_remaining, limit)
         if limit > 0:
             page = sync.pull_score_repair_page(version, prof, cursor=state['cursor'], limit=limit)
         else:

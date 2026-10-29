@@ -1,5 +1,12 @@
 # Magnitu
 
+Repair discovery now reserves remaining on-the-fly embedding capacity for
+uncached durable retries before admitting unknown new keys. Once that allowance
+is spent, cached retries can still be delivered but discovery retains its cursor
+until a later window. This prevents successful deliveries being immediately
+replaced by unprocessable work. All row, queue, time and embedding caps remain
+unchanged. See [repair backpressure verification](docs/audits/repair-backpressure-20261029.md).
+
 Bounded ML repair deadlines retain durable pending keys and log a deferral;
 they do not mark an otherwise successful window as a worker failure. This does
 not claim that the repair queue is drained. Transport, persistence, telemetry,
