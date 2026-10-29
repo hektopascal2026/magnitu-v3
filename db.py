@@ -1189,8 +1189,39 @@ def store_embeddings_batch(updates: List[tuple]):
     conn.close()
 
 
-def get_entries_without_embeddings(limit: int = 500) -> List[dict]:
+def get_entries_without_embeddings(limit: int = 500, *, priority_keys=()) -> List[dict]:
     conn = get_db()
+    if priority_keys:
+        try:
+            if len(priority_keys) > 100 or not 1 <= limit <= 200:
+                raise ValueError('Invalid bounded embedding priority request')
+            ids = []
+            seen = set()
+            for key in priority_keys:
+                if (len(key) != 2 or key[0] not in ('feed_item', 'email', 'lex_item', 'calendar_event')
+                        or type(key[1]) is not int or key[1] < 1):
+                    raise ValueError('Invalid embedding priority key')
+                key = tuple(key)
+                if key in seen:
+                    continue
+                seen.add(key)
+                row = conn.execute('SELECT id FROM entries WHERE entry_type=? AND entry_id=? AND embedding IS NULL', key).fetchone()
+                if row:
+                    ids.append(row[0])
+                if len(ids) == limit:
+                    break
+            excluded = ' AND id NOT IN (' + ','.join('?' for _ in ids) + ')' if ids else ''
+            if len(ids) < limit:
+                ids.extend(row[0] for row in conn.execute(
+                    'SELECT id FROM entries WHERE embedding IS NULL' + excluded
+                    + ' ORDER BY published_date DESC LIMIT ?', ids + [limit - len(ids)]))
+            if not ids:
+                return []
+            rows = conn.execute('SELECT * FROM entries WHERE id IN (' + ','.join('?' for _ in ids) + ')', ids).fetchall()
+            by_id = {row['id']: dict(row) for row in rows}
+            return [by_id[i] for i in ids if i in by_id]
+        finally:
+            conn.close()
     rows = conn.execute("""
         SELECT * FROM entries WHERE embedding IS NULL
         ORDER BY published_date DESC LIMIT ?

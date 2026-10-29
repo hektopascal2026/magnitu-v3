@@ -466,7 +466,7 @@ def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
 SCORE_ONLY_EMBED_BUDGET_SEC = 150
 
 
-def _embed_pending_until_done(max_entries: int = 0, *, deadline: Optional[float] = None) -> None:
+def _embed_pending_until_done(max_entries: int = 0, *, deadline: Optional[float] = None, priority_keys=()) -> None:
     """Embed pending entries in batches until done or ``max_entries`` reached.
 
     ``max_entries=0`` means no cap (full window behaviour). Score-only windows
@@ -489,7 +489,9 @@ def _embed_pending_until_done(max_entries: int = 0, *, deadline: Optional[float]
         batch_limit = 1000
         if max_entries > 0:
             batch_limit = min(1000, max_entries - embedded)
-        if deadline is None:
+        if priority_keys:
+            processed = sync._compute_pending_embeddings(limit=batch_limit, deadline=deadline, priority_keys=priority_keys)
+        elif deadline is None:
             processed = sync._compute_pending_embeddings(limit=batch_limit)
         else:
             processed = sync._compute_pending_embeddings(limit=batch_limit, deadline=deadline)
@@ -962,7 +964,15 @@ def main():
                 per_type_since=watermarks,
             )
         if score_only:
-            _embed_pending_until_done(max_entries=embed_cap, deadline=embed_deadline)
+            priority_keys = []
+            if time.monotonic() < embed_deadline:
+                connection = db.get_db()
+                try:
+                    priority_keys = score_repair_scan.embedding_priority_keys(connection, limit=embed_cap // 2)
+                finally:
+                    connection.close()
+            logger.info('Shared embedding repair reservation: %d keys inside existing %d-entry cap', len(priority_keys), embed_cap)
+            _embed_pending_until_done(max_entries=embed_cap, deadline=embed_deadline, priority_keys=priority_keys)
         else:
             _embed_pending_until_done(max_entries=embed_cap)
     except Exception as e:
