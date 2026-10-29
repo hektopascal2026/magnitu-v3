@@ -344,7 +344,7 @@ class TestOptimizeCapsFloor(unittest.TestCase):
             for i in range(5)
         ]
         with mock.patch.object(db, "get_all_labels", return_value=labels), \
-             mock.patch.object(db, "get_all_entries", return_value=entries), \
+             mock.patch.object(db, "get_entries_text_by_keys", return_value=entries), \
              mock.patch.object(distiller, "score_entries", return_value=scores):
             kw, _sw, meta = distiller._optimize_recipe_caps(
                 keywords, source_weights, profile_id=1
