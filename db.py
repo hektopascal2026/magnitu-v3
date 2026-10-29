@@ -8,7 +8,7 @@ Entries and embeddings are shared across all profiles (computed once).
 import re
 import sqlite3
 import json
-from typing import Optional, List, Union, Sequence, Tuple, Any
+from typing import Optional, List, Union, Sequence, Tuple, Any, Iterator
 from datetime import datetime
 from config import DB_PATH, load_config, save_config
 
@@ -845,6 +845,29 @@ def get_all_entries(*, include_embedding: bool = True) -> List[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def iter_entries_text(batch_size: int = 32) -> Iterator[dict]:
+    """Stream the full text population by primary key, without embedding blobs.
+
+    Normalization is order-independent. Date sorting here would spill the
+    entire wide corpus when the cache has no publication-date index.
+    """
+    if batch_size < 1:
+        raise ValueError('batch_size must be positive')
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            f"SELECT {_ENTRY_TEXT_COLUMNS} FROM entries ORDER BY id"
+        )
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            for row in rows:
+                yield dict(row)
+    finally:
+        conn.close()
 
 
 def get_all_entry_keys() -> List[Tuple[str, Any]]:

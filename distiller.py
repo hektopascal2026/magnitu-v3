@@ -177,10 +177,11 @@ def _build_normalized_keyword_lookup(keywords: dict) -> dict:
 
 
 def _accumulate_recipe_class_scores(entry: dict, keywords: dict, source_weights: dict,
-                                    classes: list) -> dict:
+                                    classes: list, normalized_lookup: Optional[dict] = None) -> dict:
     """PHP-parity class logits: once-per-token hits, synopsis-aware text."""
     # PHP additionally expands keywords via swiss_dictionary.json (not modeled here).
-    lookup = _build_normalized_keyword_lookup(keywords)
+    lookup = (_build_normalized_keyword_lookup(keywords)
+              if normalized_lookup is None else normalized_lookup)
     text = _seismo_score_text(entry)
     tokens = _seismo_tokens(text)
 
@@ -441,16 +442,16 @@ def _normalize_weights(keywords: dict, source_weights: dict) -> tuple:
     Without this, a 500-token government press release can score 100 while
     a 50-token news teaser about the same topic scores 5.
     """
-    all_entries = db.get_all_entries()
-    if not all_entries or not keywords:
+    if not keywords:
         return keywords, source_weights
 
     classes = ["investigation_lead", "important", "background", "noise"]
     magnitudes = []
+    lookup = _build_normalized_keyword_lookup(keywords)
 
-    for entry in all_entries:
+    for entry in db.iter_entries_text():
         class_scores = _accumulate_recipe_class_scores(
-            entry, keywords, source_weights, classes
+            entry, keywords, source_weights, classes, normalized_lookup=lookup
         )
 
         mag = max(abs(v) for v in class_scores.values()) if class_scores else 0
@@ -834,10 +835,11 @@ def _boost_legal_templates(keywords: dict) -> dict:
 
 
 def _recipe_composite(entry: dict, keywords: dict, source_weights: dict,
-                      classes: list, class_wts: list) -> float:
+                      classes: list, class_wts: list,
+                      normalized_lookup: Optional[dict] = None) -> float:
     """Seismo-style composite relevance from a keyword recipe (PHP parity)."""
     class_scores = _accumulate_recipe_class_scores(
-        entry, keywords, source_weights, classes
+        entry, keywords, source_weights, classes, normalized_lookup=normalized_lookup
     )
 
     max_s = max(class_scores.values()) if class_scores else 0
@@ -919,14 +921,9 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
     class_wts = class_weight_list()
 
     labels = db.get_all_labels(profile_id=profile_id)
-    entry_map = {
-        db.entry_key_from_mapping(e): e for e in db.get_all_entries()
-    }
-    eval_entries = []
-    for lbl in labels:
-        key = db.entry_key_from_mapping(lbl)
-        if key in entry_map:
-            eval_entries.append(entry_map[key])
+    eval_entries = db.get_entries_text_by_keys([
+        db.entry_key_from_mapping(lbl) for lbl in labels
+    ])
     if len(eval_entries) < 5:
         logger.info("Recipe cap optimization skipped (<5 labeled entries for eval)")
         stable = _stabilize_export_weights(keywords, source_weights)
@@ -967,6 +964,7 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
                 }
                 t_kw, t_sw = _stabilize_export_weights(keywords, source_weights, trial_caps)
                 t_kw = _apply_floor_weights({k: dict(v) for k, v in t_kw.items()})
+                trial_lookup = _build_normalized_keyword_lookup(t_kw)
                 paired_model = []
                 paired_recipe = []
                 for entry in eval_entries:
@@ -974,7 +972,8 @@ def _optimize_recipe_caps(keywords: dict, source_weights: dict,
                     if key not in model_score_map:
                         continue
                     composite = _recipe_composite(
-                        entry, t_kw, t_sw, classes, class_wts
+                        entry, t_kw, t_sw, classes, class_wts,
+                        normalized_lookup=trial_lookup,
                     )
                     paired_model.append(model_score_map[key])
                     paired_recipe.append(composite)
@@ -1029,7 +1028,8 @@ def evaluate_recipe_rank_metrics(recipe: dict, sample_size: int = 100,
                                  profile_id: int = 1) -> dict:
     """Spearman (stored as recipe_quality), Pearson, and top-30 overlap."""
     empty = {"spearman": 0.0, "pearson": 0.0, "top30_overlap": 0.0}
-    entries = db.get_all_entries()[:sample_size]
+    keys = db.get_all_entry_keys()[:sample_size]
+    entries = db.get_entries_text_by_keys(keys)
     if not entries:
         return dict(empty)
 
