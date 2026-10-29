@@ -55,3 +55,31 @@ fake HTTP and local scoring stubs, with no provider or paid model calls.
 
 Rollback is a forward revert while both ML units are fully idle. Never reset
 the repair queues/cursors or delete checkpoints to make telemetry green.
+
+## First activation and shared-allocation follow-up
+
+PR 32 passed CI and 187 local/native tests plus 33 sync-contract checks. Merge
+`b09174f59e537c6e3a047cd4f5eaf26e83214940` exactly matched tested candidate
+`93347d21ce60785c5565653a88f20533b894b329`; all seven changed live files were
+verified before/after the clean fast-forward under the shared deploy lock.
+The first normal score-only window reduced EU 195 → 185, Energy 200 → 187,
+Finance 67 → 27, exit 0. No keys or checkpoints were reset. Activation and
+original-key cohorts are retained privately in the VPS release-receipts folder.
+
+During that run, most original EU/Energy keys still lacked vectors after the
+shared phase. Its newest-first allocation made older durable work rely largely
+on ten inline embeddings. A separate allocation fix reserves **at most 100 of
+the existing 200 shared slots**, in profile round-robin order, skipping cached,
+missing and duplicate keys. The remainder fills by the existing newest order.
+Complete entry bodies and metadata are preserved; selection uses narrow id
+probes before loading the selected full rows. No embedding/model arithmetic
+changes. Existing 150-second admission deadline, ten-entry commit sub-batches,
+four repair pages, ten retry keys/page and four-GiB service limit remain.
+
+The standalone catch-up launcher was paused by exact PID/start-time identity
+before this follow-up; the running scoring service was allowed to finish.
+The original acceptance cohort is retained across both code revisions.
+Tests cover cross-profile fairness, shared-key reuse, cached/missing exclusion,
+invalid durable-state visibility, bounded payloads, body preservation, ordering,
+total-budget forwarding and partial embedding commits. Native gates and full
+cohort/queue acceptance are recorded after execution.

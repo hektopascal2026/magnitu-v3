@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,14 @@ def load(conn, profile_id, model_version):
                        (profile_id,)).fetchone()
     if row is None:
         return {'cursor': '', 'pending': []}
-    keys = json.loads(row[2])
-    if (not isinstance(keys, list) or len(keys) > MAX_PENDING or not isinstance(row[1], str)
-            or len(row[1]) > 512):
+    if not isinstance(row[1], str) or len(row[1]) > 512:
+        raise ValueError('Invalid durable repair state')
+    return {'cursor': row[1], 'pending': _decode_keys(row[2])}
+
+
+def _decode_keys(raw):
+    keys = json.loads(raw)
+    if not isinstance(keys, list) or len(keys) > MAX_PENDING:
         raise ValueError('Invalid durable repair state')
     out = []
     for key in keys:
@@ -40,7 +46,34 @@ def load(conn, profile_id, model_version):
         pair = tuple(key)
         if pair not in out:
             out.append(pair)
-    return {'cursor': row[1], 'pending': out}
+    return out
+
+
+def embedding_priority_keys(conn, limit=100):
+    """Fair metadata-only reservation inside the existing shared embedding cap."""
+    limit = max(0, min(100, int(limit)))
+    if not limit or conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='worker_score_repair_scan'").fetchone() is None:
+        return []
+    queues = [deque(_decode_keys(row[1])) for row in conn.execute(
+        'SELECT profile_id,pending FROM worker_score_repair_scan ORDER BY profile_id')]
+    seen, selected = set(), []
+    while queues and len(selected) < limit:
+        remaining = []
+        for keys in queues:
+            while keys:
+                key = keys.popleft()
+                if key in seen:
+                    continue
+                seen.add(key)
+                if conn.execute('SELECT 1 FROM entries WHERE entry_type=? AND entry_id=? AND embedding IS NULL', key).fetchone():
+                    selected.append(key)
+                    break
+            if keys:
+                remaining.append(keys)
+            if len(selected) == limit:
+                break
+        queues = remaining
+    return selected
 
 
 def _save(conn, profile_id, model_version, state, attempted=(), now=None):

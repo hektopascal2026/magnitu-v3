@@ -7,6 +7,13 @@ until a later window. This prevents successful deliveries being immediately
 replaced by unprocessable work. All row, queue, time and embedding caps remain
 unchanged. See [repair backpressure verification](docs/audits/repair-backpressure-20261029.md).
 
+Score-only shared embedding reserves up to half of its existing 200-entry
+allowance for uncached durable repair keys, round-robin across profiles and
+deduplicated in the shared store. Remaining slots retain newest-first filling.
+The 150-second admission deadline and ten-entry durable sub-batches remain;
+full training keeps its existing selection. This gives older queued work a
+bounded share instead of relying only on each desk's ten inline embeddings.
+
 Bounded ML repair deadlines retain durable pending keys and log a deferral;
 they do not mark an otherwise successful window as a worker failure. This does
 not claim that the repair queue is drained. Transport, persistence, telemetry,

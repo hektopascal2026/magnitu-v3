@@ -679,7 +679,7 @@ def post_ml_window_report(report: Dict) -> None:
         resp.raise_for_status()
 
 
-def _compute_pending_embeddings(progress_cb=None, limit=1000, *, deadline=None) -> int:
+def _compute_pending_embeddings(progress_cb=None, limit=1000, *, deadline=None, priority_keys=()) -> int:
     """
     Compute and store embeddings for entries that lack them (up to ``limit`` per call).
 
@@ -704,7 +704,8 @@ def _compute_pending_embeddings(progress_cb=None, limit=1000, *, deadline=None) 
 
         if deadline is not None and time.monotonic() >= deadline:
             return 0
-        unembedded = db.get_entries_without_embeddings(limit=limit)
+        unembedded = (db.get_entries_without_embeddings(limit=limit, priority_keys=priority_keys)
+                      if priority_keys else db.get_entries_without_embeddings(limit=limit))
         total = len(unembedded)
         if not total:
             return 0
