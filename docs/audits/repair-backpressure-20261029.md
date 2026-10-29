@@ -121,3 +121,20 @@ Private activation manifests, original key lists, per-window receipts and strict
 source-score counts remain under `/var/lib/seismo/release-receipts/` on the VPS.
 The operator receipt distinguishes current queues from completed original keys
 and does not claim sustained future capacity or complete historical-sweep coverage.
+
+At **22:37:31 UTC**, independent strict indexed source-database checks confirmed
+all **462 original profile/key pairs** had current-model Magnitu scores stamped
+after first activation: EU/52 195/195, Energy/5 200/200, Finance/3 67/67.
+The six allocation-patch windows reduced original pending work to zero; their
+terminal queues were EU 0, Energy 0, Finance 14 newly discovered keys. Every
+window returned success/exit 0. No original key was accepted complete merely
+because it left the durable queue.
+
+Follow-up source checks also confirmed those additional fourteen Finance keys,
+then another captured cohort of **33 EU / 25 Energy** keys, received actual
+current-model source scores after their own capture/activation clocks. At
+22:44:27 UTC this totals **534 verified profile/key deliveries** across the
+three disjoint cohorts. New historical discovery continues under the existing
+limits and may create small deferred batches; this does not certify an empty
+whole-corpus backlog or sustained future capacity. Private follow-up receipts
+use the `repair-priority-confirmation-*` names in the same VPS folder.
