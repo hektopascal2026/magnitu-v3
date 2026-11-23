@@ -9,7 +9,7 @@ import re
 import sqlite3
 import json
 from typing import Optional, List, Union, Sequence, Tuple, Any, Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from config import DB_PATH, load_config, save_config
 
 
@@ -710,6 +710,46 @@ def entry_key_from_mapping(row) -> Tuple[str, Any]:
     return entry_key(row["entry_type"], row["entry_id"])
 
 
+def ensure_entry_type_watermarks(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS entry_type_watermarks (
+            entry_type TEXT PRIMARY KEY,
+            published_date TEXT NOT NULL
+        )
+        """
+    )
+
+
+def raise_entry_type_watermarks(conn: sqlite3.Connection, entries: list) -> None:
+    """Advance the incremental sync cursor from rows just written.
+
+    Dates after UTC now stay out of the cursor, matching entry_store_watermarks.
+    """
+    if not entries:
+        return
+    ensure_entry_type_watermarks(conn)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    best = {}
+    for entry in entries:
+        published = str(entry.get("published_date") or "").strip()
+        entry_type = str(entry.get("entry_type") or "")
+        if entry_type in ("", "calendar_event") or published == "" or published > now:
+            continue
+        if published > best.get(entry_type, ""):
+            best[entry_type] = published
+    for entry_type, published in best.items():
+        conn.execute(
+            """
+            INSERT INTO entry_type_watermarks (entry_type, published_date)
+            VALUES (?, ?)
+            ON CONFLICT(entry_type) DO UPDATE SET published_date = excluded.published_date
+            WHERE excluded.published_date > entry_type_watermarks.published_date
+            """,
+            (entry_type, published),
+        )
+
+
 def upsert_entry(entry: dict):
     """Insert or update a cached entry from seismo.
     Invalidates cached embedding when text content changes."""
@@ -735,6 +775,7 @@ def upsert_entry(entry: dict):
                 ELSE entries.embedding
             END
     """, entry)
+    raise_entry_type_watermarks(conn, [entry])
     conn.commit()
     conn.close()
 
@@ -764,6 +805,7 @@ def upsert_entries(entries: List[dict]):
                 ELSE entries.embedding
             END
     """, entries)
+    raise_entry_type_watermarks(conn, entries)
     conn.commit()
     conn.close()
 

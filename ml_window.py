@@ -467,6 +467,7 @@ SCORE_ONLY_EMBED_BUDGET_SEC = 150
 FULL_WINDOW_EMBED_BUDGET_SEC = 600
 
 
+
 def _embed_pending_until_done(max_entries: int = 0, *, deadline: Optional[float] = None, priority_keys=()) -> None:
     """Embed pending entries in batches until done or ``max_entries`` reached.
 
@@ -933,8 +934,6 @@ def main():
         logger.info("No desks to process. Exiting.")
         return 0
 
-    enforce_embedding_store_cap()
-
     force_retrain = os.environ.get("MAGNITU_ML_FORCE_RETRAIN") == "1"
     full_entry_drain = os.environ.get("MAGNITU_ML_FULL_ENTRY_DRAIN") == "1"
     score_only = os.environ.get("MAGNITU_ML_SCORE_ONLY") == "1"
@@ -944,6 +943,10 @@ def main():
 
     if score_only:
         logger.info("Score-only mode (MAGNITU_ML_SCORE_ONLY=1): skip labels/train/distill")
+    else:
+        # SUM(LENGTH(embedding)) reads every blob. Score-only adds at most a
+        # few hundred embeddings; the full window still enforces the 5 GiB cap.
+        enforce_embedding_store_cap()
 
     # Stop admitting shared embedding work after half the nominal 300s score
     # budget, reserving time for desks. Sync consumes this same allowance.

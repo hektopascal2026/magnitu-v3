@@ -487,15 +487,25 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
 
     Uses ``MAX(published_date)`` among rows with ``published_date <= UTC now``
     so future-dated rows (agenda/EP dates or bad feed timestamps) cannot freeze
-    the drain. Before computing, refreshes any local future-dated non-Leg rows
-    from mothership so corrected Seismo dates replace stale cache values.
+    the drain. A full window refreshes local future-dated non-Leg rows from
+    mothership before that scan. Score-only ticks skip the heal and reuse
+    ``entry_type_watermarks`` so they do not scan ``entries`` every 15 minutes.
+    A missing or future-dated cache falls back to one scan and stores it.
     ``calendar_event`` is always ``None`` (full family drain): Seismo pages Leg
     by ``fetched_at``, which the local store overwrites on upsert, and
     ``event_date`` is the wrong cursor.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    heal_future_published_dates(now)
+    score_only = os.environ.get("MAGNITU_ML_SCORE_ONLY") == "1"
+    if not score_only:
+        heal_future_published_dates(now)
     conn = db.get_db()
+    db.ensure_entry_type_watermarks(conn)
+    if score_only:
+        cached = _cached_entry_watermarks(conn, now)
+        if cached is not None:
+            conn.close()
+            return cached
     out: Dict[str, Optional[str]] = {}
     for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
         if entry_type == "calendar_event":
@@ -511,8 +521,38 @@ def entry_store_watermarks() -> Dict[str, Optional[str]]:
             """,
             (entry_type, now),
         ).fetchone()
-        out[entry_type] = row["m"] if row and row["m"] else None
+        value = row["m"] if row and row["m"] else None
+        out[entry_type] = value
+        conn.execute(
+            """
+            INSERT INTO entry_type_watermarks (entry_type, published_date)
+            VALUES (?, ?)
+            ON CONFLICT(entry_type) DO UPDATE SET
+                published_date = excluded.published_date
+            """,
+            (entry_type, value or ""),
+        )
+    conn.commit()
     conn.close()
+    return out
+
+
+def _cached_entry_watermarks(conn, now: str) -> Optional[Dict[str, Optional[str]]]:
+    out: Dict[str, Optional[str]] = {}
+    for entry_type, _status_key in SEISMO_ENTRY_PULL_SPECS:
+        if entry_type == "calendar_event":
+            out[entry_type] = None
+            continue
+        row = conn.execute(
+            "SELECT published_date FROM entry_type_watermarks WHERE entry_type = ?",
+            (entry_type,),
+        ).fetchone()
+        if row is None:
+            return None
+        cached = row["published_date"] or ""
+        if cached > now:
+            return None
+        out[entry_type] = cached or None
     return out
 
 
