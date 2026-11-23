@@ -511,3 +511,13 @@ extra repair work and remain errors while other desks and fresh delivery continu
 `Score repair window` journal lines report pages, unique attempts, embedding
 admissions and failure state. Caps are admission maxima, not guaranteed throughput
 or a certified sweep duration. No off-host alert or recurring automation is added.
+
+### Full-window embedding admission
+
+Full VPS windows share a 600-second admission budget across entry sync and
+pending embeddings, including orphan-label repair. Completed embedding batches
+are persisted. When the deadline expires, remaining general backlog stays pending
+and the worker continues to labels, training and score delivery. Training still
+computes missing embeddings for its labelled examples. The existing outer
+window timeout and score-only budgets continue to apply. A model load or active
+inference can finish after the admission deadline.
