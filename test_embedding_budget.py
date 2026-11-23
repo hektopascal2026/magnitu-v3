@@ -151,3 +151,34 @@ def test_document_chunk_limits_unchanged_with_fake_encoder(monkeypatch):
     ]:
         assert len(pipeline.embed_entries([item])) == 1
         assert encoded[-1] == expected_chunks
+
+
+def test_full_window_reaches_desks_after_shared_embedding_budget(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(ml_window.time, 'monotonic', lambda: now[0])
+    database = MagicMock()
+    database.derive_profile_identity_from_push_url.return_value = ('a', 'a')
+    database.get_profile_by_slug.return_value = {'id': 1}
+    database.get_active_model.return_value = None
+    database.get_all_labels.return_value = []
+    shared_sync = MagicMock()
+    shared_sync.backfill_orphan_label_entries.return_value = (1, 1)
+    def compute(**kwargs):
+        assert kwargs['deadline'] == 700.0
+        now[0] = 701.0
+        return 10
+    shared_sync._compute_pending_embeddings.side_effect = compute
+    monkeypatch.setattr(ml_window, 'db', database)
+    monkeypatch.setattr(ml_window, 'sync', shared_sync)
+    monkeypatch.setattr(ml_window, '_load_worker_secrets_file', lambda: None)
+    monkeypatch.setattr(ml_window, 'enforce_embedding_store_cap', lambda: None)
+    monkeypatch.setattr(ml_window, 'get_config', lambda: {'seismo_url': 'mother', 'api_key': 'test'})
+    monkeypatch.setattr(ml_window, '_label_counts', lambda *_: {'labels_since_train': 0})
+    monkeypatch.setenv('MAGNITU_ML_SCORE_ONLY', '0')
+    monkeypatch.setenv('MAGNITU_ML_FORCE_RETRAIN', '0')
+    monkeypatch.setenv('MAGNITU_VAULT_PASSWORD', 'test')
+    monkeypatch.setenv('SEISMO_DESKS_JSON', '[{"seismo_url":"a","api_key":"test"}]')
+    assert ml_window.main() == 0
+    shared_sync._compute_pending_embeddings.assert_called_once_with(limit=1000, deadline=700.0)
+    shared_sync.pull_labels.assert_called_once()
+    shared_sync.backfill_orphan_label_entries.assert_called_once_with(1)

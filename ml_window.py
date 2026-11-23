@@ -464,12 +464,14 @@ def _train_reject_log(current_model: Optional[dict], res: dict) -> str:
 
 
 SCORE_ONLY_EMBED_BUDGET_SEC = 150
+FULL_WINDOW_EMBED_BUDGET_SEC = 600
 
 
 def _embed_pending_until_done(max_entries: int = 0, *, deadline: Optional[float] = None, priority_keys=()) -> None:
     """Embed pending entries in batches until done or ``max_entries`` reached.
 
-    ``max_entries=0`` means no cap (full window behaviour). Score-only windows
+    ``max_entries=0`` means no count cap. Scheduled windows also supply a
+    shared admission deadline. Score-only windows
     pass a cap so a large backlog cannot eat the entire 300s budget before
     scoring + pushing. Remaining entries are picked up by the next tick.
     ``deadline`` stops admitting shared work at an absolute monotonic time;
@@ -946,9 +948,12 @@ def main():
     # Stop admitting shared embedding work after half the nominal 300s score
     # budget, reserving time for desks. Sync consumes this same allowance.
     # Individual model loads/inference are not preempted by this deadline.
-    # Full windows retain their existing count-only behavior.
+    # Full windows reserve the rest of the outer budget for labels, model fits
+    # and score delivery. Orphan repair shares this same absolute deadline.
     embed_cap = 200 if score_only else 0
-    embed_deadline = time.monotonic() + SCORE_ONLY_EMBED_BUDGET_SEC if score_only else None
+    embed_deadline = time.monotonic() + (
+        SCORE_ONLY_EMBED_BUDGET_SEC if score_only else FULL_WINDOW_EMBED_BUDGET_SEC
+    )
 
     # 0) Entry sync once per window (mothership), then embed.
     try:
@@ -974,7 +979,7 @@ def main():
             logger.info('Shared embedding repair reservation: %d keys inside existing %d-entry cap', len(priority_keys), embed_cap)
             _embed_pending_until_done(max_entries=embed_cap, deadline=embed_deadline, priority_keys=priority_keys)
         else:
-            _embed_pending_until_done(max_entries=embed_cap)
+            _embed_pending_until_done(max_entries=embed_cap, deadline=embed_deadline)
     except Exception as e:
         logger.error("Failed shared entry pull/embed: %s", e)
         has_errors = True
@@ -1075,7 +1080,7 @@ def main():
                     orphan_before,
                     fetched,
                 )
-                _embed_pending_until_done()
+                _embed_pending_until_done(deadline=embed_deadline)
         except Exception as e:
             logger.error("Orphan backfill failed for %s: %s", url, e)
             has_errors = True
